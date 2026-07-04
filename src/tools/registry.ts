@@ -73,10 +73,14 @@ export class ToolRegistry {
     }
     try {
       const result = await tool.handler(input);
-      return result.success ? { ...result, output: capOutput(result.output) } : result;
+      return {
+        ...result,
+        output: capOutput(result.output),
+        ...(result.error ? { error: capOutput(result.error) } : {}),
+      };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { success: false, output: '', error: msg };
+      return { success: false, output: '', error: capOutput(msg) };
     }
   }
 }

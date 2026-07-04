@@ -73,10 +73,27 @@ test('resolveInsideRoot: secret filenames are blocked by default', () => {
   } finally { cleanup(); }
 });
 
+test('resolveInsideRoot: cloud credential files are blocked', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    // .aws/credentials, .docker/config.json, .git-credentials, service account keys
+    for (const name of [
+      '.aws/credentials',
+      '.docker/config.json',
+      '.ssh/known_hosts',
+      '.git-credentials',
+      'service-account.json',
+      'service_account_key.json',
+    ]) {
+      assert.throws(() => resolveInsideRoot(name, config), /secret file/, `expected ${name} blocked`);
+    }
+  } finally { cleanup(); }
+});
+
 test('resolveInsideRoot: non-secret filenames pass', () => {
   const { config, cleanup } = mkTempConfig();
   try {
-    for (const name of ['env.ts', 'keyboard.js', 'environment.md', 'readme.pem.txt']) {
+    for (const name of ['env.ts', 'keyboard.js', 'environment.md', 'readme.pem.txt', 'config.json']) {
       assert.doesNotThrow(() => resolveInsideRoot(name, config), `expected ${name} allowed`);
     }
   } finally { cleanup(); }

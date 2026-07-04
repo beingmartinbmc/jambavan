@@ -7,16 +7,26 @@ import type { JambavanConfig } from '../config/jambavan.config';
 const SECRET_BASENAMES = new Set([
   '.npmrc', '.netrc', '.pgpass', '.htpasswd',
   'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519',
+  'credentials',       // .aws/credentials
+  '.git-credentials',  // git credential store
 ]);
 const SECRET_PATTERNS = [
   /^\.env(\..+)?$/i,          // .env, .env.local, .env.production
   /\.(pem|key|p12|pfx|keystore|jks)$/i,
+  /^service[-_]?account.*\.json$/i,  // GCP service account key files
 ];
+// Parent directories that make otherwise-innocent filenames secret
+const SECRET_PARENT_DIRS = new Set(['.aws', '.docker', '.ssh']);
 
 function assertNotSecret(target: string, label: string): void {
   if (process.env.JAMBAVAN_ALLOW_SECRETS === '1') return;
   const base = path.basename(target);
-  if (SECRET_BASENAMES.has(base) || SECRET_PATTERNS.some(re => re.test(base))) {
+  const parentDir = path.basename(path.dirname(target));
+  if (
+    SECRET_BASENAMES.has(base) ||
+    SECRET_PATTERNS.some(re => re.test(base)) ||
+    SECRET_PARENT_DIRS.has(parentDir)
+  ) {
     throw new Error(`${label} blocked: "${base}" looks like a secret file (set JAMBAVAN_ALLOW_SECRETS=1 to override)`);
   }
 }

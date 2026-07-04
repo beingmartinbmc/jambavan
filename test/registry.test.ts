@@ -76,12 +76,29 @@ test('ToolRegistry: successful output is capped centrally', async () => {
   assert.match(r.output, /output truncated/);
 });
 
-test('ToolRegistry: failed result is NOT capped (error passthrough)', async () => {
+test('ToolRegistry: failed result error field is capped (flood guard)', async () => {
   const reg = new ToolRegistry();
   reg.register(stubTool('boom', async () => ({ success: false, output: '', error: 'z'.repeat(200_000) })));
   const r = await reg.execute('boom', {});
   assert.equal(r.success, false);
-  assert.equal(r.error?.length, 200_000);
+  assert.ok((r.error?.length ?? 0) < 200_000, 'error should be capped');
+  assert.match(r.error ?? '', /output truncated/);
+});
+
+test('ToolRegistry: failed result output is also capped', async () => {
+  const reg = new ToolRegistry();
+  // Simulates bash tool returning megabytes of compiler errors in output field
+  reg.register(stubTool('compile-fail', async () => ({
+    success: false,
+    output: 'error: '.repeat(50_000),
+    error: 'Build failed',
+  })));
+  const r = await reg.execute('compile-fail', {});
+  assert.equal(r.success, false);
+  assert.ok(r.output.length < 'error: '.repeat(50_000).length, 'output on failure should be capped');
+  assert.match(r.output, /output truncated/);
+  // error field under cap passes through unchanged
+  assert.equal(r.error, 'Build failed');
 });
 
 test('ToolRegistry: thrown handler error is caught and normalized', async () => {

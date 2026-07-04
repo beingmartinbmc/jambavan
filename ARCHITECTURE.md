@@ -37,7 +37,7 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 | Tool | Purpose |
 |---|---|
 | `jambavan_index` | Build / refresh AST-aware codebase index (incremental) |
-| `jambavan_context` | Search index, return ranked token-budgeted context block |
+| `jambavan_context` | Search index, return ranked token-budgeted context block. Optional `compress_prose` (denser comments), `include_diff` (recent git changes per symbol), `include_tests` (associated test files) — enrichments share the same token budget rather than being appended on top |
 | `jambavan_watch` | Start / stop live file watcher (incremental per-file re-index) |
 | `jambavan_diagnostics` | Show tree-sitter vs regex parser backends + index stats |
 
@@ -50,16 +50,18 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 | `jambavan_graph_path` | Shortest relationship path between two symbols |
 | `jambavan_sankshipta` | Compress prose/prompts to fewer tokens, preserving code & facts |
 
-> **Graph scope.** This is a **lightweight inferred graph**, not resolver-backed
+> **Graph scope.** This is a **lightweight inferred graph**, not full resolver-backed
 > program analysis. The AST extracts references (`call` / `import` / `implements`)
-> per symbol, but edges are resolved **by matching the reference name to every
-> symbol with that name** — there is no scope/type resolution, so a call to an
-> overloaded or shadowed name links to *all* same-named symbols. Body-token
+> per symbol; when a reference name matches exactly one symbol, that edge is
+> unambiguous. When it matches several (e.g. two files each export a same-named
+> function), a `call`/`implements` reference whose enclosing symbol has a
+> module-level `import` for that name is resolved to the file the import
+> specifier actually points to — everything else still fans out to *all*
+> same-named symbols, since there is no full scope/type resolution. Body-token
 > mentions add capped `INFERRED` edges; very common names are skipped to avoid
 > graph blowups. Edges carry a confidence: `EXTRACTED` (from the
 > AST) or `INFERRED` (name mention). Treat it as a navigation aid, not ground
-> truth — verify before large refactors. Real resolver-backed call/import
-> analysis would replace the name-matching step.
+> truth — verify before large refactors.
 
 ### Memory
 
@@ -72,6 +74,19 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 | `jambavan_memory_invalidate` | Mark a memory superseded without deleting history |
 | `jambavan_memory_delete` | Remove a memory by ID or wipe an entire scope |
 | `jambavan_memory_status` | Bundle statistics (total count, by scope) |
+
+### Failure memory & session handoff
+
+Session-continuity tools — the goal is that a fresh session (or a different host model) doesn't repeat a dead end and doesn't have to re-derive context that already existed.
+
+| Tool | Purpose |
+|---|---|
+| `jambavan_failure_store` | Record a structured failure (command, symptom, attempted fix, root cause, resolution, status, do-not-retry advice) in the memory store |
+| `jambavan_failure_search` | Search past failure records before retrying a failing command or approach |
+| `jambavan_session_export` | Produce a single portable markdown handoff document: recent memories, `rin:` debt markers, and git status |
+| `jambavan_session_import` | Parse a handoff document back into memories in the target scope; tolerant of light rewording of the memory heading, idempotent on exact re-import |
+
+Both are built on `MemoryStore` — a failure record is just a memory with `type: 'FailureRecord'` and a title that includes a content hash of `command + symptom`, so two different failures never collide on the same stored title.
 
 ### Awaken
 
@@ -153,11 +168,13 @@ src/
 │   ├── indexer.ts            # Orchestrates full / incremental indexing
 │   ├── ast-parser.ts         # Symbol extractor (tree-sitter + regex fallback)
 │   ├── file-cache.ts         # SQLite: file hash → indexed state (incremental)
-│   └── watcher.ts            # chokidar: watch for changes
+│   ├── watcher.ts            # chokidar: watch for changes
+│   └── test-map.ts           # Associates symbols with the test files that exercise them
 │
 ├── knowledge/
 │   └── graph.ts              # Lightweight inferred code graph (nodes/edges,
-│                             # EXTRACTED vs INFERRED), report / query / shortest-path
+│                             # EXTRACTED vs INFERRED), import-path resolution,
+│                             # report / query / shortest-path
 │
 ├── memory/
 │   └── store.ts              # OKF bundle manager: read/write/search concept docs
@@ -165,7 +182,8 @@ src/
 │
 ├── context/
 │   ├── assembler.ts          # Ranks + packs symbols within token budget
-│   └── token-counter.ts      # js-tiktoken: exact token counts
+│   ├── token-counter.ts      # js-tiktoken: exact token counts
+│   └── diff-enricher.ts      # Recent git history per symbol line range (execFileSync, no shell)
 │
 ├── tools/
 │   ├── registry.ts           # Tool registry + dispatcher (central output cap)
@@ -176,6 +194,8 @@ src/
 │   ├── bash.ts               # Shell execution with footgun blocks + no-color env
 │   ├── sankshipta.ts         # Deterministic prose/prompt compression
 │   ├── memory.ts             # jambavan_memory_* descriptors + handlers
+│   ├── failure-memory.ts     # jambavan_failure_store/_search — structured failure records
+│   ├── session-handoff.ts    # jambavan_session_export/_import — portable handoff document
 │   ├── jambavan.ts           # Core jambavan_* handlers + awaken protocol text
 │   └── vibhishana-niti.ts    # jambavan_vibhishana_niti + jambavan_rin_mochan ledger
 │
@@ -203,10 +223,16 @@ Host model calls jambavan_context(query="auth middleware")
   └─ Returns ranked (symbol, score) pairs
          │
          ▼
-  ContextAssembler.assemble(chunks)
+  ContextAssembler.assemble(chunks, { budgetOverride? })
   ├─ Sort by relevance score descending
-  ├─ Greedily pack into token budget (default: 8 000 tokens)
+  ├─ Greedily pack into token budget (default: 8 000 tokens;
+  │  reserved down to 80% if include_diff/include_tests requested)
   └─ Format: ### file.ts:10-45 [function]\n```\n...\n```
+         │
+         ▼
+  Optional enrichment (share the remaining ~20% of the budget, never on top of it)
+  ├─ include_diff  → diff-enricher.ts: recent git history per symbol line range
+  └─ include_tests → test-map.ts: associated test files per symbol
          │
          ▼
   MCP text result returned to host model
@@ -334,7 +360,7 @@ No test framework dependency — tests use Node's built-in `node:test` runner vi
 
 | Command | What it covers |
 |---|---|
-| `npm run unit` | `test/*.test.ts` — registry caps/dispatch, path-guard containment & secret blocking, file-tool behavior, `bash` footguns & env isolation, graph confidence semantics, sankshipta compression |
+| `npm run unit` | `test/*.test.ts` — registry caps/dispatch, path-guard containment & secret blocking, file-tool behavior, `bash` footguns & env isolation, graph confidence semantics (incl. import-resolved edges), sankshipta compression, project-scope hashing, failure-record collision handling, session export/import round-trips, test-map association |
 | `npm run self-check` | End-to-end smoke of read/memory/graph/rin/sankshipta against a temp project |
 | `npm run tool-check` | Asserts every advertised MCP tool is exercised |
 | `npm test` | Runs all three |

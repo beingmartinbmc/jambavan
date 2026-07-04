@@ -157,6 +157,7 @@ export class MemoryStore {
   /**
    * Store a memory. Returns the OKF concept ID (scope/filename-slug).
    * Deduplicates by title within scope — overwrites an existing doc with the same title.
+   * If a different title produces a colliding slug, disambiguates with a numeric suffix.
    */
   store(opts: {
     title:       string;
@@ -169,8 +170,30 @@ export class MemoryStore {
     supersedes?: string;
   }): string {
     const scope = slugify(opts.scope ?? 'general');
-    const slug  = slugify(opts.title);
-    const id    = `${scope}/${slug}`;
+    let slug  = slugify(opts.title);
+
+    const scopeDir = path.join(this.bundleRoot, scope);
+    fs.mkdirSync(scopeDir, { recursive: true });
+
+    // Collision check: if file exists with a different title, disambiguate
+    let filePath = path.join(scopeDir, `${slug}.md`);
+    if (fs.existsSync(filePath)) {
+      const existing = this.readDoc(filePath);
+      if (existing && existing.frontmatter.title !== opts.title) {
+        // Different title produced the same slug — add suffix
+        let n = 2;
+        while (true) {
+          const candidate = `${slug}-${n}`;
+          const candidatePath = path.join(scopeDir, `${candidate}.md`);
+          if (!fs.existsSync(candidatePath)) { slug = candidate; filePath = candidatePath; break; }
+          const cDoc = this.readDoc(candidatePath);
+          if (cDoc && cDoc.frontmatter.title === opts.title) { slug = candidate; filePath = candidatePath; break; }
+          n++;
+        }
+      }
+    }
+
+    const id = `${scope}/${slug}`;
 
     const fm: MemoryFrontmatter = {
       type:        opts.type        ?? 'Memory',
@@ -183,10 +206,6 @@ export class MemoryStore {
       ...(opts.supersedes ? { supersedes: opts.supersedes } : {}),
     };
 
-    const scopeDir = path.join(this.bundleRoot, scope);
-    fs.mkdirSync(scopeDir, { recursive: true });
-
-    const filePath = path.join(scopeDir, `${slug}.md`);
     fs.writeFileSync(filePath, `${serializeFrontmatter(fm)}\n\n${opts.body}\n`, 'utf-8');
 
     this.appendLog({ action: 'store', id, title: opts.title });
@@ -290,7 +309,7 @@ export class MemoryStore {
   deleteByScope(scope: string): number {
     const scopeDir = path.join(this.bundleRoot, slugify(scope));
     if (!fs.existsSync(scopeDir)) return 0;
-    const docs = this.docsInDir(scopeDir);
+    const docs = this.docsInDir(scopeDir, { includeInvalidated: true });
     fs.rmSync(scopeDir, { recursive: true, force: true });
     this.appendLog({ action: 'delete-scope', id: scope, title: `all in ${scope}` });
     return docs.length;
@@ -325,22 +344,25 @@ export class MemoryStore {
       const slug = path.basename(doc.filePath, '.md');
       lines.push(`* [${doc.frontmatter.title}](./${slug}.md) - ${doc.frontmatter.description}`);
     }
-    fs.writeFileSync(path.join(scopeDir, 'index.md'), lines.join('\n') + '\n', 'utf-8');
+    const indexPath = path.join(scopeDir, 'index.md');
+    const tmpPath = indexPath + `.${process.pid}.tmp`;
+    fs.writeFileSync(tmpPath, lines.join('\n') + '\n', 'utf-8');
+    fs.renameSync(tmpPath, indexPath);
   }
 
   private appendLog(entry: { action: string; id: string; title: string }): void {
     const logPath = path.join(this.bundleRoot, 'log.md');
     const today   = new Date().toISOString().slice(0, 10);
-    const line    = `* **${entry.action}**: ${entry.title} (\`${entry.id}\`)`;
+    const line    = `\n## ${today}\n* **${entry.action}**: ${entry.title} (\`${entry.id}\`)\n`;
 
-    let content = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '# Memory Log\n';
-    // Insert under today's heading, or add it
-    if (content.includes(`## ${today}`)) {
-      content = content.replace(`## ${today}\n`, `## ${today}\n${line}\n`);
-    } else {
-      content = content.replace('# Memory Log\n', `# Memory Log\n\n## ${today}\n${line}\n`);
+    // Atomic append — O_APPEND guarantees no interleaving on POSIX even
+    // across concurrent processes writing to the same file.
+    const fd = fs.openSync(logPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_APPEND);
+    try {
+      fs.writeSync(fd, line, null, 'utf-8');
+    } finally {
+      fs.closeSync(fd);
     }
-    fs.writeFileSync(logPath, content, 'utf-8');
   }
 
   // ── Internals ────────────────────────────────────────────────────────────────

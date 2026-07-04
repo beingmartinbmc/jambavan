@@ -48,6 +48,12 @@ Jambavan exposes these MCP tools to the host model:
   jambavan_memory_delete Remove a memory by ID or wipe a scope
   jambavan_memory_status Bundle statistics (total count, by scope)
 
+  jambavan_failure_store Store a structured failure record (command, symptom, root cause)
+  jambavan_failure_search Search past failures before retrying a failing command
+
+  jambavan_session_export Export session context as a portable handoff document
+  jambavan_session_import Import a handoff document into memory
+
   read_file            Read a file (with optional line range)
   write_file           Write or overwrite a file
   patch_file           Find-and-replace patch on an existing file

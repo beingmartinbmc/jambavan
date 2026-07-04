@@ -220,17 +220,18 @@ File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROO
 
 **4. Sankshipta** — prose compression holds steady around **24%**.
 
-**5. Tool latency** — the 24 index/context/graph/memory/dev-workflow/file-system tools (of the 28 the server advertises — the newer `jambavan_failure_*`/`jambavan_session_*` pair aren't wired into the benchmark yet, though `npm run tool-check` exercises all 28), timed over the real stdio transport (the same request/response path a host model uses): min/median/max over 10 calls for read-only tools, single-shot for mutating ones. Representative medians:
+**5. Tool latency** — **all 28 tools the MCP server advertises**, timed over the real stdio transport (the same request/response path a host model uses): min/median/max over 10 calls for read-only tools, single-shot for mutating ones. Representative medians:
 
 | tool | median | tool | median |
 |---|---|---|---|
-| `jambavan_context` | 0.2 ms | `jambavan_memory_search` | 0.2 ms |
-| `jambavan_graph_query` | 0.3 ms | `jambavan_awaken` | 1.4 ms |
-| `jambavan_graph_path` | 0.2 ms | `jambavan_index` (1 file) | 12.9 ms |
-| `read_file` | 0.2 ms | `search` (ripgrep) | 11.1 ms |
-| `list_files` | 0.2 ms | `bash` (subprocess) | 12.5 ms |
+| `jambavan_context` | 0.3 ms | `jambavan_memory_search` | 0.2 ms |
+| `jambavan_graph_query` | 0.3 ms | `jambavan_awaken` | 1.6 ms |
+| `jambavan_graph_path` | 0.2 ms | `jambavan_index` (1 file) | 13.4 ms |
+| `read_file` | 0.1 ms | `search` (ripgrep) | 10.3 ms |
+| `list_files` | 0.3 ms | `bash` (subprocess) | 11.9 ms |
+| `jambavan_failure_search` | 0.2 ms | `jambavan_session_export` (2 git calls) | 40.6 ms |
 
-Everything driven purely in-process is sub-millisecond; the outliers (`index`, `search`, `bash`) are the ones that shell out or touch disk, exactly as expected. Every call succeeds — the benchmark exits non-zero if any tool errors, so it doubles as an end-to-end smoke test.
+Everything driven purely in-process is sub-millisecond; the outliers (`index`, `search`, `bash`, `session_export`) are the ones that shell out or touch disk, exactly as expected. Every call succeeds — the benchmark exits non-zero if any tool errors, so it doubles as an end-to-end smoke test.
 
 **The larger the codebase, the bigger the win.** The same benchmark run against a mid-size Java service (166 files, ~1,000 symbols) — every dimension scales in Jambavan's favour:
 

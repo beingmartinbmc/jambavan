@@ -1,0 +1,47 @@
+{
+  "name": "jambavan",
+  "version": "0.3.0",
+  "description": "Jambavan — an MCP server that awakens any coding model's latent powers: live code index, precise context, durable memory, a code knowledge graph, prompt compression, and guarded file/shell tools.",
+  "main": "dist/index.js",
+  "bin": {
+    "jambavan": "dist/index.js"
+  },
+  "files": ["dist", "assets", "ARCHITECTURE.md"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "tsc --noEmit",
+    "self-check": "npm run build && node dist/self-check.js",
+    "bench": "npm run build && node dist/benchmark.js",
+    "tool-check": "npm run build && node dist/tool-check.js",
+    "unit": "node --require ts-node/register --test test/*.test.ts",
+    "test": "npm run unit && npm run self-check && npm run tool-check",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "better-sqlite3": "12.11.1",
+    "chokidar": "5.0.0",
+    "glob": "13.0.6",
+    "ignore": "7.0.5",
+    "js-tiktoken": "1.0.21",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-go": "^0.21.2",
+    "tree-sitter-java": "^0.21.0",
+    "tree-sitter-javascript": "^0.21.4",
+    "tree-sitter-python": "^0.21.0",
+    "tree-sitter-rust": "^0.21.0",
+    "tree-sitter-typescript": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "26.0.1",
+    "ts-node": "10.9.2",
+    "typescript": "^5.5.3"
+  }
+}

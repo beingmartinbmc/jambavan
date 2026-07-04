@@ -237,8 +237,8 @@ Everything driven purely in-process is sub-millisecond; the outliers (`index`, `
 
 | dimension | this repo (38 files, 177 symbols) | a mid-size Java service (166 files, ~1,000 symbols) |
 |---|---|---|
-| cold index | ~164 ms | ~550 ms |
-| incremental re-index | ~5.7× faster | ~10× faster |
+| cold index | ~164 ms | ~577 ms |
+| incremental re-index | ~5.7× faster | ~8.4× faster |
 | context tokens saved | ~44% | **~87%** |
 | files→chunks (5 queries) | 6 files → 14 chunks | 80 files → 133 chunks |
 | graph edges extracted | 564 | ~10,400 |

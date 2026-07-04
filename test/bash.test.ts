@@ -57,14 +57,14 @@ test('bash: benign commands resembling footguns still run', async () => {
   } finally { cleanup(); }
 });
 
-test('bash: minimal env hides host secrets by default', async () => {
+test('bash: minimal env hides host secrets by default and suppresses color', async () => {
   const { config, cleanup } = mkTempConfig();
   try {
     process.env.JAMBAVAN_TEST_SECRET = 'leak-me';
     try {
-      const r = await createBashTool(config).handler({ command: 'echo "[${JAMBAVAN_TEST_SECRET}]"' });
+      const r = await createBashTool(config).handler({ command: 'printf "[%s] [%s] [%s]" "${JAMBAVAN_TEST_SECRET}" "${NO_COLOR}" "${FORCE_COLOR}"' });
       assert.equal(r.success, true);
-      assert.match(r.output, /\[\]/); // variable not present in child env
+      assert.match(r.output, /\[\] \[1\] \[0\]/); // secret absent; no-color defaults present
     } finally {
       delete process.env.JAMBAVAN_TEST_SECRET;
     }
@@ -78,6 +78,22 @@ test('bash: cwd escaping the root is rejected', async () => {
       () => createBashTool(config).handler({ command: 'pwd', cwd: '/etc' }),
       /escapes project root/,
     );
+  } finally { cleanup(); }
+});
+
+test('bash: no-color defaults override inherited color env', async () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    process.env.JAMBAVAN_BASH_INHERIT_ENV = '1';
+    process.env.FORCE_COLOR = '3';
+    try {
+      const r = await createBashTool(config).handler({ command: 'printf "%s:%s" "$NO_COLOR" "$FORCE_COLOR"' });
+      assert.equal(r.success, true);
+      assert.equal(r.output, '1:0');
+    } finally {
+      delete process.env.JAMBAVAN_BASH_INHERIT_ENV;
+      delete process.env.FORCE_COLOR;
+    }
   } finally { cleanup(); }
 });
 

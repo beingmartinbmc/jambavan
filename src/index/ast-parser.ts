@@ -53,6 +53,11 @@ type TreeSitterLanguage = object; // opaque to TS; tree-sitter types it as Langu
 
 const _grammarCache = new Map<string, TreeSitterLanguage | null>();
 
+// Records WHY a language fell back to regex, so a native binding failure (ABI
+// mismatch) is diagnosable instead of being silently indistinguishable from a
+// grammar that was never installed. Keyed by language.
+const _backendError = new Map<string, string>();
+
 function loadGrammar(language: string): TreeSitterLanguage | null {
   if (_grammarCache.has(language)) return _grammarCache.get(language)!;
 
@@ -79,7 +84,8 @@ function loadGrammar(language: string): TreeSitterLanguage | null {
       mod;
     _grammarCache.set(language, grammar);
     return grammar;
-  } catch {
+  } catch (err) {
+    _backendError.set(language, err instanceof Error ? err.message : String(err));
     _grammarCache.set(language, null);
     return null;
   }
@@ -91,6 +97,7 @@ function loadGrammar(language: string): TreeSitterLanguage | null {
 type TSParser = any;
 
 let _Parser: (new () => TSParser) | null | undefined = undefined; // undefined = not yet tried
+let _parserError: string | undefined;
 
 function getParser(language: string): TSParser | null {
   if (_Parser === null) return null; // tree-sitter not installed
@@ -99,7 +106,8 @@ function getParser(language: string): TSParser | null {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       _Parser = require('tree-sitter');
-    } catch {
+    } catch (err) {
+      _parserError = err instanceof Error ? err.message : String(err);
       _Parser = null;
       return null;
     }
@@ -108,9 +116,15 @@ function getParser(language: string): TSParser | null {
   const grammar = loadGrammar(language);
   if (!grammar) return null;
 
-  const parser = new _Parser!();
-  parser.setLanguage(grammar);
-  return parser;
+  try {
+    const parser = new _Parser!();
+    parser.setLanguage(grammar);
+    return parser;
+  } catch (err) {
+    // setLanguage throws on an ABI mismatch between tree-sitter and a grammar.
+    _backendError.set(language, err instanceof Error ? err.message : String(err));
+    return null;
+  }
 }
 
 // ── Tree-sitter extraction ────────────────────────────────────────────────────
@@ -152,7 +166,10 @@ const DECLARATION_TYPES: Record<string, Set<string>> = {
   go: new Set([
     'function_declaration',
     'method_declaration',
-    'type_declaration',
+    // Go names structs/interfaces/aliases under type_declaration → type_spec.
+    // Collect type_spec directly so both `type X struct{}` and grouped
+    // `type ( A int; B int )` blocks yield one symbol per declared type.
+    'type_spec',
   ]),
   rust: new Set([
     'function_item',
@@ -218,11 +235,26 @@ function extractName(node: TSParser, language: string): string | null {
 }
 
 /**
+ * The declaration an export_statement wraps carries the real kind
+ * (class / function / interface / …). Classifying the export_statement node
+ * itself would mislabel every exported symbol as 'export', so unwrap first.
+ */
+function unwrapExport(node: TSParser): TSParser {
+  if (node.type !== 'export_statement') return node;
+  const decl =
+    node.childForFieldName?.('declaration') ??
+    node.children?.find((c: TSParser) =>
+      c.type !== 'export' && c.type !== 'default' && c.type !== 'comment'
+    );
+  return decl ? unwrapExport(decl) : node;
+}
+
+/**
  * Map tree-sitter node type to our Symbol type.
  */
 function nodeToSymbolType(nodeType: string): Symbol['type'] {
   if (/class/.test(nodeType))     return 'class';
-  if (/interface/.test(nodeType)) return 'interface';
+  if (/interface|trait/.test(nodeType)) return 'interface';
   if (/type/.test(nodeType))      return 'type';
   if (/variable|lexical|field/.test(nodeType)) return 'variable';
   if (nodeType === 'export_statement') return 'export';
@@ -333,7 +365,7 @@ function extractWithTreeSitter(
 
     symbols.push({
       name,
-      type:       nodeToSymbolType(node.type),
+      type:       nodeToSymbolType(unwrapExport(node).type),
       startLine,
       endLine,
       content,
@@ -476,13 +508,21 @@ export class ASTParser {
     return [...new Set(Object.keys(LANGUAGE_MAP).map(e => e.replace(/^\./, '')))];
   }
 
-  /** Report which languages are backed by tree-sitter vs regex */
-  static diagnostics(): { language: string; backend: 'tree-sitter' | 'regex' }[] {
+  /**
+   * Report which languages are backed by tree-sitter vs regex.
+   * When a language degrades to regex because a native binding failed to load
+   * (e.g. an ABI mismatch after a Node upgrade), `error` carries the reason so
+   * the degradation is diagnosable instead of silently masking parser bugs.
+   */
+  static diagnostics(): { language: string; backend: 'tree-sitter' | 'regex'; error?: string }[] {
     return Object.values(LANGUAGE_MAP)
       .filter((v, i, a) => a.indexOf(v) === i) // unique
-      .map(language => ({
-        language,
-        backend: getParser(language) ? 'tree-sitter' : 'regex',
-      }));
+      .map(language => {
+        const backend = getParser(language) ? 'tree-sitter' as const : 'regex' as const;
+        const error = backend === 'regex'
+          ? (_parserError ?? _backendError.get(language))
+          : undefined;
+        return error ? { language, backend, error } : { language, backend };
+      });
   }
 }

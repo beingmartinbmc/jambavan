@@ -97,18 +97,27 @@ Read-only tools are always registered. Mutating and shell tools are **opt-in** (
 | `list_files` | on | Explore directory structure |
 | `write_file` | `JAMBAVAN_ALLOW_WRITE=1` | Write or overwrite a file |
 | `patch_file` | `JAMBAVAN_ALLOW_WRITE=1` | Surgical find-and-replace (token-efficient) |
+| `jambavan_sankshipta` | `JAMBAVAN_ALLOW_WRITE=1` | Compress prose in place (writes the file — hence gated) |
 | `bash` | `JAMBAVAN_ALLOW_BASH=1` | Run shell commands (build, test, git, install) |
 
 ---
 
 ## Registration
 
+`install.sh` / `install.ps1` (see README) auto-detect and register all four below. Manual equivalents:
+
 **Claude Code**
 ```bash
 claude mcp add jambavan -- npx -y jambavan
 ```
 
-**Cursor** (`.cursor/mcp.json`)
+**Codex CLI**
+```bash
+codex mcp add jambavan -- npx -y jambavan
+```
+Persists to `~/.codex/config.toml` as `[mcp_servers.jambavan]` (top-level key is `mcp_servers`, not `mcpServers`).
+
+**Cursor** (`~/.cursor/mcp.json` global, or `.cursor/mcp.json` per-project)
 ```json
 {
   "mcpServers": {
@@ -117,16 +126,15 @@ claude mcp add jambavan -- npx -y jambavan
 }
 ```
 
-**Codex** (`~/.codex/config.yaml`)
-```yaml
-mcpServers:
-  - name: jambavan
-    command: npx -y jambavan
+**Continue** — drop a single-server JSON file into `~/.continue/mcpServers/jambavan.json` (or add a `mcpServers:` entry to `~/.continue/config.yaml`, which replaced the now-deprecated `config.json`):
+```json
+{ "command": "npx", "args": ["-y", "jambavan"] }
 ```
 
-**Continue** (`~/.continue/config.json`)
-```json
-"mcpServers": [{ "name": "jambavan", "command": "npx -y jambavan" }]
+**Claude Code plugin** — this repo is also a plugin marketplace (`.claude-plugin/marketplace.json` + `plugins/jambavan/`). The plugin's `plugin.json` declares the same MCP server and ships a Vibhishana Niti skill (`plugins/jambavan/skills/vibhishana-niti/`, invoked as `/jambavan:vibhishana-niti`), so `/plugin install jambavan@jambavan` wires up both without manual config:
+```shell
+/plugin marketplace add beingmartinbmc/jambavan
+/plugin install jambavan@jambavan
 ```
 
 ---
@@ -138,14 +146,18 @@ src/
 ├── index.ts                  # Entrypoint — starts MCP server, shows --help
 │
 ├── mcp/
-│   └── server.ts             # MCP Server (stdio transport)
-│                             # Handles tools/list and tools/call
+│   └── server.ts             # MCP Server (stdio transport): tools/list + tools/call,
+│                             # opt-in gating of write/bash tools
 │
 ├── index/
 │   ├── indexer.ts            # Orchestrates full / incremental indexing
 │   ├── ast-parser.ts         # Symbol extractor (tree-sitter + regex fallback)
 │   ├── file-cache.ts         # SQLite: file hash → indexed state (incremental)
 │   └── watcher.ts            # chokidar: watch for changes
+│
+├── knowledge/
+│   └── graph.ts              # Lightweight inferred code graph (nodes/edges,
+│                             # EXTRACTED vs INFERRED), report / query / shortest-path
 │
 ├── memory/
 │   └── store.ts              # OKF bundle manager: read/write/search concept docs
@@ -156,16 +168,23 @@ src/
 │   └── token-counter.ts      # js-tiktoken: exact token counts
 │
 ├── tools/
-│   ├── registry.ts           # Tool registry + dispatcher
-│   ├── read-file.ts
+│   ├── registry.ts           # Tool registry + dispatcher (central output cap)
+│   ├── path-guard.ts         # resolveInsideRoot containment + secret-file guard
+│   ├── read-file.ts          # read_file (line ranges, size cap)
 │   ├── write-file.ts         # write_file + patch_file
-│   ├── bash.ts               # Shell execution with hard safety blocks
 │   ├── search.ts             # ripgrep / grep wrapper + list_files
-│   ├── memory.ts             # jambavan_memory_* tool descriptors + handlers
+│   ├── bash.ts               # Shell execution with footgun blocks + no-color env
+│   ├── sankshipta.ts         # Deterministic prose/prompt compression
+│   ├── memory.ts             # jambavan_memory_* descriptors + handlers
+│   ├── jambavan.ts           # Core jambavan_* handlers + awaken protocol text
 │   └── vibhishana-niti.ts    # jambavan_vibhishana_niti + jambavan_rin_mochan ledger
 │
-└── config/
-    └── jambavan.config.ts      # Runtime config (project root, token budget, ignore list)
+├── config/
+│   └── jambavan.config.ts    # Runtime config (project root, token budget, ignore list)
+│
+├── benchmark.ts              # `npm run bench` — index / context / graph / tools
+├── self-check.ts             # `npm run self-check` — end-to-end smoke
+└── tool-check.ts             # `npm run tool-check` — every advertised tool over stdio
 
 test/                         # node:test unit suites (*.test.ts)
 test-support/                 # shared test helpers (temp config, env sandbox)
@@ -278,9 +297,10 @@ The index, the context budgeting, the memory, the surgical patch — all reusabl
 | Env var | Default | Description |
 |---|---|---|
 | `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
+| `JAMBAVAN_MEMORY_HOME` | `<indexDir>/memory` | Where OKF memory docs live; point at a shared palace to reuse memory across projects |
 | `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite` / `full` / `ultra`) |
-| `JAMBAVAN_ALLOW_WRITE` | off | `1` registers `write_file` + `patch_file` |
+| `JAMBAVAN_ALLOW_WRITE` | off | `1` registers `write_file` + `patch_file` + `jambavan_sankshipta` |
 | `JAMBAVAN_ALLOW_BASH` | off | `1` registers `bash` |
 | `JAMBAVAN_ALLOW_OUTSIDE_ROOT` | off | `1` lets tools escape the project root |
 | `JAMBAVAN_ALLOW_SECRETS` | off | `1` lets file tools touch secret-looking files |
@@ -290,14 +310,20 @@ The index, the context budgeting, the memory, the surgical patch — all reusabl
 
 ---
 
+## Sankshipta tool discipline
+
+Jambavan bakes token-efficient computer use into its startup protocol and Vibhishana Niti: avoid unnecessary calls; prefer indexed context, `max_results`, line ranges, git summaries, structured projections (`jq`/`yq`/`awk`/`cut`), quiet/no-color commands, and hash/mtime polling over dump-and-read loops. The `bash` tool also exports `NO_COLOR=1` and `FORCE_COLOR=0` by default so checks return less ANSI noise.
+
+---
+
 ## Safety model
 
 Jambavan is driven by an autonomous host model, so capability is granted, not assumed:
 
-- **Read-only by default.** Only `read_file`, `search`, and `list_files` register unless `JAMBAVAN_ALLOW_WRITE=1` (adds `write_file` + `patch_file`) or `JAMBAVAN_ALLOW_BASH=1` (adds `bash`). Disabled tools are never advertised to the host.
+- **Read-only by default.** Only `read_file`, `search`, and `list_files` register unless `JAMBAVAN_ALLOW_WRITE=1` (adds `write_file`, `patch_file`, and `jambavan_sankshipta` — which rewrites files in place) or `JAMBAVAN_ALLOW_BASH=1` (adds `bash`). Disabled tools are never advertised to the host.
 - **Path containment.** All file/shell paths resolve inside `JAMBAVAN_ROOT`; symlinks are checked via `realpath`. `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` disables this for trusted local use.
 - **Secret-file guard.** `.env*`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, and similar are refused by all file tools unless `JAMBAVAN_ALLOW_SECRETS=1`.
-- **`bash` isolation.** Runs with a minimal env (no inherited host secrets unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and a best-effort footgun blocklist for obvious root/home/project wipes, destructive git resets/cleans, fork bombs, and blind remote shell pipes. The blocklist is **not** a security boundary — run inside a container/microVM for real isolation.
+- **`bash` isolation.** Runs with a minimal no-color env (no inherited host secrets unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and a best-effort footgun blocklist for obvious root/home/project wipes, destructive git resets/cleans, fork bombs, and blind remote shell pipes. The blocklist is **not** a security boundary — run inside a container/microVM for real isolation.
 - **Output caps.** Every tool result is truncated at `JAMBAVAN_MAX_OUTPUT_CHARS`; `read_file` refuses files over `JAMBAVAN_MAX_READ_BYTES` before loading them. Host-supplied numeric params (line ranges, `max_results`, `limit`) are clamped to safe ranges.
 
 ---

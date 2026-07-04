@@ -14,7 +14,7 @@ export interface ContextChunk {
   score: number;       // relevance score (higher = more relevant)
   startLine?: number;
   endLine?: number;
-  type: 'function' | 'class' | 'file' | 'snippet';
+  type: 'function' | 'class' | 'interface' | 'type' | 'variable' | 'export' | 'file' | 'snippet';
 }
 
 export interface AssembledContext {

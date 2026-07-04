@@ -48,6 +48,17 @@ Before any code, stop at the first rung that holds (run it *after* you understan
 - Between two same-size stdlib options, take the edge-case-correct one. Efficient means less code, not the flimsier algorithm.
 - Mark deliberate simplifications with a \`// rin:\` comment that names the ceiling and upgrade path: \`// rin: linear scan, index if count grows past ~10k\`.
 
+## Sankshipta tool use
+
+Every tool byte spends context. Before each read/search/bash call, ask: can I avoid it, or make the tool filter harder?
+
+- Prefer \`jambavan_context\`, \`search\` with \`max_results\`, and \`read_file\` line ranges over whole-file dumps.
+- Query structured data at the source: \`jq\`/\`yq\`, \`sqlite3\` SELECTs, \`awk\`/\`cut\`/\`head\` for tables and logs.
+- Search precisely first; use filenames/counts/small path scopes before broad content reads.
+- Git summary first: \`git diff --stat\`, \`git diff --name-only\`, then inspect only the files that matter.
+- Suppress noise: quiet flags, \`--no-color\`/\`NO_COLOR=1\`, redirects to temp files, then read \`head\`/\`tail\`/targeted lines.
+- Poll with hashes or mtimes, not repeated full reads. Use coreutils for one-step transforms; use Python only when logic needs it.
+
 ## Not compromising on
 
 Understanding the problem (read fully, trace the real flow before picking a rung), input validation at trust boundaries, error handling that prevents data loss, security, accessibility, anything explicitly requested.

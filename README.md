@@ -28,7 +28,66 @@ Jambavan does not call an LLM and is not an agent. **The host model thinks. Jamb
 | **The hands** | `read_file`, `search`, `list_files` (default) · `write_file`, `patch_file`, `bash` (opt-in) | Guarded file, search, and shell tools — confined to the project root. Read-only tools are on by default; **mutating and shell tools are OFF unless you opt in** (see [Safety](#safety)). `bash` has a best-effort footgun filter (not a security boundary). |
 | **The reminder** | `jambavan_awaken` | Reminds the model of every power above, plus the session protocol and recent project memories. Call it first. |
 
-## Install / run
+## Install
+
+One command. Finds every coding agent on your machine (Claude Code, Codex CLI, Cursor, Continue). Registers Jambavan as an MCP server for each one it finds.
+
+```bash
+# macOS · Linux · WSL · Git Bash
+curl -fsSL https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/install.sh | bash
+```
+
+```powershell
+# Windows · PowerShell 5.1+
+irm https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/install.ps1 | iex
+```
+
+~30 seconds. Needs Node ≥20. Skips agents you don't have. Safe to re-run. It never touches other MCP servers already in your config — read the script before piping it into a shell, as with anything on the internet.
+
+## Register manually
+
+Prefer to wire it up yourself, or use an agent the installer doesn't know about? Same command everywhere: `npx -y jambavan`.
+
+**Claude Code**
+
+```bash
+claude mcp add jambavan -- npx -y jambavan
+```
+
+**Codex CLI**
+
+```bash
+codex mcp add jambavan -- npx -y jambavan
+```
+
+**Cursor** (`~/.cursor/mcp.json` global, or `.cursor/mcp.json` per-project)
+
+```json
+{
+  "mcpServers": {
+    "jambavan": { "command": "npx", "args": ["-y", "jambavan"] }
+  }
+}
+```
+
+**Continue** — drop a JSON file into `~/.continue/mcpServers/jambavan.json`:
+
+```json
+{ "command": "npx", "args": ["-y", "jambavan"] }
+```
+
+## Claude Code plugin
+
+This repo is also a Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces). Add it and install with two commands — no manual MCP config:
+
+```shell
+/plugin marketplace add beingmartinbmc/jambavan
+/plugin install jambavan@jambavan
+```
+
+The plugin registers the same `npx -y jambavan` MCP server (read-only tools by default) and bundles a **Vibhishana Niti skill** — run `/jambavan:vibhishana-niti` to activate the efficient-dev discipline in any Claude Code session. Refresh later with `/plugin marketplace update jambavan`. The catalog lives in [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json); the plugin manifest in [`plugins/jambavan/.claude-plugin/plugin.json`](plugins/jambavan/.claude-plugin/plugin.json).
+
+## Run directly
 
 ```bash
 npm install
@@ -39,26 +98,6 @@ node dist/index.js
 
 Set `JAMBAVAN_ROOT=/path/to/project` when launching from outside the target repo.
 
-## Register with your model
-
-**Claude Code**
-
-```bash
-claude mcp add jambavan -- npx -y jambavan
-```
-
-**Cursor** (`.cursor/mcp.json`)
-
-```json
-{
-  "mcpServers": {
-    "jambavan": { "command": "npx", "args": ["-y", "jambavan"] }
-  }
-}
-```
-
-**Codex / Continue** use the same command shape: `npx -y jambavan`.
-
 ## The leap (recommended workflow)
 
 1. `jambavan_awaken` — read the protocol and recent project memories.
@@ -66,8 +105,9 @@ claude mcp add jambavan -- npx -y jambavan
 3. `jambavan_watch start` — keep the index live while editing.
 4. `jambavan_context` — pull ranked, token-budgeted context *before* touching unfamiliar code.
 5. `patch_file` over `write_file` — surgical edits, cheaper tokens. *(needs `JAMBAVAN_ALLOW_WRITE=1`)*
-6. `bash` — run the smallest relevant check. *(needs `JAMBAVAN_ALLOW_BASH=1`)*
-7. `jambavan_memory_store` / `jambavan_memory_mine_session` — persist what was decided, so the next session starts awake.
+6. Keep tool output Sankshipta: line ranges, `max_results`, `git --stat` / `--name-only`, `jq`/`yq`/`awk`/`cut`/`head`, quiet/no-color flags, and hash/mtime polling before full reads.
+7. `bash` — run the smallest relevant check. *(needs `JAMBAVAN_ALLOW_BASH=1`)*
+8. `jambavan_memory_store` / `jambavan_memory_mine_session` — persist what was decided, so the next session starts awake.
 
 ## Safety
 
@@ -75,23 +115,24 @@ claude mcp add jambavan -- npx -y jambavan
 
 | Tool(s) | Enable with |
 |---|---|
-| `write_file`, `patch_file` | `JAMBAVAN_ALLOW_WRITE=1` |
+| `write_file`, `patch_file`, `jambavan_sankshipta` | `JAMBAVAN_ALLOW_WRITE=1` |
 | `bash` | `JAMBAVAN_ALLOW_BASH=1` |
 
-When disabled, these tools are not registered at all — the host never sees them.
+When disabled, these tools are not registered at all — the host never sees them. (`jambavan_sankshipta` rewrites files in place, so it counts as a write tool.)
 
 File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROOT` (or the detected project root). Set `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` only for trusted local use. Files that look like secrets (`.env*`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, …) are refused by all file tools unless `JAMBAVAN_ALLOW_SECRETS=1`.
 
-`bash` runs with a minimal environment (host secrets are not inherited unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and catches a few obvious footguns (`rm -rf /`, `rm -rf /*`, home/project wipes, `git reset --hard`, `git clean -fx`, blind `curl | sh`, and similar). This is **not** a security boundary — it is trivially bypassed by encoding, aliases, scripts, shell expansion, or unlisted commands like `find . -delete`. Treat `bash` as a local shell: review tool calls before approving them, and run the server inside a sandboxed workspace (container / microVM) if you need real isolation.
+`bash` runs with a minimal no-color environment (host secrets are not inherited unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and catches a few obvious footguns (`rm -rf /`, `rm -rf /*`, home/project wipes, `git reset --hard`, `git clean -fx`, blind `curl | sh`, and similar). This is **not** a security boundary — it is trivially bypassed by encoding, aliases, scripts, shell expansion, or unlisted commands like `find . -delete`. Treat `bash` as a local shell: review tool calls before approving them, and run the server inside a sandboxed workspace (container / microVM) if you need real isolation.
 
 ## Configuration
 
 | Env var | Default | Description |
 |---|---|---|
 | `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
+| `JAMBAVAN_MEMORY_HOME` | `<indexDir>/memory` | Where OKF memory docs live; point at a shared palace to reuse memory across projects |
 | `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite` / `full` / `ultra`) |
-| `JAMBAVAN_ALLOW_WRITE` | off | `1` registers `write_file` + `patch_file` |
+| `JAMBAVAN_ALLOW_WRITE` | off | `1` registers `write_file` + `patch_file` + `jambavan_sankshipta` |
 | `JAMBAVAN_ALLOW_BASH` | off | `1` registers `bash` |
 | `JAMBAVAN_ALLOW_OUTSIDE_ROOT` | off | `1` lets tools escape the project root (trusted local use only) |
 | `JAMBAVAN_ALLOW_SECRETS` | off | `1` lets file tools touch secret-looking files |
@@ -101,16 +142,57 @@ File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROO
 
 ## Benchmark
 
-`npm run bench` dogfoods the real pipeline — no LLM calls, no external services, fully deterministic. It auto-derives queries from the repo's most common symbols, then measures index speed, context tokens vs. the naive "open every matched file" baseline, and compression ratio. Point it at any repo with `JAMBAVAN_ROOT`.
+`npm run bench` dogfoods the real pipeline — no LLM calls, no external services, fully deterministic. It auto-derives queries from the repo's own most common symbols, so it's meaningful on any codebase. It measures **five** dimensions, not just token savings, and every number below is a fresh run against this repo (33 files, 151 symbols):
 
-| repo | files | symbols | cold index | warm re-index | context tokens saved |
-|---|---|---|---|---|---|
-| this repo (TypeScript) | 31 | 116 | 149 ms | 42 ms (**3.5×**) | **53%** |
-| a mid-size Java service | 63 | 614 | 283 ms | 22 ms (**12.9×**) | **62%** |
+**1. Index** — build speed and throughput.
 
-**The larger the codebase, the bigger the win.** Incremental re-index stays roughly flat (only changed files are re-parsed) while a from-scratch read grows with the repo. Prose compression (`jambavan_sankshipta`) holds steady around **24%**.
+| metric | value |
+|---|---|
+| cold build | ~130 ms (33 files, 151 symbols) |
+| warm re-index | ~27 ms (**~5× faster**, only changed files re-parsed) |
+| throughput | ~250 files/s · ~1,150 symbols/s |
 
-Baseline = the full contents of every file containing a match, which is what an agent reads today without an index. It's a conservative comparison, and per-query results vary — occasionally a query whose matches sit in tiny files reads cheaper whole than as ranked snippets. Run it on yours:
+**2. Context** — not only tokens, but *how much the agent has to open*. Baseline = an agent reads the full contents of every file a query matches; jambavan ships ranked, budgeted snippets instead.
+
+| metric | baseline | jambavan | win |
+|---|---|---|---|
+| files/snippets to read | 6 whole files | 14 focused chunks | targeted spans, not whole files |
+| tokens (5 queries) | ~21,500 | ~12,000 | **~44% fewer** |
+| assemble latency | (disk reads) | ~2 ms | below one check's runtime |
+
+**3. Graph** — relationships extracted from the AST (a coverage metric, not tokens).
+
+| metric | value |
+|---|---|
+| nodes / edges | 178 / 473 |
+| edge provenance | 264 `EXTRACTED` (from AST) · 209 `INFERRED` (name mention) |
+| build / query / path | ~2 ms / ~6.6 ms / ~0.06 ms |
+
+**4. Sankshipta** — prose compression holds steady around **24%**.
+
+**5. Tool latency** — **all 24 tools the MCP server advertises**, timed over the real stdio transport (the same request/response path a host model uses): min/median/max over 10 calls for read-only tools, single-shot for mutating ones. Representative medians:
+
+| tool | median | tool | median |
+|---|---|---|---|
+| `jambavan_context` | 0.2 ms | `jambavan_memory_search` | 0.2 ms |
+| `jambavan_graph_query` | 0.3 ms | `jambavan_awaken` | 1.4 ms |
+| `jambavan_graph_path` | 0.2 ms | `jambavan_index` (1 file) | 12.9 ms |
+| `read_file` | 0.2 ms | `search` (ripgrep) | 11.1 ms |
+| `list_files` | 0.2 ms | `bash` (subprocess) | 12.5 ms |
+
+Everything driven purely in-process is sub-millisecond; the outliers (`index`, `search`, `bash`) are the ones that shell out or touch disk, exactly as expected. Every call succeeds — the benchmark exits non-zero if any tool errors, so it doubles as an end-to-end smoke test.
+
+**The larger the codebase, the bigger the win.** The same benchmark run against a mid-size Java service (166 files, ~1,000 symbols) — every dimension scales in Jambavan's favour:
+
+| dimension | this repo (33 files, 151 symbols) | a mid-size Java service (166 files, ~1,000 symbols) |
+|---|---|---|
+| cold index | ~130 ms | ~550 ms |
+| incremental re-index | ~5× faster | ~10× faster |
+| context tokens saved | ~44% | **~87%** |
+| files→chunks (5 queries) | 6 files → 14 chunks | 80 files → 133 chunks |
+| graph edges extracted | 473 | ~10,400 |
+
+Incremental re-index and per-query context stay roughly flat while a from-scratch read grows with the repo, so the token savings widen as the codebase grows. Baseline is a conservative comparison — per-query results vary, and occasionally a query whose matches sit in tiny files reads cheaper whole than as ranked snippets. Run it on yours:
 
 ```bash
 JAMBAVAN_ROOT=/path/to/your/repo npm run bench

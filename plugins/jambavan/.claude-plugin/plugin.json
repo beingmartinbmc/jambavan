@@ -1,0 +1,24 @@
+{
+  "name": "jambavan",
+  "description": "MCP server that awakens any coding model's latent powers: AST-aware code index, token-budgeted context, durable memory, an inferred code graph, prompt compression, and guarded file/shell tools. The host model thinks; Jambavan gives it the ground to leap from.",
+  "version": "0.3.0",
+  "author": {
+    "name": "beingmartinbmc"
+  },
+  "homepage": "https://github.com/beingmartinbmc/jambavan#readme",
+  "repository": "https://github.com/beingmartinbmc/jambavan",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "code-index",
+    "tree-sitter",
+    "developer-tools"
+  ],
+  "mcpServers": {
+    "jambavan": {
+      "command": "npx",
+      "args": ["-y", "jambavan"]
+    }
+  }
+}

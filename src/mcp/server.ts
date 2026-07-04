@@ -298,7 +298,12 @@ export async function startServer(): Promise<void> {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const registryTools = registry.definitions().map(toMcpTool);
-    return { tools: [...NATIVE_TOOLS, ...registryTools] };
+    // jambavan_sankshipta mutates files in-place by default, so it is a write
+    // tool: keep it off the advertised list unless writes are explicitly enabled.
+    const native = allowWrite
+      ? NATIVE_TOOLS
+      : NATIVE_TOOLS.filter(t => t.name !== 'jambavan_sankshipta');
+    return { tools: [...native, ...registryTools] };
   });
 
   // ── tools/call ─────────────────────────────────────────────────────────────
@@ -371,7 +376,7 @@ export async function startServer(): Promise<void> {
         score:     r.score,
         startLine: r.symbol.startLine,
         endLine:   r.symbol.endLine,
-        type:      (r.symbol.type === 'class' ? 'class' : 'function') as ContextChunk['type'],
+        type:      r.symbol.type,
       }));
 
       const { contextBlock, usedTokens, includedChunks, droppedChunks } =
@@ -462,6 +467,13 @@ export async function startServer(): Promise<void> {
 
     // ── jambavan_sankshipta ────────────────────────────────────────────────────
     if (name === 'jambavan_sankshipta') {
+      // Mutating tool: refuse unless writes are enabled, even if the name is guessed.
+      if (!allowWrite) {
+        return {
+          content: [{ type: 'text', text: 'jambavan_sankshipta writes files and is disabled. Set JAMBAVAN_ALLOW_WRITE=1 to enable it.' }],
+          isError: true,
+        };
+      }
       try {
         return { content: [{ type: 'text', text: sankshiptaFile(input, config) }] };
       } catch (err) {
@@ -500,6 +512,10 @@ export async function startServer(): Promise<void> {
       const backends = ASTParser.diagnostics();
       const tsBackends    = backends.filter(b => b.backend === 'tree-sitter').map(b => b.language);
       const regexBackends = backends.filter(b => b.backend === 'regex').map(b => b.language);
+      // A regex fallback that carries an error means a native binding failed to
+      // load (e.g. ABI mismatch) — that silently degrades AST accuracy, so make
+      // it loud here instead of letting it masquerade as a healthy fallback.
+      const degraded = backends.filter(b => b.error);
 
       const indexStats = jambavanIndex?.stats();
       const lines = [
@@ -507,6 +523,10 @@ export async function startServer(): Promise<void> {
         '',
         `Tree-sitter (${tsBackends.length}): ${tsBackends.join(', ') || 'none'}`,
         `Regex fallback (${regexBackends.length}): ${regexBackends.join(', ') || 'none'}`,
+        ...(degraded.length
+          ? ['', '⚠ Native parser DEGRADED to regex — AST accuracy reduced (run `npm rebuild`):',
+             ...degraded.map(b => `  ${b.language}: ${b.error}`)]
+          : []),
         '',
         indexStats
           ? `Index: ${indexStats.files.totalFiles} files · ${indexStats.symbols} symbols`
@@ -545,8 +565,13 @@ export async function startServer(): Promise<void> {
     const result = await registry.execute(name, input);
 
     if (!result.success) {
+      // Preserve captured stdout/stderr on failure — for a debugging tool,
+      // the generic error string alone (e.g. "Command failed") is useless.
+      const detail = result.output
+        ? `${result.error ?? 'Tool execution failed'}\n${result.output}`
+        : (result.error ?? 'Tool execution failed');
       return {
-        content:  [{ type: 'text', text: result.error ?? 'Tool execution failed' }],
+        content:  [{ type: 'text', text: detail }],
         isError: true,
       };
     }

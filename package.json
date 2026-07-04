@@ -6,7 +6,20 @@
   "bin": {
     "jambavan": "dist/index.js"
   },
-  "files": ["dist", "assets", "ARCHITECTURE.md"],
+  "files": [
+    "dist",
+    "ARCHITECTURE.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "code-index",
+    "tree-sitter",
+    "developer-tools"
+  ],
+  "engines": {
+    "node": ">=20 <27"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -31,17 +44,26 @@
     "ignore": "7.0.5",
     "js-tiktoken": "1.0.21",
     "tree-sitter": "^0.21.1",
-    "tree-sitter-go": "^0.21.2",
-    "tree-sitter-java": "^0.21.0",
-    "tree-sitter-javascript": "^0.21.4",
-    "tree-sitter-python": "^0.21.0",
-    "tree-sitter-rust": "^0.21.0",
-    "tree-sitter-typescript": "^0.21.2"
+    "tree-sitter-go": "^0.23.4",
+    "tree-sitter-java": "^0.23.5",
+    "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-python": "^0.23.4",
+    "tree-sitter-rust": "^0.23.1",
+    "tree-sitter-typescript": "^0.23.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "26.0.1",
     "ts-node": "10.9.2",
     "typescript": "^5.5.3"
+  },
+  "author": "beingmartinbmc",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beingmartinbmc/jambavan.git"
+  },
+  "homepage": "https://github.com/beingmartinbmc/jambavan#readme",
+  "bugs": {
+    "url": "https://github.com/beingmartinbmc/jambavan/issues"
   }
 }

@@ -128,8 +128,10 @@ const DECLARATION_TYPES: Record<string, Set<string>> = {
     'abstract_class_declaration',
     'interface_declaration',
     'type_alias_declaration',
-    'lexical_declaration',      // const/let at top level
+    'lexical_declaration',      // const/let declarations
     'variable_declaration',
+    'method_definition',
+    'public_field_definition',
     'export_statement',
   ]),
   javascript: new Set([
@@ -138,6 +140,8 @@ const DECLARATION_TYPES: Record<string, Set<string>> = {
     'class_declaration',
     'lexical_declaration',
     'variable_declaration',
+    'method_definition',
+    'field_definition',
     'export_statement',
   ]),
   python: new Set([
@@ -186,6 +190,11 @@ function extractName(node: TSParser, language: string): string | null {
     if (decl) return extractName(decl, language);
   }
 
+  if (node.type === 'method_definition' || node.type === 'field_definition' || node.type === 'public_field_definition') {
+    const property = node.children?.find((c: TSParser) => c.type === 'property_identifier' || c.type === 'private_property_identifier');
+    return property?.text ?? null;
+  }
+
   // lexical_declaration / variable_declaration: first declarator's name
   if (node.type === 'lexical_declaration' || node.type === 'variable_declaration') {
     const declarator = node.children?.find((c: TSParser) =>
@@ -215,7 +224,7 @@ function nodeToSymbolType(nodeType: string): Symbol['type'] {
   if (/class/.test(nodeType))     return 'class';
   if (/interface/.test(nodeType)) return 'interface';
   if (/type/.test(nodeType))      return 'type';
-  if (/variable|lexical/.test(nodeType)) return 'variable';
+  if (/variable|lexical|field/.test(nodeType)) return 'variable';
   if (nodeType === 'export_statement') return 'export';
   return 'function';
 }

@@ -57,6 +57,7 @@ test('read_file: file over the default size cap is refused before reading into m
     const r = await createReadFileTool(config).handler({ path: 'big.txt' });
     assert.equal(r.success, false);
     assert.match(r.error ?? '', /too large/);
+    assert.doesNotMatch(r.error ?? '', /start_line\/end_line/);
   } finally { cleanup(); }
 });
 

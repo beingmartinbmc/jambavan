@@ -39,7 +39,7 @@ export function createReadFileTool(config: JambavanConfig): RegisteredTool {
         return {
           success: false,
           output: '',
-          error: `File too large (${stat.size} bytes > ${MAX_READ_BYTES}). Use start_line/end_line or raise JAMBAVAN_MAX_READ_BYTES.`,
+          error: `File too large (${stat.size} bytes > ${MAX_READ_BYTES}). Use search/list_files to narrow the target, or raise JAMBAVAN_MAX_READ_BYTES.`,
         };
       }
 

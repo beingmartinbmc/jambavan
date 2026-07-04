@@ -49,7 +49,8 @@ async function main(): Promise<void> {
   assert.match(awakenReport(config), /keep checks tiny/);
   const id = memory.jambavan_memory_store({ scope: 'self-check', title: 'Old fact', body: 'stale' }).match(/ID: (.+)$/)?.[1] ?? '';
   assert.match(memory.jambavan_memory_invalidate({ id, reason: 'newer fact' }), /Invalidated/);
-  assert.match(memory.jambavan_memory_recall({ scope: 'self-check' }), /INVALIDATED/);
+  assert.doesNotMatch(memory.jambavan_memory_recall({ scope: 'self-check' }), /Old fact/);
+  assert.doesNotMatch(memory.jambavan_memory_search({ query: 'stale', scope: 'self-check' }), /Old fact/);
   // Frontmatter must survive tricky values (colon + embedded quote) via JSON round-trip.
   const trickyTitle = 'GraphQL: "why" and trade-offs';
   memory.jambavan_memory_store({ scope: 'self-check', title: trickyTitle, body: 'x' });

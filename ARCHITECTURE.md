@@ -55,7 +55,8 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 > per symbol, but edges are resolved **by matching the reference name to every
 > symbol with that name** — there is no scope/type resolution, so a call to an
 > overloaded or shadowed name links to *all* same-named symbols. Body-token
-> mentions add `INFERRED` edges. Edges carry a confidence: `EXTRACTED` (from the
+> mentions add capped `INFERRED` edges; very common names are skipped to avoid
+> graph blowups. Edges carry a confidence: `EXTRACTED` (from the
 > AST) or `INFERRED` (name mention). Treat it as a navigation aid, not ground
 > truth — verify before large refactors. Real resolver-backed call/import
 > analysis would replace the name-matching step.
@@ -296,7 +297,7 @@ Jambavan is driven by an autonomous host model, so capability is granted, not as
 - **Read-only by default.** Only `read_file`, `search`, and `list_files` register unless `JAMBAVAN_ALLOW_WRITE=1` (adds `write_file` + `patch_file`) or `JAMBAVAN_ALLOW_BASH=1` (adds `bash`). Disabled tools are never advertised to the host.
 - **Path containment.** All file/shell paths resolve inside `JAMBAVAN_ROOT`; symlinks are checked via `realpath`. `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` disables this for trusted local use.
 - **Secret-file guard.** `.env*`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, and similar are refused by all file tools unless `JAMBAVAN_ALLOW_SECRETS=1`.
-- **`bash` isolation.** Runs with a minimal env (no inherited host secrets unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and a best-effort footgun blocklist. The blocklist is **not** a security boundary — run inside a container/microVM for real isolation.
+- **`bash` isolation.** Runs with a minimal env (no inherited host secrets unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and a best-effort footgun blocklist for obvious root/home/project wipes, destructive git resets/cleans, fork bombs, and blind remote shell pipes. The blocklist is **not** a security boundary — run inside a container/microVM for real isolation.
 - **Output caps.** Every tool result is truncated at `JAMBAVAN_MAX_OUTPUT_CHARS`; `read_file` refuses files over `JAMBAVAN_MAX_READ_BYTES` before loading them. Host-supplied numeric params (line ranges, `max_results`, `limit`) are clamped to safe ranges.
 
 ---

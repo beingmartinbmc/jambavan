@@ -21,3 +21,5 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run coverage
+        # --test-coverage-include/-lines require Node >= 22
+        if: matrix.node-version != 20

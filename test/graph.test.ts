@@ -133,6 +133,34 @@ test('graphPath: finds a path and labels edge confidence; reports misses', () =>
       sym('beta', path.join(root, 'b.ts'), 'function beta() {}'),
     ], config);
     assert.match(graphPath(g, 'alpha', 'beta'), /via call\/EXTRACTED/);
+    assert.match(graphPath(g, 'ghost', 'beta'), /No graph node found for from/);
     assert.match(graphPath(g, 'alpha', 'ghost'), /No graph node found for to/);
+  } finally { cleanup(); }
+});
+
+test('graphReport: empty graph reports no hubs', () => {
+  assert.match(graphReport({ nodes: [], edges: [] }), /No nodes yet/);
+});
+
+test('graphQuery: token budget truncates large output', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const symbols = [sym('alpha', path.join(root, 'alpha.ts'), 'alpha hub')];
+    for (let i = 0; i < 20; i++) {
+      symbols.push(sym(`target${i}`, path.join(root, `target${i}.ts`), 'alpha mention'));
+    }
+    const out = graphQuery(buildSymbolGraph(symbols, config), 'alpha', 20);
+    assert.match(out, /tokens truncated/);
+  } finally { cleanup(); }
+});
+
+test('graphPath: reports disconnected nodes', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const g = buildSymbolGraph([
+      sym('alpha', path.join(root, 'a.ts'), 'alpha'),
+      sym('omega', path.join(root, 'o.ts'), 'omega'),
+    ], config);
+    assert.match(graphPath(g, 'alpha', 'omega'), /No path found/);
   } finally { cleanup(); }
 });

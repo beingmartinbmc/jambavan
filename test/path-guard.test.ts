@@ -9,6 +9,8 @@ test('resolveInsideRoot: project-relative path resolves under root', () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     assert.equal(resolveInsideRoot('a/b.txt', config), path.join(root, 'a/b.txt'));
+    fs.mkdirSync(path.join(root, 'a'));
+    assert.equal(resolveInsideRoot('a/new/b.txt', config), path.join(root, 'a/new/b.txt'));
   } finally { cleanup(); }
 });
 

@@ -8,7 +8,7 @@ import { createReadFileTool } from './tools/read-file';
 import { buildMemoryHandlers } from './tools/memory';
 import { awakenReport, projectScope } from './tools/jambavan';
 import { buildSymbolGraph, graphPath, graphQuery, graphReport } from './knowledge/graph';
-import { harvestRin } from './tools/vibhishana-niti';
+import { harvestRin, vibhishanaNitiInstructions } from './tools/vibhishana-niti';
 import { sankshiptaText } from './tools/sankshipta';
 import { capLines } from './tools/search';
 import { boundedInt, capOutput } from './tools/registry';
@@ -47,6 +47,7 @@ async function main(): Promise<void> {
   assert.match(memory.jambavan_memory_recall({ scope: projectScope(config) }), /weighed Postgres vs Mongo/);
   assert.match(memory.jambavan_memory_recall({ scope: projectScope(config) }), /keep checks tiny/);
   assert.match(awakenReport(config), /keep checks tiny/);
+  assert.match(awakenReport(config), /Every tool byte spends context/);
   const id = memory.jambavan_memory_store({ scope: 'self-check', title: 'Old fact', body: 'stale' }).match(/ID: (.+)$/)?.[1] ?? '';
   assert.match(memory.jambavan_memory_invalidate({ id, reason: 'newer fact' }), /Invalidated/);
   assert.doesNotMatch(memory.jambavan_memory_recall({ scope: 'self-check' }), /Old fact/);
@@ -56,6 +57,8 @@ async function main(): Promise<void> {
   memory.jambavan_memory_store({ scope: 'self-check', title: trickyTitle, body: 'x' });
   assert.match(memory.jambavan_memory_recall({ scope: 'self-check' }), /GraphQL: "why" and trade-offs/);
   assert.equal(harvestRin(config).markers.length, 1);
+  assert.match(vibhishanaNitiInstructions('full'), /Sankshipta tool use/);
+  assert.match(vibhishanaNitiInstructions('full'), /git diff --stat/);
 
   const sankshipta = sankshiptaText('Please make sure to utilize the important path `src/index.ts`.\n```ts\nconst keep = "because and the";\n```\n');
   assert.ok(sankshipta.length < 'Please make sure to utilize the important path `src/index.ts`.\n```ts\nconst keep = "because and the";\n```\n'.length);

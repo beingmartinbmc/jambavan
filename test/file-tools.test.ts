@@ -45,6 +45,8 @@ test('read_file: line range is inclusive and clamps out-of-range bounds', async 
     assert.equal((await tool.handler({ path: 'lines.txt', start_line: -10, end_line: 999 })).output, 'a\nb\nc\nd\ne\n');
     // start only
     assert.equal((await tool.handler({ path: 'lines.txt', start_line: 4 })).output, 'd\ne\n');
+    // end only
+    assert.equal((await tool.handler({ path: 'lines.txt', end_line: 2 })).output, 'a\nb');
   } finally { cleanup(); }
 });
 

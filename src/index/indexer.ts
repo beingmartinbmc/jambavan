@@ -237,14 +237,7 @@ export class JambavanIndex {
   }
 
   private async discoverFiles(): Promise<string[]> {
-    const ig = ignore();
-
-    const gitignorePath = path.join(this.config.projectRoot, '.gitignore');
-    if (fs.existsSync(gitignorePath)) {
-      ig.add(fs.readFileSync(gitignorePath, 'utf-8'));
-    }
-
-    ig.add(this.config.ignore);
+    const ig = this.buildIgnore();
 
     // Only discover files the parser can handle — never read/hash/cache assets
     // (PNG, CSV, sqlite, …) the indexer would just skip. Extensions come dot-less
@@ -262,6 +255,29 @@ export class JambavanIndex {
       const rel = path.relative(this.config.projectRoot, f);
       return !ig.ignores(rel);
     });
+  }
+
+  private buildIgnore(): ReturnType<typeof ignore> {
+    const ig = ignore();
+    const gitignorePath = path.join(this.config.projectRoot, '.gitignore');
+    if (fs.existsSync(gitignorePath)) {
+      ig.add(fs.readFileSync(gitignorePath, 'utf-8'));
+    }
+    ig.add(this.config.ignore);
+    return ig;
+  }
+
+  /**
+   * Whether a path should be indexed — same gate the full scan uses, so the
+   * watcher can't sneak in files the full index deliberately excludes.
+   * Rejects unsupported extensions, paths outside the root, and anything
+   * matched by .gitignore or config.ignore.
+   */
+  shouldIndex(filePath: string): boolean {
+    if (!ASTParser.canParse(filePath)) return false;
+    const rel = path.relative(this.config.projectRoot, filePath);
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return false;
+    return !this.buildIgnore().ignores(rel);
   }
 
   close(): void {

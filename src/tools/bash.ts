@@ -10,12 +10,16 @@ const PWD_MARKER = '\n__JAMBAVAN_PWD__';
 
 // bash inherits nothing by default — a minimal env avoids leaking the host's
 // secrets/tokens into arbitrary shell commands. Opt back in with JAMBAVAN_BASH_INHERIT_ENV=1.
+function quietEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, NO_COLOR: '1', FORCE_COLOR: '0' };
+}
+
 function minimalEnv(): NodeJS.ProcessEnv {
-  if (process.env.JAMBAVAN_BASH_INHERIT_ENV === '1') return process.env;
+  if (process.env.JAMBAVAN_BASH_INHERIT_ENV === '1') return quietEnv(process.env);
   const keep = ['PATH', 'HOME', 'SHELL', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'USER'];
   const env: NodeJS.ProcessEnv = {};
   for (const k of keep) if (process.env[k] !== undefined) env[k] = process.env[k];
-  return env;
+  return quietEnv(env);
 }
 
 // NOT a security boundary. These patterns catch a few obvious footguns
@@ -59,7 +63,7 @@ export function createBashTool(config: JambavanConfig): RegisteredTool {
       name: 'bash',
       description: [
         'Execute a shell command and return stdout + stderr.',
-        'Use for builds, tests, git status/diff, installs, and linting.',
+        'Use for builds, tests, git status/diff, installs, and linting; prefer quiet/no-color commands and filter output at source.',
         'The process starts in cwd, which is confined to the project root unless JAMBAVAN_ALLOW_OUTSIDE_ROOT=1.',
         'This is not a sandbox: commands can still read/write outside via absolute paths or child processes.',
         'Commands that finish outside the project root are reported as failures.',
@@ -93,7 +97,7 @@ export function createBashTool(config: JambavanConfig): RegisteredTool {
       try {
         const { stdout, stderr } = await execFileAsync(
           '/bin/sh',
-          ['-c', `set -e\n${command}\nprintf '${PWD_MARKER}%s' "$(pwd -P)"`],
+          ['-c', `set -e\nexport NO_COLOR=1 FORCE_COLOR=0\n${command}\nprintf '${PWD_MARKER}%s' "$(pwd -P)"`],
           {
             cwd,
             timeout,

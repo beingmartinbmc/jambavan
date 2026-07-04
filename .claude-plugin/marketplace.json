@@ -1,0 +1,16 @@
+{
+  "name": "jambavan",
+  "owner": {
+    "name": "beingmartinbmc"
+  },
+  "description": "Jambavan — a Model Context Protocol server that gives any coding model a live code map, durable memory, an inferred code graph, prompt compression, and guarded file/shell tools.",
+  "plugins": [
+    {
+      "name": "jambavan",
+      "source": "./plugins/jambavan",
+      "description": "MCP server: AST-aware code index, token-budgeted context, durable memory, code graph, prompt compression, and guarded tools. Read-only by default; write/shell tools are opt-in.",
+      "category": "developer-tools",
+      "keywords": ["mcp", "code-index", "tree-sitter", "context", "memory", "code-graph"]
+    }
+  ]
+}

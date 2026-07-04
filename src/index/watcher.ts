@@ -12,7 +12,6 @@
 
 import chokidar from 'chokidar';
 import * as path from 'path';
-import { ASTParser } from './ast-parser';
 import type { JambavanIndex } from './indexer';
 import type { JambavanConfig } from '../config/jambavan.config';
 
@@ -80,8 +79,12 @@ export class FileWatcher {
   // ── Internal ──────────────────────────────────────────────────────────────
 
   private processChange(filePath: string): void {
-    // Only index files the parser can actually do something with.
-    if (!ASTParser.canParse(filePath)) return;
+    // Authoritative gate: same ignore rules the full index uses (.gitignore +
+    // config.ignore + supported extensions), so the watcher can't index a file
+    // the full scan would have excluded.
+    // rin: shouldIndex re-reads .gitignore per event; fine at human edit rates,
+    // add a cached matcher if a bulk generator ever floods the watcher.
+    if (!this.index.shouldIndex(filePath)) return;
     try {
       this.index.indexFile(filePath);
       this.status.filesProcessed++;

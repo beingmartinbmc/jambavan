@@ -6,6 +6,12 @@
 
 <p align="center"><em>The mentor that reminds your model of powers it already has.</em></p>
 
+<p align="center">
+  <a href="https://www.npmjs.com/package/jambavan"><img src="https://img.shields.io/npm/v/jambavan.svg" alt="npm version"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/node/v/jambavan.svg" alt="node version"></a>
+  <a href="https://github.com/beingmartinbmc/jambavan/commits/main"><img src="https://img.shields.io/github/last-commit/beingmartinbmc/jambavan.svg" alt="last commit"></a>
+</p>
+
 ---
 
 In the Ramayana, when the army despaired at the ocean's edge, it was **Jambavan** — the ancient, wise bear-king — who turned to Hanuman and reminded him of his own forgotten, immeasurable strength. Hanuman had the power all along. He only needed to be reminded. Then he crossed the ocean in a single leap.

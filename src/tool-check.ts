@@ -97,6 +97,21 @@ async function main(): Promise<void> {
   await call('jambavan_memory_invalidate', { id });
   await call('jambavan_memory_delete', { id });
 
+  // ── Failure memory tools ──
+  const failStored = await call('jambavan_failure_store', {
+    command: 'npm run build',
+    symptom: 'Cannot find module better-sqlite3',
+    attempted_fix: 'Reinstalled node_modules',
+    status: 'resolved',
+    resolution: 'Rebuilt native deps with npm rebuild',
+    scope: 'toolcheck',
+  });
+  await call('jambavan_failure_search', { query: 'better-sqlite3', scope: 'toolcheck' });
+
+  // ── Session handoff tools ──
+  const exported = await call('jambavan_session_export', { scope: 'toolcheck', max_memories: 5 });
+  await call('jambavan_session_import', { text: exported || '# Empty handoff\n', scope: 'toolcheck' });
+
   await call('read_file', { path: 'hello.ts' });
   await call('write_file', { path: 'scratch.txt', content: 'hi' });
   await call('patch_file', { path: 'scratch.txt', old_text: 'hi', new_text: 'bye' });

@@ -178,6 +178,22 @@ async function benchTools(): Promise<ToolTiming[]> {
   await benchOnce('jambavan_memory_invalidate', { id });
   await benchOnce('jambavan_memory_delete', { id });
 
+  await benchOnce('jambavan_failure_store', {
+    command: 'npm run build',
+    symptom: "TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.",
+    status: 'unresolved',
+    do_not_retry: 'Re-running the same build without fixing the type mismatch.',
+  });
+  await bench('jambavan_failure_search', { query: 'npm run build' });
+
+  // Fetch full handoff text (untimed) so session_import has a realistic document to parse.
+  const handoffRes = await client.callTool({ name: 'jambavan_session_export', arguments: {} }) as {
+    content?: { text?: string }[];
+  };
+  const handoffText = String(handoffRes.content?.[0]?.text ?? '');
+  await bench('jambavan_session_export', {});
+  await benchOnce('jambavan_session_import', { text: handoffText });
+
   await bench('read_file', { path: 'hello.ts' });
   await benchOnce('write_file', { path: 'scratch.txt', content: 'hi' });
   await benchOnce('patch_file', { path: 'scratch.txt', old_text: 'hi', new_text: 'bye' });

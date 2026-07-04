@@ -53,6 +53,42 @@ function dedupeEdges(edges: GraphEdge[]): GraphEdge[] {
   });
 }
 
+/**
+ * Build a map: relative file path → Set of symbol names exported/defined in that file.
+ * Used to resolve import edges to their actual source file instead of name-only matching.
+ */
+function buildFileExportMap(symbols: Symbol[], config: JambavanConfig): Map<string, Set<string>> {
+  const map = new Map<string, Set<string>>();
+  for (const s of symbols) {
+    const file = rel(s.filePath, config);
+    if (!map.has(file)) map.set(file, new Set());
+    map.get(file)!.add(s.name);
+  }
+  return map;
+}
+
+/**
+ * Resolve a relative import specifier (e.g. './foo', '../utils/bar') from a source file
+ * to a relative file path in the project. Returns the resolved path (without extension)
+ * or null if it can't be resolved. Tries common extensions.
+ */
+function resolveImportPath(fromFile: string, specifier: string, fileExports: Map<string, Set<string>>): string | null {
+  if (!specifier.startsWith('.')) return null; // skip bare/package imports
+  const dir = path.dirname(fromFile);
+  const base = path.join(dir, specifier).replace(/\\/g, '/');
+  // Try exact match, then common extensions, then /index variants
+  const candidates = [
+    base,
+    `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.jsx`, `${base}.mts`,
+    `${base}/index.ts`, `${base}/index.tsx`, `${base}/index.js`,
+  ];
+  for (const c of candidates) {
+    const normalized = c.replace(/\\/g, '/');
+    if (fileExports.has(normalized)) return normalized;
+  }
+  return null;
+}
+
 export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig): KnowledgeGraph {
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
@@ -74,11 +110,67 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig): Kno
     symbolsByName.get(node.label)!.push(node.id);
   }
 
+  // Build file-level export map for import resolution
+  const fileExports = buildFileExportMap(symbols, config);
+
+  // Map node id → its relative file path for quick lookup
+  const nodeFile = new Map<string, string>();
+  for (const node of nodes.values()) {
+    if (node.filePath) nodeFile.set(node.id, node.filePath);
+  }
+
   for (const s of symbols) {
     const from = symbolId(s, config);
+    const fromFile = rel(s.filePath, config);
+
+    // Build import lookup for this symbol: name → specifier (from import-typed refs)
+    const importSpecifiers = new Map<string, string>();
     for (const ref of s.references ?? []) {
-      for (const to of symbolsByName.get(ref.name) ?? []) {
-        if (to !== from) edges.push({ from, to, type: ref.type, confidence: 'EXTRACTED' });
+      if (ref.type === 'import' && ref.specifier) {
+        importSpecifiers.set(ref.name, ref.specifier);
+      }
+    }
+
+    for (const ref of s.references ?? []) {
+      // Skip import refs from edge creation — they're only used for resolution metadata.
+      // The actual edges come from 'call' or 'implements' refs.
+      if (ref.type === 'import') continue;
+
+      const targets = symbolsByName.get(ref.name) ?? [];
+      if (targets.length === 0) continue;
+
+      if (targets.length === 1) {
+        // Unambiguous — single target
+        if (targets[0] !== from) edges.push({ from, to: targets[0], type: ref.type, confidence: 'EXTRACTED' });
+        continue;
+      }
+
+      // Multiple targets with same name: try import-path resolution first.
+      const specifier = importSpecifiers.get(ref.name);
+      if (specifier) {
+        const resolved = resolveImportPath(fromFile, specifier, fileExports);
+        if (resolved) {
+          // Only link to targets in the resolved file
+          let linked = false;
+          for (const to of targets) {
+            if (to !== from && nodeFile.get(to) === resolved) {
+              edges.push({ from, to, type: ref.type, confidence: 'EXTRACTED' });
+              linked = true;
+            }
+          }
+          if (linked) continue;
+        }
+      }
+
+      // Fallback: prefer same-file target, then fan out to all
+      const sameFile = targets.filter(t => t !== from && nodeFile.get(t) === fromFile);
+      if (sameFile.length > 0) {
+        for (const to of sameFile) edges.push({ from, to, type: ref.type, confidence: 'EXTRACTED' });
+      } else {
+        // Fall back: link to all (original behavior)
+        for (const to of targets) {
+          if (to !== from) edges.push({ from, to, type: ref.type, confidence: 'EXTRACTED' });
+        }
       }
     }
   }

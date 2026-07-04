@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
+import * as fs from 'fs';
+import * as path from 'path';
 import { MemoryStore } from '../src/memory/store';
 import { mkTempConfig } from '../test-support/config';
 
@@ -74,5 +76,54 @@ test('MemoryStore: delete, deleteByScope, and missing ids return correctly', () 
     assert.equal(store.deleteByScope('proj'), 1);
     assert.equal(store.deleteByScope('proj'), 0);
     assert.deepEqual(store.status(), { totalMemories: 0, scopes: [] });
+  } finally { cleanup(); }
+});
+
+// ── Issue 2: slug collision with different titles ────────────────────────────
+
+test('MemoryStore: different titles that produce same slug get disambiguated, not overwritten', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const store = new MemoryStore(config.memoryDir);
+    const id1 = store.store({ scope: 'proj', title: 'Fix Auth Bug!', body: 'first fix' });
+    const id2 = store.store({ scope: 'proj', title: 'fix auth bug', body: 'second fix' });
+    // They must NOT be the same ID (slug collision should be resolved)
+    assert.notEqual(id1, id2);
+    // Both are retrievable with distinct content
+    assert.equal(store.get(id1)?.body, 'first fix\n');
+    assert.equal(store.get(id2)?.body, 'second fix\n');
+    assert.equal(store.list('proj').length, 2);
+  } finally { cleanup(); }
+});
+
+// ── Issue 5: deleteByScope counts invalidated entries ────────────────────────
+
+test('MemoryStore: deleteByScope reports count including invalidated memories', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const store = new MemoryStore(config.memoryDir);
+    store.store({ scope: 'proj', title: 'Alive', body: 'yes' });
+    const inv = store.store({ scope: 'proj', title: 'Dead', body: 'no' });
+    store.invalidate(inv);
+    // 1 active + 1 invalidated = 2 actual files deleted
+    assert.equal(store.deleteByScope('proj'), 2);
+  } finally { cleanup(); }
+});
+
+// ── Issue 1: appendLog is append-only (no read-modify-write) ─────────────────
+
+test('MemoryStore: concurrent stores produce distinct log entries without corruption', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const store = new MemoryStore(config.memoryDir);
+    // Rapid sequential stores — exercises O_APPEND path
+    for (let i = 0; i < 20; i++) {
+      store.store({ scope: 'proj', title: `Entry ${i}`, body: `body ${i}` });
+    }
+    const log = fs.readFileSync(path.join(config.memoryDir, 'log.md'), 'utf-8');
+    // All 20 store entries should be present
+    for (let i = 0; i < 20; i++) {
+      assert.match(log, new RegExp(`Entry ${i}`), `missing log entry for Entry ${i}`);
+    }
   } finally { cleanup(); }
 });

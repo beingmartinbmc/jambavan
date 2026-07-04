@@ -10,6 +10,10 @@
   <a href="https://www.npmjs.com/package/jambavan"><img src="https://img.shields.io/npm/v/jambavan.svg" alt="npm version"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/node/v/jambavan.svg" alt="node version"></a>
   <a href="https://github.com/beingmartinbmc/jambavan/commits/main"><img src="https://img.shields.io/github/last-commit/beingmartinbmc/jambavan.svg" alt="last commit"></a>
+  <a href="https://github.com/beingmartinbmc/jambavan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/beingmartinbmc/jambavan/ci.yml?branch=main" alt="CI status"></a>
+  <a href="https://bundlephobia.com/package/jambavan"><img src="https://img.shields.io/bundlephobia/minzip/jambavan" alt="bundle size"></a>
+  <a href="https://www.npmjs.com/package/jambavan"><img src="https://img.shields.io/npm/dm/jambavan.svg" alt="downloads"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/jambavan.svg" alt="license"></a>
 </p>
 
 ---
@@ -26,9 +30,10 @@ Jambavan does not call an LLM and is not an agent. **The host model thinks. Jamb
 
 | Power | Tools | What it does |
 |---|---|---|
-| **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_diagnostics` | AST-aware code index (tree-sitter, incremental, live-watched). Retrieve ranked, token-budgeted context instead of re-reading whole files. |
-| **The bridge** | `jambavan_graph_report`, `jambavan_graph_query`, `jambavan_graph_path` | A **lightweight inferred code graph** — callers, callees, imports, mentions — built from AST-extracted references matched **by symbol name** (not scope-resolved). Traverse relationships and find the shortest path between two symbols. Edges are labelled `EXTRACTED` (from the AST) or `INFERRED` (name mention); verify before large refactors. |
+| **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_diagnostics` | AST-aware code index (tree-sitter, incremental, live-watched). Retrieve ranked, token-budgeted context instead of re-reading whole files. `jambavan_context` also takes `compress_prose`, `include_diff` (recent git changes per symbol), and `include_tests` (associated test files) — enrichments share the same token budget, not added on top. |
+| **The bridge** | `jambavan_graph_report`, `jambavan_graph_query`, `jambavan_graph_path` | A **lightweight inferred code graph** — callers, callees, imports, mentions — built from AST-extracted references matched **by symbol name** (not scope-resolved). Direct `import` statements are resolved to their actual source file, so an ambiguous call between two same-named symbols links to the one actually imported; unresolved calls still fan out by name. Edges are labelled `EXTRACTED` (from the AST) or `INFERRED` (name mention); verify before large refactors. |
 | **Memory** | `jambavan_memory_store`, `_search`, `_recall`, `_mine_session`, `_invalidate`, `_delete`, `_status` | Durable, human-readable memory as markdown files under `.jambavan/memory/`. BM25 search, no database, no embeddings, no external service. Decisions survive across sessions and models. |
+| **Session continuity** | `jambavan_failure_store`, `jambavan_failure_search`, `jambavan_session_export`, `jambavan_session_import` | Structured failure records (command, symptom, root cause, do-not-retry advice) so a fresh session doesn't repeat a dead end. `jambavan_session_export` produces a single portable handoff document (recent memories, rin debt, git status) to resume work in a new session, host, or with a colleague. |
 | **Sankshipta** *(brevity)* | `jambavan_sankshipta` | Deterministically compress prose and prompts to fewer tokens while preserving code, paths, versions, and facts. |
 | **Vibhishana Niti** *(wise counsel)* | `jambavan_vibhishana_niti`, `jambavan_rin_mochan` | Activate an efficient-dev discipline mid-session, and audit deliberate shortcuts (`// rin:` markers) into a tracked debt ledger. |
 | **The hands** | `read_file`, `search`, `list_files` (default) · `write_file`, `patch_file`, `bash` (opt-in) | Guarded file, search, and shell tools — confined to the project root. Read-only tools are on by default; **mutating and shell tools are OFF unless you opt in** (see [Safety](#safety)). `bash` has a best-effort footgun filter (not a security boundary). |
@@ -151,6 +156,8 @@ Set `JAMBAVAN_ROOT=/path/to/project` when launching from outside the target repo
 6. Keep tool output Sankshipta: line ranges, `max_results`, `git --stat` / `--name-only`, `jq`/`yq`/`awk`/`cut`/`head`, quiet/no-color flags, and hash/mtime polling before full reads.
 7. `bash` — run the smallest relevant check. *(needs `JAMBAVAN_ALLOW_BASH=1`)*
 8. `jambavan_memory_store` / `jambavan_memory_mine_session` — persist what was decided, so the next session starts awake.
+9. Hit a dead end? `jambavan_failure_store` it (symptom, root cause, what NOT to retry) — and `jambavan_failure_search` before repeating a failing approach.
+10. Ending the session? `jambavan_session_export` — paste the handoff document into the next session, a different host, or a colleague.
 
 ## Safety
 
@@ -163,7 +170,7 @@ Set `JAMBAVAN_ROOT=/path/to/project` when launching from outside the target repo
 
 When disabled, these tools are not registered at all — the host never sees them. (`jambavan_sankshipta` rewrites files in place, so it counts as a write tool.)
 
-File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROOT` (or the detected project root). Set `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` only for trusted local use. Files that look like secrets (`.env*`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, …) are refused by all file tools unless `JAMBAVAN_ALLOW_SECRETS=1`.
+File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROOT` (or the detected project root). Set `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` only for trusted local use. Files that look like secrets (`.env*`, `*.pem`/`*.key`, `id_rsa`, `.npmrc`, `.aws/credentials`, `.git-credentials`, `service-account*.json`, and anything inside `.aws/`, `.docker/`, or `.ssh/`, …) are refused by all file tools unless `JAMBAVAN_ALLOW_SECRETS=1`. This list is deliberately non-exhaustive — it is not a substitute for keeping real secrets out of the repo.
 
 `bash` runs with a minimal no-color environment (host secrets are not inherited unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and catches a few obvious footguns (`rm -rf /`, `rm -rf /*`, home/project wipes, `git reset --hard`, `git clean -fx`, blind `curl | sh`, and similar). This is **not** a security boundary — it is trivially bypassed by encoding, aliases, scripts, shell expansion, or unlisted commands like `find . -delete`. Treat `bash` as a local shell: review tool calls before approving them, and run the server inside a sandboxed workspace (container / microVM) if you need real isolation.
 
@@ -185,15 +192,15 @@ File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROO
 
 ## Benchmark
 
-`npm run bench` dogfoods the real pipeline — no LLM calls, no external services, fully deterministic. It auto-derives queries from the repo's own most common symbols, so it's meaningful on any codebase. It measures **five** dimensions, not just token savings, and every number below is a fresh run against this repo (33 files, 151 symbols):
+`npm run bench` dogfoods the real pipeline — no LLM calls, no external services, fully deterministic. It auto-derives queries from the repo's own most common symbols, so it's meaningful on any codebase. It measures **five** dimensions, not just token savings, and every number below is a fresh run against this repo (38 files, 177 symbols):
 
 **1. Index** — build speed and throughput.
 
 | metric | value |
 |---|---|
-| cold build | ~130 ms (33 files, 151 symbols) |
-| warm re-index | ~27 ms (**~5× faster**, only changed files re-parsed) |
-| throughput | ~250 files/s · ~1,150 symbols/s |
+| cold build | ~164 ms (38 files, 177 symbols) |
+| warm re-index | ~29 ms (**~5.7× faster**, only changed files re-parsed) |
+| throughput | ~232 files/s · ~1,079 symbols/s |
 
 **2. Context** — not only tokens, but *how much the agent has to open*. Baseline = an agent reads the full contents of every file a query matches; jambavan ships ranked, budgeted snippets instead.
 
@@ -207,33 +214,34 @@ File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROO
 
 | metric | value |
 |---|---|
-| nodes / edges | 178 / 473 |
-| edge provenance | 264 `EXTRACTED` (from AST) · 209 `INFERRED` (name mention) |
-| build / query / path | ~2 ms / ~6.6 ms / ~0.06 ms |
+| nodes / edges | 209 / 564 |
+| edge provenance | 314 `EXTRACTED` (from AST) · 250 `INFERRED` (name mention) |
+| build / query / path | ~2.9 ms / ~7.3 ms / ~0.08 ms |
 
 **4. Sankshipta** — prose compression holds steady around **24%**.
 
-**5. Tool latency** — **all 24 tools the MCP server advertises**, timed over the real stdio transport (the same request/response path a host model uses): min/median/max over 10 calls for read-only tools, single-shot for mutating ones. Representative medians:
+**5. Tool latency** — **all 28 tools the MCP server advertises**, timed over the real stdio transport (the same request/response path a host model uses): min/median/max over 10 calls for read-only tools, single-shot for mutating ones. Representative medians:
 
 | tool | median | tool | median |
 |---|---|---|---|
-| `jambavan_context` | 0.2 ms | `jambavan_memory_search` | 0.2 ms |
-| `jambavan_graph_query` | 0.3 ms | `jambavan_awaken` | 1.4 ms |
-| `jambavan_graph_path` | 0.2 ms | `jambavan_index` (1 file) | 12.9 ms |
-| `read_file` | 0.2 ms | `search` (ripgrep) | 11.1 ms |
-| `list_files` | 0.2 ms | `bash` (subprocess) | 12.5 ms |
+| `jambavan_context` | 0.3 ms | `jambavan_memory_search` | 0.2 ms |
+| `jambavan_graph_query` | 0.3 ms | `jambavan_awaken` | 1.6 ms |
+| `jambavan_graph_path` | 0.2 ms | `jambavan_index` (1 file) | 13.4 ms |
+| `read_file` | 0.1 ms | `search` (ripgrep) | 10.3 ms |
+| `list_files` | 0.3 ms | `bash` (subprocess) | 11.9 ms |
+| `jambavan_failure_search` | 0.2 ms | `jambavan_session_export` (2 git calls) | 40.6 ms |
 
-Everything driven purely in-process is sub-millisecond; the outliers (`index`, `search`, `bash`) are the ones that shell out or touch disk, exactly as expected. Every call succeeds — the benchmark exits non-zero if any tool errors, so it doubles as an end-to-end smoke test.
+Everything driven purely in-process is sub-millisecond; the outliers (`index`, `search`, `bash`, `session_export`) are the ones that shell out or touch disk, exactly as expected. Every call succeeds — the benchmark exits non-zero if any tool errors, so it doubles as an end-to-end smoke test.
 
 **The larger the codebase, the bigger the win.** The same benchmark run against a mid-size Java service (166 files, ~1,000 symbols) — every dimension scales in Jambavan's favour:
 
-| dimension | this repo (33 files, 151 symbols) | a mid-size Java service (166 files, ~1,000 symbols) |
+| dimension | this repo (38 files, 177 symbols) | a mid-size Java service (166 files, ~1,000 symbols) |
 |---|---|---|
-| cold index | ~130 ms | ~550 ms |
-| incremental re-index | ~5× faster | ~10× faster |
+| cold index | ~164 ms | ~577 ms |
+| incremental re-index | ~5.7× faster | ~8.4× faster |
 | context tokens saved | ~44% | **~87%** |
 | files→chunks (5 queries) | 6 files → 14 chunks | 80 files → 133 chunks |
-| graph edges extracted | 473 | ~10,400 |
+| graph edges extracted | 564 | ~10,400 |
 
 Incremental re-index and per-query context stay roughly flat while a from-scratch read grows with the repo, so the token savings widen as the codebase grows. Baseline is a conservative comparison — per-query results vary, and occasionally a query whose matches sit in tiny files reads cheaper whole than as ranked snippets. Run it on yours:
 

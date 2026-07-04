@@ -17,6 +17,8 @@ import * as path from 'path';
 export interface SymbolReference {
   name: string;
   type: 'call' | 'import' | 'implements';
+  /** For import refs: the module specifier (e.g. './moduleA'). */
+  specifier?: string;
 }
 
 export interface Symbol {
@@ -344,6 +346,70 @@ function collectDeclarations(
   return results;
 }
 
+/**
+ * Collect import references from direct children of the file root node.
+ * These are module-level import statements (import { X } from './foo').
+ * Returns SymbolReference[] with type 'import' for each imported name,
+ * including the module specifier string.
+ */
+function collectFileImports(root: TSParser): SymbolReference[] {
+  const results: SymbolReference[] = [];
+  for (const child of root.children ?? []) {
+    if (!/^import/.test(child.type)) continue;
+
+    // Extract the module specifier from the import statement.
+    // It's typically a string/string_fragment node: './moduleA'
+    let specifier: string | undefined;
+    for (const sub of child.children ?? []) {
+      if (/string/.test(sub.type)) {
+        // Strip quotes from the string literal text
+        const raw = sub.text ?? '';
+        specifier = raw.replace(/^['"]|['"]$/g, '');
+        break;
+      }
+      // Some grammars use a "source" field
+      if (sub.type === 'source' || sub.type === 'module') {
+        const raw = sub.text ?? '';
+        specifier = raw.replace(/^['"]|['"]$/g, '');
+        break;
+      }
+    }
+
+    // Collect the locally-bound name for each specifier in the clause
+    // (default import, `* as NS`, or `{ X }` / `{ X as Y }`).
+    const clause = child.children?.find((c: TSParser) => c.type === 'import_clause');
+    const names = clause ? collectImportedNames(clause) : [];
+
+    for (const name of names) {
+      results.push({ name, type: 'import', specifier });
+    }
+  }
+  return dedupeReferences(results);
+}
+
+/**
+ * Recursively find the locally-bound identifier for each import specifier under
+ * an import_clause: named (`{ X }`, using `alias` over `name` for `{ X as Y }`),
+ * namespace (`* as NS` — the bound name is the trailing identifier), or default
+ * (a bare identifier child of import_clause itself).
+ */
+function collectImportedNames(node: TSParser): string[] {
+  if (node.type === 'import_specifier') {
+    const bound = node.childForFieldName?.('alias') ?? node.childForFieldName?.('name');
+    return bound?.text ? [bound.text] : [];
+  }
+  if (node.type === 'namespace_import') {
+    const idChild = [...(node.children ?? [])].reverse().find((c: TSParser) => /identifier$/.test(c.type));
+    return idChild?.text ? [idChild.text] : [];
+  }
+  if (node.type !== 'import_clause' && /identifier$/.test(node.type)) {
+    return node.text ? [node.text] : [];
+  }
+  const names: string[] = [];
+  for (const child of node.children ?? []) names.push(...collectImportedNames(child));
+  return names;
+}
+
 function extractWithTreeSitter(
   source: string,
   filePath: string,
@@ -353,6 +419,14 @@ function extractWithTreeSitter(
   const tree = parser.parse(source);
   const lines = source.split('\n');
   const declarations = collectDeclarations(tree.rootNode, language);
+
+  // Collect module-level import references from the file root so every symbol in
+  // this file knows what names are imported (and from where). This makes the
+  // graph builder's import-edge resolution reachable for the standard pattern:
+  //   import { X } from './foo';  // at module level
+  //   export function bar() { X(); }  // X appears as call in bar's body
+  const fileImports = collectFileImports(tree.rootNode);
+
   const symbols: Symbol[] = [];
 
   for (const node of declarations) {
@@ -362,6 +436,14 @@ function extractWithTreeSitter(
     const startLine = node.startPosition.row + 1; // 1-based
     const endLine   = node.endPosition.row   + 1;
     const content   = lines.slice(startLine - 1, endLine).join('\n');
+    const localRefs = dedupeReferences(collectReferences(node)).filter(ref => ref.name !== name);
+
+    // Merge file-level imports that are actually used (called/referenced) in this symbol's body.
+    // Only include imports for names that appear in the symbol's own references as 'call' or 'implements',
+    // to keep the reference list bounded and relevant.
+    const localNames = new Set(localRefs.map(r => r.name));
+    const relevantImports = fileImports.filter(imp => localNames.has(imp.name));
+    const merged = dedupeReferences([...localRefs, ...relevantImports]);
 
     symbols.push({
       name,
@@ -370,7 +452,7 @@ function extractWithTreeSitter(
       endLine,
       content,
       filePath,
-      references: dedupeReferences(collectReferences(node)).filter(ref => ref.name !== name),
+      references: merged,
     });
   }
 

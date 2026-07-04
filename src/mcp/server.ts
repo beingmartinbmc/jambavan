@@ -35,11 +35,16 @@ import { FileWatcher }                   from '../index/watcher';
 import { ASTParser }                     from '../index/ast-parser';
 import { ContextAssembler }              from '../context/assembler';
 import type { ContextChunk }             from '../context/assembler';
+import { countTokens, truncateToTokenBudget } from '../context/token-counter';
 import { vibhishanaNitiInstructions, harvestRin, formatRinReport } from '../tools/vibhishana-niti';
 import { MEMORY_TOOL_DEFS, buildMemoryHandlers } from '../tools/memory';
+import { FAILURE_MEMORY_TOOL_DEFS, buildFailureHandlers } from '../tools/failure-memory';
+import { SESSION_HANDOFF_TOOL_DEFS, buildSessionHandoffHandlers } from '../tools/session-handoff';
 import { sankshiptaFile } from '../tools/sankshipta';
 import { awakenReport, jambavanInstructions } from '../tools/jambavan';
 import { buildSymbolGraph, graphPath, graphQuery, graphReport } from '../knowledge/graph';
+import { getRecentSymbolChanges, formatRecentChanges } from '../context/diff-enricher';
+import { buildTestMap, formatTestAssociations } from '../index/test-map';
 
 function graphTruncationNote(totalSymbols: number, symbolLimit: number): string {
   return totalSymbols > symbolLimit
@@ -70,6 +75,8 @@ if (allowBash) {
 }
 
 const memoryHandlers = buildMemoryHandlers(config);
+const failureHandlers = buildFailureHandlers(config);
+const sessionHandoffHandlers = buildSessionHandoffHandlers(config);
 
 // Index and watcher are created lazily — the server starts cleanly even if
 // .jambavan/ doesn't exist yet. jambavan_index creates it on first call.
@@ -131,6 +138,7 @@ const NATIVE_TOOLS: Tool[] = [
       'Returns a ranked, token-budgeted context block of matching functions, classes, and types.',
       'Inject this block into your prompt to give the model precise, token-efficient codebase knowledge.',
       'Much cheaper than reading whole files — only the relevant symbol bodies are returned.',
+      'Options: compress_prose shrinks comments for extra budget; include_diff adds recent git changes; include_tests shows test coverage.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
@@ -142,6 +150,18 @@ const NATIVE_TOOLS: Tool[] = [
         limit: {
           type:        'number',
           description: 'Max symbols to return before token-budget truncation (default: 30)',
+        },
+        compress_prose: {
+          type:        'boolean',
+          description: 'Compress comments/docstrings in results for more symbol density (default: false)',
+        },
+        include_diff: {
+          type:        'boolean',
+          description: 'Include recent git changes for each symbol (default: false)',
+        },
+        include_tests: {
+          type:        'boolean',
+          description: 'Include associated test file info for each symbol (default: false)',
         },
       },
       required: ['query'],
@@ -284,6 +304,18 @@ const NATIVE_TOOLS: Tool[] = [
     description: def.description,
     inputSchema: def.inputSchema,
   })) as unknown as Tool[]),
+  // Failure memory tools
+  ...(FAILURE_MEMORY_TOOL_DEFS.map(def => ({
+    name: def.name,
+    description: def.description,
+    inputSchema: def.inputSchema,
+  })) as unknown as Tool[]),
+  // Session handoff tools
+  ...(SESSION_HANDOFF_TOOL_DEFS.map(def => ({
+    name: def.name,
+    description: def.description,
+    inputSchema: def.inputSchema,
+  })) as unknown as Tool[]),
 ];
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -359,6 +391,9 @@ export async function startServer(): Promise<void> {
 
       const query = input['query'] as string;
       const limit = boundedInt(input['limit'], { min: 1, max: 200, fallback: 30 });
+      const compressProse = Boolean(input['compress_prose']);
+      const includeDiff = Boolean(input['include_diff']);
+      const includeTests = Boolean(input['include_tests']);
       const results = jambavanIndex.search(query, limit);
 
       if (results.length === 0) {
@@ -379,8 +414,57 @@ export async function startServer(): Promise<void> {
         type:      r.symbol.type,
       }));
 
+      // When enrichments are requested, reserve part of the budget for them.
+      // Symbols get 80% of the budget; diff+test share the remaining 20%.
+      const enrichmentRequested = includeDiff || includeTests;
+      const symbolBudgetFraction = enrichmentRequested ? 0.8 : 1.0;
+      const symbolBudget = Math.floor(config.contextTokenBudget * symbolBudgetFraction);
+
       const { contextBlock, usedTokens, includedChunks, droppedChunks } =
-        assembler.assemble(chunks);
+        assembler.assemble(chunks, { compressProse, budgetOverride: symbolBudget });
+
+      const enrichmentBudget = config.contextTokenBudget - usedTokens;
+
+      // Enrich with git diff info when requested
+      let diffBlock = '';
+      if (includeDiff && enrichmentBudget > 100) {
+        const topResults = results.slice(0, 5); // limit git calls
+        const diffs = topResults
+          .map(r => {
+            const changes = getRecentSymbolChanges(config, r.symbol.filePath, r.symbol.startLine, r.symbol.endLine, 2);
+            return formatRecentChanges(changes, r.symbol.name);
+          })
+          .filter(Boolean);
+        if (diffs.length) {
+          const raw = '\n\n' + diffs.join('\n\n');
+          // Use at most half the remaining enrichment budget for diffs
+          const diffBudget = includeTests ? Math.floor(enrichmentBudget * 0.5) : enrichmentBudget;
+          diffBlock = truncateToTokenBudget(raw, diffBudget);
+        }
+      }
+
+      // Enrich with test associations when requested
+      let testBlock = '';
+      if (includeTests) {
+        const remainingBudget = enrichmentBudget - countTokens(diffBlock);
+        if (remainingBudget > 50) {
+          const allSymbols = jambavanIndex.getAllSymbols?.() ?? [];
+          if (allSymbols.length > 0) {
+            const testMap = buildTestMap(allSymbols, config);
+            const topResults = results.slice(0, 10);
+            const testNotes = topResults
+              .map(r => {
+                const assocs = testMap.get(r.symbol.name) ?? [];
+                return formatTestAssociations(assocs);
+              })
+              .filter(Boolean);
+            if (testNotes.length) {
+              const raw = '\n\n' + testNotes.join('\n');
+              testBlock = truncateToTokenBudget(raw, remainingBudget);
+            }
+          }
+        }
+      }
 
       const header = [
         `# Jambavan Context: "${query}"`,
@@ -389,7 +473,7 @@ export async function startServer(): Promise<void> {
         '',
       ].join('\n');
 
-      return { content: [{ type: 'text', text: header + contextBlock }] };
+      return { content: [{ type: 'text', text: header + contextBlock + diffBlock + testBlock }] };
     }
 
     // ── jambavan_watch ────────────────────────────────────────────────────────
@@ -559,6 +643,22 @@ export async function startServer(): Promise<void> {
     }
     if (name === 'jambavan_memory_status') {
       return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_status(input) }] };
+    }
+
+    // ── Failure memory tools ─────────────────────────────────────────────────
+    if (name === 'jambavan_failure_store') {
+      return { content: [{ type: 'text', text: failureHandlers.jambavan_failure_store(input) }] };
+    }
+    if (name === 'jambavan_failure_search') {
+      return { content: [{ type: 'text', text: failureHandlers.jambavan_failure_search(input) }] };
+    }
+
+    // ── Session handoff tools ────────────────────────────────────────────────
+    if (name === 'jambavan_session_export') {
+      return { content: [{ type: 'text', text: sessionHandoffHandlers.jambavan_session_export(input) }] };
+    }
+    if (name === 'jambavan_session_import') {
+      return { content: [{ type: 'text', text: sessionHandoffHandlers.jambavan_session_import(input) }] };
     }
 
     // ── Delegated: registry tools ────────────────────────────────────────────

@@ -20,6 +20,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - run: npm run coverage
-        # --test-coverage-include/-lines require Node >= 22
+      - name: Run coverage on Node 20
+        # Node 20 supports coverage collection, but not coverage include/threshold flags.
+        if: matrix.node-version == 20
+        run: node --require ts-node/register --experimental-test-coverage --test test/*.test.ts
+      - name: Run coverage with thresholds
         if: matrix.node-version != 20
+        run: npm run coverage

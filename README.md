@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/jambavan.png" alt="Jambavan — the wise elder awakening latent power" width="640">
+  <img src="https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/assets/jambavan.png" alt="Jambavan — the wise elder awakening latent power" width="640">
 </p>
 
 <h1 align="center">Jambavan</h1>
@@ -82,7 +82,7 @@ When disabled, these tools are not registered at all — the host never sees the
 
 File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROOT` (or the detected project root). Set `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` only for trusted local use. Files that look like secrets (`.env*`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, …) are refused by all file tools unless `JAMBAVAN_ALLOW_SECRETS=1`.
 
-`bash` runs with a minimal environment (host secrets are not inherited unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and catches a few obvious footguns (`rm -rf /`, project wipes, `git reset --hard`, `git clean -fx`, blind `curl | sh`, and similar). This is **not** a security boundary — it is trivially bypassed by encoding, aliases, scripts, or unlisted commands like `find . -delete`. Treat `bash` as a local shell: review tool calls before approving them, and run the server inside a sandboxed workspace (container / microVM) if you need real isolation.
+`bash` runs with a minimal environment (host secrets are not inherited unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and catches a few obvious footguns (`rm -rf /`, `rm -rf /*`, home/project wipes, `git reset --hard`, `git clean -fx`, blind `curl | sh`, and similar). This is **not** a security boundary — it is trivially bypassed by encoding, aliases, scripts, shell expansion, or unlisted commands like `find . -delete`. Treat `bash` as a local shell: review tool calls before approving them, and run the server inside a sandboxed workspace (container / microVM) if you need real isolation.
 
 ## Configuration
 

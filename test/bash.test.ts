@@ -27,6 +27,11 @@ test('bash: footgun patterns are blocked before execution', async () => {
     const tool = createBashTool(config);
     for (const cmd of [
       'rm -rf /',
+      'rm -rf /*',
+      'rm -rf ~',
+      'rm -rf $HOME',
+      `rm -rf ${config.projectRoot}`,
+      `rm -rf ${config.projectRoot}/`,
       'rm -rf .',
       'rm -rf *',
       'git reset --hard',
@@ -73,5 +78,15 @@ test('bash: cwd escaping the root is rejected', async () => {
       () => createBashTool(config).handler({ command: 'pwd', cwd: '/etc' }),
       /escapes project root/,
     );
+  } finally { cleanup(); }
+});
+
+test('bash: command that finishes outside the root is reported as failure', async () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const r = await createBashTool(config).handler({ command: 'cd / && pwd' });
+    assert.equal(r.success, false);
+    assert.match(r.output, /^\//);
+    assert.match(r.error ?? '', /final cwd escapes project root/);
   } finally { cleanup(); }
 });

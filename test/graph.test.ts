@@ -56,6 +56,18 @@ test('buildSymbolGraph: body token mention becomes an INFERRED edge', () => {
   } finally { cleanup(); }
 });
 
+test('buildSymbolGraph: common names do not create unbounded inferred mention fan-out', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const symbols = [sym('source', path.join(root, 'source.ts'), 'function source() { return handler; }')];
+    for (let i = 0; i < 26; i++) {
+      symbols.push(sym('handler', path.join(root, `h${i}.ts`), `function handler${i}() {}`));
+    }
+    const g = buildSymbolGraph(symbols, config);
+    assert.equal(g.edges.filter(e => e.type === 'mentions').length, 0);
+  } finally { cleanup(); }
+});
+
 test('buildSymbolGraph: short (<3 char) and self names do not create mention edges', () => {
   const { config, root, cleanup } = mkTempConfig();
   try {

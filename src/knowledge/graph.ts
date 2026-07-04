@@ -24,6 +24,8 @@ export interface KnowledgeGraph {
   edges: GraphEdge[];
 }
 
+const MAX_INFERRED_MENTION_TARGETS_PER_NAME = 25;
+
 function rel(filePath: string, config: JambavanConfig): string {
   return path.relative(config.projectRoot, filePath).replace(/\\/g, '/') || filePath;
 }
@@ -90,13 +92,15 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig): Kno
     const refNames = new Set((s.references ?? []).map(r => r.name));
     for (const name of new Set(s.content.match(/[A-Za-z_]\w*/g) ?? [])) {
       if (name === s.name || name.length < 3 || refNames.has(name)) continue;
-      for (const to of symbolsByName.get(name) ?? []) {
+      const targets = symbolsByName.get(name) ?? [];
+      if (targets.length > MAX_INFERRED_MENTION_TARGETS_PER_NAME) continue;
+      for (const to of targets) {
         if (to !== from) edges.push({ from, to, type: 'mentions', confidence: 'INFERRED' });
       }
     }
   }
 
-  // rin: inferred fallback is symbol-name mentions; replace remaining non-AST edges when language resolvers grow.
+  // rin: inferred fallback is capped symbol-name mentions; replace remaining non-AST edges when language resolvers grow.
   return { nodes: [...nodes.values()], edges: dedupeEdges(edges) };
 }
 

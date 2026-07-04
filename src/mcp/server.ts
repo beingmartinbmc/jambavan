@@ -41,6 +41,12 @@ import { sankshiptaFile } from '../tools/sankshipta';
 import { awakenReport, jambavanInstructions } from '../tools/jambavan';
 import { buildSymbolGraph, graphPath, graphQuery, graphReport } from '../knowledge/graph';
 
+function graphTruncationNote(totalSymbols: number, symbolLimit: number): string {
+  return totalSymbols > symbolLimit
+    ? `\n\nWarning: graph is truncated to ${symbolLimit} of ${totalSymbols} indexed symbols. Results can omit nodes/paths; raise symbol_limit only if you can afford the extra cost.`
+    : '';
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 const config    = loadConfig();
@@ -215,14 +221,14 @@ const NATIVE_TOOLS: Tool[] = [
     name: 'jambavan_graph_report',
     description: [
       'Build a lightweight knowledge graph from the current code index and return hub nodes plus edge confidence notes.',
-      'Call jambavan_index first. Edges are structural contains plus inferred symbol-name mentions.',
-      'Defaults to the first 5000 indexed symbols; raise symbol_limit for larger repos if needed.',
+      'Call jambavan_index first. Edges are structural contains plus capped inferred symbol-name mentions.',
+      'Defaults to the first 5000 indexed symbols; higher symbol_limit costs more and may still omit very common inferred mention names.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
         max_nodes:    { type: 'number', description: 'Max hub nodes to show (default: 10).' },
-        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000).' },
+        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000; higher values cost more).' },
       },
       required: [],
     },
@@ -238,7 +244,7 @@ const NATIVE_TOOLS: Tool[] = [
       properties: {
         query:        { type: 'string', description: 'Symbol/file text to find in the graph.' },
         budget:       { type: 'number', description: 'Max output tokens (default: 2000).' },
-        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000).' },
+        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000; higher values cost more).' },
       },
       required: ['query'],
     },
@@ -254,7 +260,7 @@ const NATIVE_TOOLS: Tool[] = [
       properties: {
         from:         { type: 'string', description: 'Start symbol/file query.' },
         to:           { type: 'string', description: 'End symbol/file query.' },
-        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000).' },
+        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000; higher values cost more).' },
       },
       required: ['from', 'to'],
     },
@@ -472,10 +478,7 @@ export async function startServer(): Promise<void> {
       const symbolLimit = (input['symbol_limit'] as number | undefined) ?? 5000;
       const graph = buildSymbolGraph(jambavanIndex.getAllSymbols(symbolLimit), config);
       const stats = jambavanIndex.stats();
-      const note = stats.symbols > symbolLimit
-        ? `\n\nNote: graphed ${symbolLimit} of ${stats.symbols} symbols. Re-run with a higher symbol_limit for full-repo hubs.`
-        : '';
-      return { content: [{ type: 'text', text: graphReport(graph, max) + note }] };
+      return { content: [{ type: 'text', text: graphReport(graph, max) + graphTruncationNote(stats.symbols, symbolLimit) }] };
     }
 
     // ── jambavan_graph_query / jambavan_graph_path ───────────────────────────────
@@ -488,7 +491,8 @@ export async function startServer(): Promise<void> {
       const text = name === 'jambavan_graph_query'
         ? graphQuery(graph, String(input['query'] ?? ''), (input['budget'] as number | undefined) ?? 2000)
         : graphPath(graph, String(input['from'] ?? ''), String(input['to'] ?? ''));
-      return { content: [{ type: 'text', text }] };
+      const stats = jambavanIndex.stats();
+      return { content: [{ type: 'text', text: text + graphTruncationNote(stats.symbols, symbolLimit) }] };
     }
 
     // ── jambavan_diagnostics ───────────────────────────────────────────────────

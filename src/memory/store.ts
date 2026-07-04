@@ -2,8 +2,8 @@
  * Jambavan Memory Store
  *
  * Persistent agent memory as an Open Knowledge Format (OKF) bundle.
- * Each memory is a markdown file with YAML frontmatter — human-readable,
- * git-diffable, portable across tools without bespoke SDKs.
+ * Each memory is a markdown file with Jambavan-written YAML frontmatter —
+ * human-readable and git-diffable without a bespoke SDK.
  *
  * OKF spec: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
  *
@@ -202,18 +202,18 @@ export class MemoryStore {
     return this.readDoc(filePath);
   }
 
-  list(scope?: string): MemoryDoc[] {
+  list(scope?: string, opts: { includeInvalidated?: boolean } = {}): MemoryDoc[] {
     if (scope) {
       const scopeDir = path.join(this.bundleRoot, slugify(scope));
       if (!fs.existsSync(scopeDir)) return [];
-      return this.docsInDir(scopeDir);
+      return this.docsInDir(scopeDir, opts);
     }
     // All scopes
     const docs: MemoryDoc[] = [];
     if (!fs.existsSync(this.bundleRoot)) return docs;
     for (const entry of fs.readdirSync(this.bundleRoot, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        docs.push(...this.docsInDir(path.join(this.bundleRoot, entry.name)));
+        docs.push(...this.docsInDir(path.join(this.bundleRoot, entry.name), opts));
       }
     }
     return docs;
@@ -221,8 +221,8 @@ export class MemoryStore {
 
   // ── Search ──────────────────────────────────────────────────────────────────
 
-  search(query: string, opts: { scope?: string; limit?: number } = {}): Array<{ doc: MemoryDoc; score: number }> {
-    const all = this.list(opts.scope);
+  search(query: string, opts: { scope?: string; limit?: number; includeInvalidated?: boolean } = {}): Array<{ doc: MemoryDoc; score: number }> {
+    const all = this.list(opts.scope, { includeInvalidated: opts.includeInvalidated });
     if (all.length === 0) return [];
 
     const limit = opts.limit ?? 10;
@@ -319,7 +319,7 @@ export class MemoryStore {
   private rebuildScopeIndex(scope: string): void {
     const scopeDir = path.join(this.bundleRoot, scope);
     if (!fs.existsSync(scopeDir)) return;
-    const docs = this.docsInDir(scopeDir);
+    const docs = this.docsInDir(scopeDir, { includeInvalidated: true });
     const lines = ['# Memory Index\n'];
     for (const doc of docs) {
       const slug = path.basename(doc.filePath, '.md');
@@ -357,12 +357,13 @@ export class MemoryStore {
     return { id, frontmatter: parsed.frontmatter, body: parsed.body, filePath };
   }
 
-  private docsInDir(dir: string): MemoryDoc[] {
+  private docsInDir(dir: string, opts: { includeInvalidated?: boolean } = {}): MemoryDoc[] {
     if (!fs.existsSync(dir)) return [];
     return fs.readdirSync(dir)
       .filter(f => f.endsWith('.md') && f !== 'index.md')
       .map(f => this.readDoc(path.join(dir, f)))
-      .filter((d): d is MemoryDoc => d !== null);
+      .filter((d): d is MemoryDoc => d !== null)
+      .filter(d => opts.includeInvalidated || !d.frontmatter.invalidated);
   }
 }
 

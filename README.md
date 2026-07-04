@@ -82,6 +82,43 @@ codex mcp add jambavan -- npx -y jambavan
 { "command": "npx", "args": ["-y", "jambavan"] }
 ```
 
+### Troubleshooting (NVM, GUI apps, corporate npm)
+
+`npx -y jambavan` works when the MCP host inherits a shell PATH containing `node`/`npx` and npm can reach the public registry. Two setups break that:
+
+**1. GUI-launched hosts (Cursor, etc.) don't see NVM.** You'll see `spawn npx ENOENT`, or — after switching to an absolute `npx` — `env: node: No such file or directory` (because `npx` is a script with `#!/usr/bin/env node`). GUI apps launched outside your shell don't inherit NVM's PATH. Fix: run an absolute `node` against npm's `npx-cli.js` and set `PATH` explicitly.
+
+**2. Corporate npm registry / release-age policy.** You'll see `No versions available for jambavan` (npm pointed at an internal mirror that doesn't proxy it) or `No matching version found ... with a date before <date>` (an `--before` / release-age policy rejecting a freshly published version). Fix: force the public registry, clear `--before`, and pin the version.
+
+Find your paths:
+
+```bash
+command -v node                                   # → /abs/path/to/node
+echo "$(npm prefix -g)/lib/node_modules/npm/bin/npx-cli.js"   # → npx-cli.js
+```
+
+Cursor config with all workarounds applied:
+
+```json
+{
+  "mcpServers": {
+    "jambavan": {
+      "command": "/abs/path/to/node",
+      "args": [
+        "/abs/path/to/npm/bin/npx-cli.js",
+        "-y",
+        "--registry=https://registry.npmjs.org",
+        "--before=",
+        "jambavan@0.3.0"
+      ],
+      "env": { "PATH": "/abs/path/to/node/dir:/usr/bin:/bin" }
+    }
+  }
+}
+```
+
+Apply only the pieces you need: the absolute `node` + `npx-cli.js` + `PATH` fixes NVM/GUI PATH; `--registry`/`--before`/pinned version fix corporate npm policy.
+
 ## Claude Code plugin
 
 This repo is also a Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces). Add it and install with two commands — no manual MCP config:

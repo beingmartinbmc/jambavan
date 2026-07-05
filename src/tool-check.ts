@@ -112,6 +112,12 @@ async function main(): Promise<void> {
   const exported = await call('jambavan_session_export', { scope: 'toolcheck', max_memories: 5 });
   await call('jambavan_session_import', { text: exported || '# Empty handoff\n', scope: 'toolcheck' });
 
+  // ── Counsel tools (discipline protocols) ──
+  await call('jambavan_mool_kaaran', { symptom: 'TypeError: Cannot read property of undefined', context: 'greet function', attempts_so_far: 0 });
+  await call('jambavan_praman', { claim: 'all tests pass', type: 'tests' });
+  await call('jambavan_yukti', { task: 'add input validation to greet function', scale: 'small' });
+  await call('jambavan_vibhaajan', { task: 'add auth module and notification service — independent subsystems', units: 2 });
+
   await call('read_file', { path: 'hello.ts' });
   await call('write_file', { path: 'scratch.txt', content: 'hi' });
   await call('patch_file', { path: 'scratch.txt', old_text: 'hi', new_text: 'bye' });

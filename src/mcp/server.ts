@@ -25,7 +25,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { loadConfig }                    from '../config/jambavan.config';
-import { ToolRegistry, boundedInt }      from '../tools/registry';
+import { ToolRegistry, boundedInt, capOutput } from '../tools/registry';
 import { createReadFileTool }            from '../tools/read-file';
 import { createWriteFileTool, createPatchFileTool } from '../tools/write-file';
 import { createBashTool }                from '../tools/bash';
@@ -43,6 +43,10 @@ import { SESSION_HANDOFF_TOOL_DEFS, buildSessionHandoffHandlers } from '../tools
 import { sankshiptaFile } from '../tools/sankshipta';
 import { awakenReport, jambavanInstructions } from '../tools/jambavan';
 import { buildSymbolGraph, graphPath, graphQuery, graphReport } from '../knowledge/graph';
+import { moolKaaranProtocol } from '../tools/mool-kaaran';
+import { pramanProtocol } from '../tools/praman';
+import { yuktiProtocol } from '../tools/yukti';
+import { vibhaajanProtocol } from '../tools/vibhaajan';
 import { getRecentSymbolChanges, formatRecentChanges } from '../context/diff-enricher';
 import { buildTestMap, formatTestAssociations } from '../index/test-map';
 
@@ -316,13 +320,85 @@ const NATIVE_TOOLS: Tool[] = [
     description: def.description,
     inputSchema: def.inputSchema,
   })) as unknown as Tool[]),
+  // ── Counsel tools (discipline protocols) ─────────────────────────────────
+  {
+    name: 'jambavan_mool_kaaran',
+    description: [
+      'Return a structured root-cause investigation protocol.',
+      'Call BEFORE attempting to fix any bug, test failure, or unexpected behavior.',
+      'Prevents guess-and-check thrashing by enforcing observe → compare → hypothesize → fix phases.',
+      'If attempts_so_far >= 3, returns an escalation protocol (architecture problem likely).',
+    ].join(' '),
+    inputSchema: {
+      type:       'object' as const,
+      properties: {
+        symptom:          { type: 'string', description: 'What went wrong — the error message, unexpected behavior, or test failure.' },
+        context:          { type: 'string', description: 'Additional context: file paths, recent changes, what you were doing.' },
+        attempts_so_far:  { type: 'number', description: 'How many fix attempts have already failed (triggers escalation at 3+).' },
+      },
+      required: ['symptom'],
+    },
+  },
+  {
+    name: 'jambavan_praman',
+    description: [
+      'Return a verification gate protocol demanding fresh evidence before claiming completion.',
+      'Call BEFORE asserting that tests pass, a build succeeds, a bug is fixed, or requirements are met.',
+      'Forces: identify proof command → run it → paste output → only then make the claim.',
+      'Types: tests, build, fix, requirements, general.',
+    ].join(' '),
+    inputSchema: {
+      type:       'object' as const,
+      properties: {
+        claim: { type: 'string', description: 'What you are about to assert is done or passing.' },
+        type:  { type: 'string', enum: ['tests', 'build', 'fix', 'requirements', 'general'], description: 'Kind of verification needed (default: general).' },
+      },
+      required: ['claim'],
+    },
+  },
+  {
+    name: 'jambavan_yukti',
+    description: [
+      'Return a strategic approach protocol for planning multi-step work.',
+      'Call BEFORE starting implementation of any non-trivial task.',
+      'Returns phased instructions scaled to task size: small (just do it), medium (2-3 approaches + sequence), large (decompose + checkpoint).',
+      'Auto-infers scale from task description if not provided.',
+    ].join(' '),
+    inputSchema: {
+      type:       'object' as const,
+      properties: {
+        task:        { type: 'string', description: 'What you need to accomplish.' },
+        constraints: { type: 'string', description: 'Known constraints: time, compatibility, dependencies, scope limits.' },
+        scale:       { type: 'string', enum: ['small', 'medium', 'large'], description: 'Task scale. If omitted, auto-inferred from task description.' },
+      },
+      required: ['task'],
+    },
+  },
+  {
+    name: 'jambavan_vibhaajan',
+    description: [
+      'Return a parallel work decomposition protocol for splitting a task into independent units.',
+      'Call when a task has sub-units that can proceed independently (different files, no shared state).',
+      'Returns: boundary identification, independence verification, contract definition, merge sequencing.',
+      'Works for both multi-agent parallelism and solo context-switching with clean commits.',
+    ].join(' '),
+    inputSchema: {
+      type:       'object' as const,
+      properties: {
+        task:        { type: 'string', description: 'What you need to decompose into parallel work units.' },
+        units:       { type: 'number', description: 'Target number of parallel units (optional — protocol helps you find the right number).' },
+        constraints: { type: 'string', description: 'Known constraints: shared state, file overlap, ordering requirements.' },
+      },
+      required: ['task'],
+    },
+  },
 ];
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
 export async function startServer(): Promise<void> {
   const server = new Server(
-    { name: 'jambavan', version: '0.3.0' },
+    { name: 'jambavan', version: '0.4.0' },
     { capabilities: { tools: {} }, instructions: jambavanInstructions(config) },
   );
 
@@ -339,8 +415,23 @@ export async function startServer(): Promise<void> {
   });
 
   // ── tools/call ─────────────────────────────────────────────────────────────
+  // capOutput is applied once here for every tool response. Native-tool branches
+  // below don't cap individually (registry.execute() already caps its own path) —
+  // one guard here is smaller and can't be missed by a future branch.
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const result = await handleToolCall(request);
+    return {
+      ...result,
+      content: result.content.map(c =>
+        c.type === 'text' ? { ...c, text: capOutput(c.text) } : c,
+      ),
+    };
+  });
+
+  async function handleToolCall(
+    request: { params: { name: string; arguments?: Record<string, unknown> } },
+  ): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> {
     const { name, arguments: args = {} } = request.params;
     const input = args as Record<string, unknown>;
 
@@ -661,6 +752,20 @@ export async function startServer(): Promise<void> {
       return { content: [{ type: 'text', text: sessionHandoffHandlers.jambavan_session_import(input) }] };
     }
 
+    // ── Counsel tools (discipline protocols) ─────────────────────────────────
+    if (name === 'jambavan_mool_kaaran') {
+      return { content: [{ type: 'text', text: moolKaaranProtocol(input) }] };
+    }
+    if (name === 'jambavan_praman') {
+      return { content: [{ type: 'text', text: pramanProtocol(input) }] };
+    }
+    if (name === 'jambavan_yukti') {
+      return { content: [{ type: 'text', text: yuktiProtocol(input) }] };
+    }
+    if (name === 'jambavan_vibhaajan') {
+      return { content: [{ type: 'text', text: vibhaajanProtocol(input) }] };
+    }
+
     // ── Delegated: registry tools ────────────────────────────────────────────
     const result = await registry.execute(name, input);
 
@@ -677,7 +782,7 @@ export async function startServer(): Promise<void> {
     }
 
     return { content: [{ type: 'text', text: result.output }] };
-  });
+  }
 
   // ── stdio transport ────────────────────────────────────────────────────────
   const transport = new StdioServerTransport();

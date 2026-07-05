@@ -194,6 +194,11 @@ async function benchTools(): Promise<ToolTiming[]> {
   await bench('jambavan_session_export', {});
   await benchOnce('jambavan_session_import', { text: handoffText });
 
+  await bench('jambavan_mool_kaaran', { symptom: 'TypeError: Cannot read property of undefined', attempts_so_far: 1 });
+  await bench('jambavan_praman', { claim: 'all tests pass', type: 'tests' });
+  await bench('jambavan_yukti', { task: 'add input validation to greet function' });
+  await bench('jambavan_vibhaajan', { task: 'add auth module and notification service', units: 2 });
+
   await bench('read_file', { path: 'hello.ts' });
   await benchOnce('write_file', { path: 'scratch.txt', content: 'hi' });
   await benchOnce('patch_file', { path: 'scratch.txt', old_text: 'hi', new_text: 'bye' });

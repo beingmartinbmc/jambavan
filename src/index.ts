@@ -54,6 +54,11 @@ Jambavan exposes these MCP tools to the host model:
   jambavan_session_export Export session context as a portable handoff document
   jambavan_session_import Import a handoff document into memory
 
+  jambavan_mool_kaaran   Root-cause investigation protocol (call before debugging)
+  jambavan_praman        Verification gate (call before claiming completion)
+  jambavan_yukti         Approach strategy protocol (call before multi-step tasks)
+  jambavan_vibhaajan     Parallel work decomposition (call when task has independent units)
+
   read_file            Read a file (with optional line range)
   write_file           Write or overwrite a file
   patch_file           Find-and-replace patch on an existing file

@@ -36,6 +36,7 @@ Jambavan does not call an LLM and is not an agent. **The host model thinks. Jamb
 | **Session continuity** | `jambavan_failure_store`, `jambavan_failure_search`, `jambavan_session_export`, `jambavan_session_import` | Structured failure records (command, symptom, root cause, do-not-retry advice) so a fresh session doesn't repeat a dead end. `jambavan_session_export` produces a single portable handoff document (recent memories, rin debt, git status) to resume work in a new session, host, or with a colleague. |
 | **Sankshipta** *(brevity)* | `jambavan_sankshipta` | Deterministically compress prose and prompts to fewer tokens while preserving code, paths, versions, and facts. |
 | **Vibhishana Niti** *(wise counsel)* | `jambavan_vibhishana_niti`, `jambavan_rin_mochan` | Activate an efficient-dev discipline mid-session, and audit deliberate shortcuts (`// rin:` markers) into a tracked debt ledger. |
+| **Counsel** *(discipline protocols)* | `jambavan_mool_kaaran`, `jambavan_praman`, `jambavan_yukti`, `jambavan_vibhaajan` | Four discipline protocols: root-cause investigation before debugging, verification gates before claiming completion, approach strategy before multi-step tasks, and parallel decomposition for independent sub-units. |
 | **The hands** | `read_file`, `search`, `list_files` (default) · `write_file`, `patch_file`, `bash` (opt-in) | Guarded file, search, and shell tools — confined to the project root. Read-only tools are on by default; **mutating and shell tools are OFF unless you opt in** (see [Safety](#safety)). `bash` has a best-effort footgun filter (not a security boundary). |
 | **The reminder** | `jambavan_awaken` | Reminds the model of every power above, plus the session protocol and recent project memories. Call it first. |
 
@@ -192,46 +193,46 @@ File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROO
 
 ## Benchmark
 
-`npm run bench` dogfoods the real pipeline — no LLM calls, no external services, fully deterministic. It auto-derives queries from the repo's own most common symbols, so it's meaningful on any codebase. It measures **five** dimensions, not just token savings, and every number below is a fresh run against this repo (38 files, 177 symbols):
+`npm run bench` dogfoods the real pipeline — no LLM calls, no external services, fully deterministic. It auto-derives queries from the repo's own most common symbols, so it's meaningful on any codebase. It measures **five** dimensions, not just token savings, and every number below is a fresh run against this repo (43 files, 181 symbols):
 
 **1. Index** — build speed and throughput.
 
 | metric | value |
 |---|---|
-| cold build | ~164 ms (38 files, 177 symbols) |
-| warm re-index | ~29 ms (**~5.7× faster**, only changed files re-parsed) |
-| throughput | ~232 files/s · ~1,079 symbols/s |
+| cold build | ~148 ms (43 files, 181 symbols) |
+| warm re-index | ~27 ms (**~5.5× faster**, only changed files re-parsed) |
+| throughput | ~291 files/s · ~1,223 symbols/s |
 
 **2. Context** — not only tokens, but *how much the agent has to open*. Baseline = an agent reads the full contents of every file a query matches; jambavan ships ranked, budgeted snippets instead.
 
 | metric | baseline | jambavan | win |
 |---|---|---|---|
-| files/snippets to read | 6 whole files | 14 focused chunks | targeted spans, not whole files |
-| tokens (5 queries) | ~21,500 | ~12,000 | **~44% fewer** |
-| assemble latency | (disk reads) | ~2 ms | below one check's runtime |
+| files/snippets to read | 11 whole files | 23 focused chunks | targeted spans, not whole files |
+| tokens (5 queries) | ~25,800 | ~14,900 | **~42% fewer** |
+| assemble latency | (disk reads) | ~3 ms | below one check's runtime |
 
 **3. Graph** — relationships extracted from the AST (a coverage metric, not tokens).
 
 | metric | value |
 |---|---|
-| nodes / edges | 209 / 564 |
-| edge provenance | 314 `EXTRACTED` (from AST) · 250 `INFERRED` (name mention) |
-| build / query / path | ~2.9 ms / ~7.3 ms / ~0.08 ms |
+| nodes / edges | 216 / 502 |
+| edge provenance | 295 `EXTRACTED` (from AST) · 207 `INFERRED` (name mention) |
+| build / query / path | ~2.6 ms / ~7.8 ms / ~0.1 ms |
 
 **4. Sankshipta** — prose compression holds steady around **24%**.
 
-**5. Tool latency** — **all 28 tools the MCP server advertises**, timed over the real stdio transport (the same request/response path a host model uses): min/median/max over 10 calls for read-only tools, single-shot for mutating ones. Representative medians:
+**5. Tool latency** — **all 32 tools the MCP server advertises**, timed over the real stdio transport (the same request/response path a host model uses): min/median/max over 10 calls for read-only tools, single-shot for mutating ones. Representative medians:
 
 | tool | median | tool | median |
 |---|---|---|---|
-| `jambavan_context` | 0.3 ms | `jambavan_memory_search` | 0.2 ms |
-| `jambavan_graph_query` | 0.3 ms | `jambavan_awaken` | 1.6 ms |
-| `jambavan_graph_path` | 0.2 ms | `jambavan_index` (1 file) | 13.4 ms |
-| `read_file` | 0.1 ms | `search` (ripgrep) | 10.3 ms |
-| `list_files` | 0.3 ms | `bash` (subprocess) | 11.9 ms |
-| `jambavan_failure_search` | 0.2 ms | `jambavan_session_export` (2 git calls) | 40.6 ms |
+| `jambavan_context` | 0.2 ms | `jambavan_memory_search` | 0.2 ms |
+| `jambavan_graph_query` | 0.3 ms | `jambavan_awaken` | 2.0 ms |
+| `jambavan_graph_path` | 0.2 ms | `jambavan_index` (1 file) | 12.6 ms |
+| `read_file` | 0.2 ms | `search` (ripgrep) | 11.3 ms |
+| `list_files` | 0.2 ms | `bash` (subprocess) | 14.5 ms |
+| `jambavan_mool_kaaran` / `jambavan_praman` / `jambavan_yukti` / `jambavan_vibhaajan` | 0.1 ms | `jambavan_session_export` (2 git calls) | 50.4 ms |
 
-Everything driven purely in-process is sub-millisecond; the outliers (`index`, `search`, `bash`, `session_export`) are the ones that shell out or touch disk, exactly as expected. Every call succeeds — the benchmark exits non-zero if any tool errors, so it doubles as an end-to-end smoke test.
+Everything driven purely in-process is sub-millisecond — including the four counsel/discipline-protocol tools, which are pure string builders; the outliers (`index`, `search`, `bash`, `session_export`) are the ones that shell out or touch disk, exactly as expected. Every call succeeds — the benchmark exits non-zero if any tool errors, so it doubles as an end-to-end smoke test.
 
 **The larger the codebase, the bigger the win.** The same benchmark run against a mid-size Java service (166 files, ~1,000 symbols) — every dimension scales in Jambavan's favour:
 

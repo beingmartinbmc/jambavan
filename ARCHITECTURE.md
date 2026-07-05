@@ -101,6 +101,15 @@ Both are built on `MemoryStore` — a failure record is just a memory with `type
 | `jambavan_vibhishana_niti` | Serve the Vibhishana Niti efficient-dev ruleset (lite / full / ultra) |
 | `jambavan_rin_mochan` | Harvest `rin:` comments into a tracked debt ledger |
 
+### Counsel (discipline protocols)
+
+| Tool | Purpose |
+|---|---|
+| `jambavan_mool_kaaran` | Root-cause investigation protocol — observe/compare/hypothesize/fix. Escalates at 3+ failed attempts |
+| `jambavan_praman` | Verification gate — demands fresh evidence before any completion claim (tests/build/fix/requirements/general) |
+| `jambavan_yukti` | Approach strategy — phased instructions scaled to task size (small/medium/large) |
+| `jambavan_vibhaajan` | Parallel work decomposition — boundary identification, independence verification, contracts, merge sequencing |
+
 ### File system & shell
 
 Read-only tools are always registered. Mutating and shell tools are **opt-in** (see [Safety](#safety)) — when disabled they are not registered, so the host never sees them.
@@ -197,7 +206,11 @@ src/
 │   ├── failure-memory.ts     # jambavan_failure_store/_search — structured failure records
 │   ├── session-handoff.ts    # jambavan_session_export/_import — portable handoff document
 │   ├── jambavan.ts           # Core jambavan_* handlers + awaken protocol text
-│   └── vibhishana-niti.ts    # jambavan_vibhishana_niti + jambavan_rin_mochan ledger
+│   ├── vibhishana-niti.ts    # jambavan_vibhishana_niti + jambavan_rin_mochan ledger
+│   ├── mool-kaaran.ts       # jambavan_mool_kaaran — root-cause investigation protocol
+│   ├── praman.ts            # jambavan_praman — verification gate protocol
+│   ├── yukti.ts             # jambavan_yukti — approach strategy protocol
+│   └── vibhaajan.ts         # jambavan_vibhaajan — parallel decomposition protocol
 │
 ├── config/
 │   └── jambavan.config.ts    # Runtime config (project root, token budget, ignore list)

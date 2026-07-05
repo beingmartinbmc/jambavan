@@ -398,7 +398,7 @@ const NATIVE_TOOLS: Tool[] = [
 
 export async function startServer(): Promise<void> {
   const server = new Server(
-    { name: 'jambavan', version: '0.4.0' },
+    { name: 'jambavan', version: '0.5.0' },
     { capabilities: { tools: {} }, instructions: jambavanInstructions(config) },
   );
 

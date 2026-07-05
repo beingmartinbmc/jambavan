@@ -1,6 +1,6 @@
 {
   "name": "jambavan",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "description": "Jambavan — an MCP server that awakens any coding model's latent powers: live code index, precise context, durable memory, a code knowledge graph, prompt compression, and guarded file/shell tools.",
   "main": "dist/index.js",

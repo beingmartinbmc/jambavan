@@ -114,7 +114,7 @@ Cursor config with all workarounds applied:
         "-y",
         "--registry=https://registry.npmjs.org",
         "--before=",
-        "jambavan@0.3.0"
+        "jambavan@0.4.0"
       ],
       "env": { "PATH": "/abs/path/to/node/dir:/usr/bin:/bin" }
     }

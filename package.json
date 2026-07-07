@@ -31,6 +31,7 @@
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
     "lint": "tsc --noEmit",
+    "docs-check": "node scripts/check-doc-tools.js",
     "self-check": "npm run build && node dist/self-check.js",
     "bench": "npm run build && node dist/benchmark.js",
     "tool-check": "npm run build && node dist/tool-check.js",

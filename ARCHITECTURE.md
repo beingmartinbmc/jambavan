@@ -9,20 +9,56 @@
 ## What Jambavan is
 
 ```
- ┌─────────────────────┐        MCP (stdio / SSE)       ┌──────────────────────┐
- │  Host model /        │ ──────────────────────────────▶ │   Jambavan MCP         │
- │  agent runtime       │                                 │   Server             │
- │                      │ ◀────────── tool results ─────  │                      │
- │  • Claude Code       │                                 │  jambavan_index        │
- │  • Codex CLI         │                                 │  jambavan_context      │
- │  • Cursor            │                                 │  jambavan_memory_store │
- │  • Continue          │                                 │  jambavan_memory_search│
- └─────────────────────┘                                  │  read_file           │
-                                                          │  search / list_files │
-                                                          │  write_file  (opt-in)│
-                                                          │  patch_file  (opt-in)│
-                                                          │  bash        (opt-in)│
-                                                          └──────────────────────┘
+ ┌─────────────────────┐        MCP (stdio / SSE)       ┌──────────────────────────────┐
+ │  Host model /        │ ──────────────────────────────▶ │   Jambavan MCP Server          │
+ │  agent runtime       │                                 │                              │
+ │                      │ ◀────────── tool results ─────  │  ── Code index ──            │
+ │  • Claude Code       │                                 │  jambavan_index              │
+ │  • Codex CLI         │                                 │  jambavan_context            │
+ │  • Cursor            │                                 │  jambavan_watch              │
+ │  • Continue          │                                 │  jambavan_diagnostics        │
+ └─────────────────────┘                                  │  jambavan_doctor             │
+                                                          │                              │
+                                                          │  ── Graph & compression ──   │
+                                                          │  jambavan_graph_report       │
+                                                          │  jambavan_graph_query        │
+                                                          │  jambavan_graph_path         │
+                                                          │  jambavan_sankshipta (opt-in)│
+                                                          │                              │
+                                                          │  ── Memory ──                │
+                                                          │  jambavan_memory_store       │
+                                                          │  jambavan_memory_search      │
+                                                          │  jambavan_memory_recall      │
+                                                          │  jambavan_memory_mine_session│
+                                                          │  jambavan_memory_invalidate  │
+                                                          │  jambavan_memory_delete      │
+                                                          │  jambavan_memory_status      │
+                                                          │                              │
+                                                          │  ── Session continuity ──    │
+                                                          │  jambavan_failure_store      │
+                                                          │  jambavan_failure_search     │
+                                                          │  jambavan_session_export     │
+                                                          │  jambavan_session_import     │
+                                                          │  jambavan_review_pack        │
+                                                          │                              │
+                                                          │  ── Counsel ──               │
+                                                          │  jambavan_mool_kaaran        │
+                                                          │  jambavan_praman             │
+                                                          │  jambavan_yukti              │
+                                                          │  jambavan_vibhaajan          │
+                                                          │                              │
+                                                          │  ── Dev workflow ──          │
+                                                          │  jambavan_vibhishana_niti    │
+                                                          │  jambavan_rin_mochan         │
+                                                          │  jambavan_awaken             │
+                                                          │                              │
+                                                          │  ── File system & shell ──   │
+                                                          │  read_file                   │
+                                                          │  search / list_files         │
+                                                          │  write_file  (opt-in)        │
+                                                          │  patch_file  (opt-in)        │
+                                                          │  bash        (opt-in)        │
+                                                          └──────────────────────────────┘
 ```
 
 The host model decides *what* to do.
@@ -40,6 +76,7 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 | `jambavan_context` | Search index, return ranked token-budgeted context block. Optional `compress_prose` (denser comments), `include_diff` (recent git changes per symbol), `include_tests` (associated test files) — enrichments share the same token budget rather than being appended on top |
 | `jambavan_watch` | Start / stop live file watcher (incremental per-file re-index) |
 | `jambavan_diagnostics` | Show tree-sitter vs regex parser backends + index stats |
+| `jambavan_doctor` | One-shot environment health check: root source, parser backends, write/bash gates, token budget, memory dir, `.gitignore`/CI, and index/watcher status |
 
 ### Knowledge graph & compression
 

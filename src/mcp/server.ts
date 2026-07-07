@@ -25,6 +25,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { fileURLToPath } from 'url';
 
+import pkg from '../../package.json';
 import { loadConfig, applyResolvedRoot } from '../config/jambavan.config';
 import { doctorReport }                  from '../tools/doctor';
 import { ToolRegistry, boundedInt, capOutput } from '../tools/registry';
@@ -447,7 +448,7 @@ const NATIVE_TOOLS: Tool[] = [
 
 export async function startServer(): Promise<void> {
   const server = new Server(
-    { name: 'jambavan', version: '0.5.0' },
+    { name: 'jambavan', version: pkg.version },
     { capabilities: { tools: {} }, instructions: jambavanInstructions(config) },
   );
 

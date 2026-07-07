@@ -16,6 +16,36 @@ test('buildSymbolGraph: file->symbol contains edges are EXTRACTED', () => {
     const contains = g.edges.filter(e => e.type === 'contains');
     assert.equal(contains.length, 1);
     assert.equal(contains[0].confidence, 'EXTRACTED');
+    assert.match(contains[0].reason, /alpha defined at a\.ts:1/);
+  } finally { cleanup(); }
+});
+
+test('buildSymbolGraph: every edge carries a non-empty reason', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const g = buildSymbolGraph([
+      sym('alpha', path.join(root, 'a.ts'), 'function alpha() { return beta() + gamma; }', [{ name: 'beta', type: 'call' }]),
+      sym('beta', path.join(root, 'b.ts'), 'function beta() { return 1; }'),
+      sym('gamma', path.join(root, 'g.ts'), 'function gamma() { return 1; }'),
+    ], config);
+    assert.ok(g.edges.length > 0);
+    for (const e of g.edges) assert.ok(e.reason && e.reason.length > 0, `edge ${e.type}/${e.confidence} missing reason`);
+  } finally { cleanup(); }
+});
+
+test('buildSymbolGraph: reason explains ambiguous-name fan-out and import resolution', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const g = buildSymbolGraph([
+      sym('run', path.join(root, 'main.ts'), 'run calls handler', [
+        { name: 'handler', type: 'call' },
+        { name: 'handler', type: 'import', specifier: './moduleA' },
+      ]),
+      sym('handler', path.join(root, 'moduleA.ts'), 'a'),
+      sym('handler', path.join(root, 'moduleB.ts'), 'b'),
+    ], config);
+    const callEdge = g.edges.find(e => e.type === 'call')!;
+    assert.match(callEdge.reason, /resolved via import specifier '\.\/moduleA'/);
   } finally { cleanup(); }
 });
 
@@ -132,7 +162,7 @@ test('graphPath: finds a path and labels edge confidence; reports misses', () =>
       sym('alpha', path.join(root, 'a.ts'), 'function alpha() { return beta(); }', [{ name: 'beta', type: 'call' }]),
       sym('beta', path.join(root, 'b.ts'), 'function beta() {}'),
     ], config);
-    assert.match(graphPath(g, 'alpha', 'beta'), /via call\/EXTRACTED/);
+    assert.match(graphPath(g, 'alpha', 'beta'), /via call\/EXTRACTED — call site/);
     assert.match(graphPath(g, 'ghost', 'beta'), /No graph node found for from/);
     assert.match(graphPath(g, 'alpha', 'ghost'), /No graph node found for to/);
   } finally { cleanup(); }

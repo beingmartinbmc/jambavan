@@ -115,9 +115,10 @@ export function createBashTool(config: JambavanConfig): RegisteredTool {
         }
         return { success: true, output: output.trim() };
       } catch (err: unknown) {
-        const e = err as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
+        const e = err as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string; code?: number | string; signal?: string };
         const output = [e.stdout?.toString(), e.stderr?.toString(), e.message].filter(Boolean).join('\n');
-        return { success: false, output: output.trim(), error: 'Command failed' };
+        const cause = e.signal ? `signal ${e.signal}` : e.code !== undefined ? `exit code ${e.code}` : 'unknown cause';
+        return { success: false, output: output.trim(), error: `Command failed (${cause})` };
       }
     },
   };

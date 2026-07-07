@@ -22,6 +22,7 @@ async function main(): Promise<void> {
     memoryDir: path.join(projectRoot, '.jambavan', 'memory'),
     contextTokenBudget: 8000,
     ignore: [],
+    rootSource: 'env',
   };
 
   fs.writeFileSync(path.join(projectRoot, 'inside.txt'), 'ok', 'utf-8');

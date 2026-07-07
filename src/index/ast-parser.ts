@@ -31,10 +31,24 @@ export interface Symbol {
   references?: SymbolReference[];
 }
 
+/**
+ * A cross-file re-export directive: `export * from './x'` (imported/exported
+ * both '*') or `export { a, b as c } from './x'` (one row per named binding,
+ * `imported` = the name in the source file, `exported` = the name this file
+ * re-exposes it as). Local re-exports without a `from` clause (`export { x }`)
+ * aren't cross-file and are skipped — `x` is already captured as its own Symbol.
+ */
+export interface ReExport {
+  specifier: string;
+  imported: string;
+  exported: string;
+}
+
 export interface ParsedFile {
   filePath: string;
   symbols: Symbol[];
   language: string;
+  reExports: ReExport[];
 }
 
 // ── Language map ──────────────────────────────────────────────────────────────
@@ -410,15 +424,50 @@ function collectImportedNames(node: TSParser): string[] {
   return names;
 }
 
+/**
+ * Collect module-level re-export directives from the file root:
+ *   export * from './origin';                → { specifier: './origin', imported: '*', exported: '*' }
+ *   export { a, b as c } from './other';      → { specifier: './other', imported: 'a', exported: 'a' },
+ *                                                { specifier: './other', imported: 'b', exported: 'c' }
+ * Only TS/JS grammars have these node shapes; other languages just get [].
+ */
+function collectFileReExports(root: TSParser): ReExport[] {
+  const results: ReExport[] = [];
+  for (const child of root.children ?? []) {
+    if (child.type !== 'export_statement') continue;
+
+    // A re-export always has a module string ("from './x'"); a local
+    // declaration or a bare `export { x }` (no from-clause) doesn't.
+    const stringChild = child.children?.find((c: TSParser) => /string/.test(c.type));
+    if (!stringChild) continue;
+    const specifier = (stringChild.text ?? '').replace(/^['"]|['"]$/g, '');
+
+    if (child.children?.some((c: TSParser) => c.type === '*')) {
+      results.push({ specifier, imported: '*', exported: '*' });
+      continue;
+    }
+
+    const clause = child.children?.find((c: TSParser) => c.type === 'export_clause');
+    for (const spec of clause?.children ?? []) {
+      if (spec.type !== 'export_specifier') continue;
+      const imported = spec.childForFieldName?.('name')?.text;
+      const exported = spec.childForFieldName?.('alias')?.text ?? imported;
+      if (imported && exported) results.push({ specifier, imported, exported });
+    }
+  }
+  return results;
+}
+
 function extractWithTreeSitter(
   source: string,
   filePath: string,
   language: string,
   parser: TSParser,
-): Symbol[] {
+): { symbols: Symbol[]; reExports: ReExport[] } {
   const tree = parser.parse(source);
   const lines = source.split('\n');
   const declarations = collectDeclarations(tree.rootNode, language);
+  const reExports = collectFileReExports(tree.rootNode);
 
   // Collect module-level import references from the file root so every symbol in
   // this file knows what names are imported (and from where). This makes the
@@ -456,7 +505,7 @@ function extractWithTreeSitter(
     });
   }
 
-  return symbols;
+  return { symbols, reExports };
 }
 
 // ── Regex fallback (kept for languages without a grammar) ─────────────────────
@@ -565,18 +614,18 @@ export class ASTParser {
     const language = LANGUAGE_MAP[ext] ?? 'unknown';
 
     if (language === 'unknown') {
-      return { filePath, symbols: [], language };
+      return { filePath, symbols: [], language, reExports: [] };
     }
 
     const source = fs.readFileSync(filePath, 'utf-8');
 
     // Try tree-sitter first; fall back to regex when grammar unavailable
     const parser = getParser(language);
-    const symbols = parser
+    const { symbols, reExports } = parser
       ? extractWithTreeSitter(source, filePath, language, parser)
-      : extractWithRegex(source, filePath, language);
+      : { symbols: extractWithRegex(source, filePath, language), reExports: [] };
 
-    return { filePath, symbols, language };
+    return { filePath, symbols, language, reExports };
   }
 
   /** Check if a file extension is supported */

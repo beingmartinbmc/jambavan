@@ -211,46 +211,63 @@ async function benchTools(): Promise<ToolTiming[]> {
   return rows;
 }
 
+interface QueryRow {
+  query: string; files: number; chunks: number; jambavanTokens: number; baselineTokens: number; assembleMs: number;
+}
+
+export interface BenchmarkReport {
+  project: string;
+  index: { totalFiles: number; totalSymbols: number; coldMs: number; warmMs: number; indexedFiles: number; skippedFiles: number };
+  context: { budget: number; queries: QueryRow[]; totalJambavanTokens: number; totalBaselineTokens: number; savedPct: number };
+  graph: { nodes: number; edges: number; extracted: number; inferred: number; buildMs: number };
+  sankshipta: { beforeTokens: number; afterTokens: number; savedPct: number };
+  tools: ToolTiming[];
+}
+
 async function main(): Promise<void> {
+  const jsonMode = process.argv.includes('--json');
+  const log = jsonMode ? (..._args: unknown[]) => {} : console.log.bind(console);
+
   const base = loadConfig();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jambavan-bench-'));
   const config: JambavanConfig = { ...base, indexDir: tmp, memoryDir: path.join(tmp, 'memory') };
 
-  console.log(`Jambavan benchmark`);
-  console.log(`project: ${config.projectRoot}\n`);
+  log(`Jambavan benchmark`);
+  log(`project: ${config.projectRoot}\n`);
 
   const index = new JambavanIndex(config);
   const cold = await index.index();        // cold: parses everything
   const warm = await index.index();        // warm: nothing changed → all skipped
 
-  console.log('## Index');
-  console.log(`  files discovered  : ${cold.totalFiles}`);
-  console.log(`  symbols extracted : ${cold.totalSymbols}`);
-  console.log(`  cold build        : ${cold.durationMs} ms  (${cold.indexedFiles} files parsed)`);
-  console.log(`  warm re-index     : ${warm.durationMs} ms  (${warm.skippedFiles} skipped)`);
-  console.log(`  cold throughput   : ${perSec(cold.totalFiles, cold.durationMs)} files · ${perSec(cold.totalSymbols, cold.durationMs)} symbols`);
+  log('## Index');
+  log(`  files discovered  : ${cold.totalFiles}`);
+  log(`  symbols extracted : ${cold.totalSymbols}`);
+  log(`  cold build        : ${cold.durationMs} ms  (${cold.indexedFiles} files parsed)`);
+  log(`  warm re-index     : ${warm.durationMs} ms  (${warm.skippedFiles} skipped)`);
+  log(`  cold throughput   : ${perSec(cold.totalFiles, cold.durationMs)} files · ${perSec(cold.totalSymbols, cold.durationMs)} symbols`);
   if (warm.durationMs > 0) {
-    console.log(`  incremental speedup: ${(cold.durationMs / Math.max(warm.durationMs, 1)).toFixed(1)}x`);
+    log(`  incremental speedup: ${(cold.durationMs / Math.max(warm.durationMs, 1)).toFixed(1)}x`);
   }
 
   const assembler = new ContextAssembler(config);
   const queries = deriveQueries(index);
-  console.log('\n## Context — what it takes to answer a query');
-  console.log(`  queries  = the repo's most common symbols (auto-derived)`);
-  console.log(`  baseline = an agent opens the full contents of every file containing a match`);
-  console.log(`  jambavan = ranked, budgeted snippets instead`);
-  console.log(`  files    = whole files the baseline agent must read for this query`);
-  console.log(`  chunks   = focused snippets jambavan ships instead`);
-  console.log(`  budget   = ${config.contextTokenBudget} tokens\n`);
+  log('\n## Context — what it takes to answer a query');
+  log(`  queries  = the repo's most common symbols (auto-derived)`);
+  log(`  baseline = an agent opens the full contents of every file containing a match`);
+  log(`  jambavan = ranked, budgeted snippets instead`);
+  log(`  files    = whole files the baseline agent must read for this query`);
+  log(`  chunks   = focused snippets jambavan ships instead`);
+  log(`  budget   = ${config.contextTokenBudget} tokens\n`);
   const cols = () => `  ${'-'.repeat(20)} ${'-'.repeat(5)} ${'-'.repeat(6)} ${'-'.repeat(9)} ${'-'.repeat(10)} ${'-'.repeat(6)} ${'-'.repeat(9)}`;
-  console.log(`  ${pad('query', 20)} ${rpad('files', 5)} ${rpad('chunks', 6)} ${rpad('jambavan', 9)} ${rpad('baseline', 10)} ${rpad('saved', 6)} ${rpad('assemble', 9)}`);
-  console.log(cols());
+  log(`  ${pad('query', 20)} ${rpad('files', 5)} ${rpad('chunks', 6)} ${rpad('jambavan', 9)} ${rpad('baseline', 10)} ${rpad('saved', 6)} ${rpad('assemble', 9)}`);
+  log(cols());
 
   let totJ = 0, totB = 0, totFiles = 0, totChunks = 0, answered = 0;
+  const queryRows: QueryRow[] = [];
   for (const q of queries) {
     const results = index.search(q, 30);
     if (results.length === 0) {
-      console.log(`  ${pad(q, 20)} ${rpad('(no hit)', 5)}`);
+      log(`  ${pad(q, 20)} ${rpad('(no hit)', 5)}`);
       continue;
     }
     const chunks: ContextChunk[] = results.map(r => ({
@@ -271,50 +288,65 @@ async function main(): Promise<void> {
     for (const f of files) if (fs.existsSync(f)) baseline += countTokens(fs.readFileSync(f, 'utf-8'));
 
     totJ += usedTokens; totB += baseline; totFiles += files.size; totChunks += assembled.includedChunks; answered++;
-    console.log(`  ${pad(q, 20)} ${rpad(files.size, 5)} ${rpad(assembled.includedChunks, 6)} ${rpad(usedTokens, 9)} ${rpad(baseline, 10)} ${rpad(saved(usedTokens, baseline), 6)} ${rpad(asmMs.toFixed(2) + ' ms', 9)}`);
+    queryRows.push({ query: q, files: files.size, chunks: assembled.includedChunks, jambavanTokens: usedTokens, baselineTokens: baseline, assembleMs: asmMs });
+    log(`  ${pad(q, 20)} ${rpad(files.size, 5)} ${rpad(assembled.includedChunks, 6)} ${rpad(usedTokens, 9)} ${rpad(baseline, 10)} ${rpad(saved(usedTokens, baseline), 6)} ${rpad(asmMs.toFixed(2) + ' ms', 9)}`);
   }
   if (answered > 0) {
-    console.log(cols());
-    console.log(`  ${pad('TOTAL', 20)} ${rpad(totFiles, 5)} ${rpad(totChunks, 6)} ${rpad(totJ, 9)} ${rpad(totB, 10)} ${rpad(saved(totJ, totB), 6)}`);
+    log(cols());
+    log(`  ${pad('TOTAL', 20)} ${rpad(totFiles, 5)} ${rpad(totChunks, 6)} ${rpad(totJ, 9)} ${rpad(totB, 10)} ${rpad(saved(totJ, totB), 6)}`);
   }
 
-  console.log('\n## Graph — relationships extracted from the AST');
+  log('\n## Graph — relationships extracted from the AST');
   const symbols = index.getAllSymbols(100000);
-  const buildMs = medianMs(() => buildSymbolGraph(symbols, config), 5);
-  const graph = buildSymbolGraph(symbols, config);
+  const reExports = index.getAllReExports();
+  const buildMs = medianMs(() => buildSymbolGraph(symbols, config, reExports), 5);
+  const graph = buildSymbolGraph(symbols, config, reExports);
   const extracted = graph.edges.filter(e => e.confidence === 'EXTRACTED').length;
   const inferred = graph.edges.filter(e => e.confidence === 'INFERRED').length;
-  console.log(`  nodes           : ${graph.nodes.length}  (files + symbols + memories)`);
-  console.log(`  edges           : ${graph.edges.length}  (${extracted} EXTRACTED · ${inferred} INFERRED)`);
-  console.log(`  build           : ${buildMs.toFixed(1)} ms  (${perSec(graph.edges.length, buildMs)} edges)`);
+  log(`  nodes           : ${graph.nodes.length}  (files + symbols + memories)`);
+  log(`  edges           : ${graph.edges.length}  (${extracted} EXTRACTED · ${inferred} INFERRED)`);
+  log(`  build           : ${buildMs.toFixed(1)} ms  (${perSec(graph.edges.length, buildMs)} edges)`);
   if (queries.length) {
     const q = queries[0];
-    console.log(`  query "${q}"`.padEnd(18) + `: ${medianMs(() => graphQuery(graph, q)).toFixed(2)} ms`);
-    console.log(`  shortest path   : ${medianMs(() => graphPath(graph, queries[0], queries[Math.min(1, queries.length - 1)])).toFixed(2)} ms`);
+    log(`  query "${q}"`.padEnd(18) + `: ${medianMs(() => graphQuery(graph, q)).toFixed(2)} ms`);
+    log(`  shortest path   : ${medianMs(() => graphPath(graph, queries[0], queries[Math.min(1, queries.length - 1)])).toFixed(2)} ms`);
   }
 
-  console.log('\n## Sankshipta — prose compression');
+  log('\n## Sankshipta — prose compression');
   const before = countTokens(PROSE_SAMPLE);
   const compact = sankshiptaText(PROSE_SAMPLE);
   const after = countTokens(compact);
-  console.log(`  before : ${before} tokens`);
-  console.log(`  after  : ${after} tokens`);
-  console.log(`  saved  : ${saved(after, before)}`);
+  log(`  before : ${before} tokens`);
+  log(`  after  : ${after} tokens`);
+  log(`  saved  : ${saved(after, before)}`);
 
   index.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 
-  console.log('\n## Tool latency — every exposed MCP tool, over the real stdio transport');
-  console.log(`  n=10 for read-only/idempotent tools (min/median/max shown); n=1 for mutating tools\n`);
+  log('\n## Tool latency — every exposed MCP tool, over the real stdio transport');
+  log(`  n=10 for read-only/idempotent tools (min/median/max shown); n=1 for mutating tools\n`);
   const toolRows = await benchTools();
-  console.log(`  ${pad('tool', 26)} ${rpad('n', 3)} ${rpad('min ms', 7)} ${rpad('median ms', 10)} ${rpad('max ms', 7)}  note`);
-  console.log(`  ${'-'.repeat(26)} ${'-'.repeat(3)} ${'-'.repeat(7)} ${'-'.repeat(10)} ${'-'.repeat(7)}  ${'-'.repeat(40)}`);
+  log(`  ${pad('tool', 26)} ${rpad('n', 3)} ${rpad('min ms', 7)} ${rpad('median ms', 10)} ${rpad('max ms', 7)}  note`);
+  log(`  ${'-'.repeat(26)} ${'-'.repeat(3)} ${'-'.repeat(7)} ${'-'.repeat(10)} ${'-'.repeat(7)}  ${'-'.repeat(40)}`);
   for (const r of toolRows) {
-    console.log(`  ${pad(r.tool, 26)} ${rpad(r.n, 3)} ${rpad(r.minMs.toFixed(1), 7)} ${rpad(r.medianMs.toFixed(1), 10)} ${rpad(r.maxMs.toFixed(1), 7)}  ${r.note}`);
+    log(`  ${pad(r.tool, 26)} ${rpad(r.n, 3)} ${rpad(r.minMs.toFixed(1), 7)} ${rpad(r.medianMs.toFixed(1), 10)} ${rpad(r.maxMs.toFixed(1), 7)}  ${r.note}`);
   }
   const failed = toolRows.filter(r => r.note.startsWith('FAIL'));
   const uniqueTools = new Set(toolRows.map(r => r.tool)).size;
-  console.log(`\n  ${uniqueTools} tools · ${toolRows.length} calls` + (failed.length ? `  ·  ${failed.length} FAILED: ${failed.map(r => r.tool).join(', ')}` : '  ·  all ok'));
+  log(`\n  ${uniqueTools} tools · ${toolRows.length} calls` + (failed.length ? `  ·  ${failed.length} FAILED: ${failed.map(r => r.tool).join(', ')}` : '  ·  all ok'));
+
+  if (jsonMode) {
+    const report: BenchmarkReport = {
+      project: config.projectRoot,
+      index: { totalFiles: cold.totalFiles, totalSymbols: cold.totalSymbols, coldMs: cold.durationMs, warmMs: warm.durationMs, indexedFiles: cold.indexedFiles, skippedFiles: warm.skippedFiles },
+      context: { budget: config.contextTokenBudget, queries: queryRows, totalJambavanTokens: totJ, totalBaselineTokens: totB, savedPct: totB === 0 ? 0 : Math.round((1 - totJ / totB) * 100) },
+      graph: { nodes: graph.nodes.length, edges: graph.edges.length, extracted, inferred, buildMs },
+      sankshipta: { beforeTokens: before, afterTokens: after, savedPct: before === 0 ? 0 : Math.round((1 - after / before) * 100) },
+      tools: toolRows,
+    };
+    console.log(JSON.stringify(report, null, 2));
+  }
+
   if (failed.length) process.exitCode = 1;
 }
 

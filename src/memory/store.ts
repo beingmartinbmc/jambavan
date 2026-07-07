@@ -43,7 +43,7 @@ export interface MemoryDoc {
 
 // ── Serialisation ─────────────────────────────────────────────────────────────
 
-function serializeFrontmatter(fm: MemoryFrontmatter): string {
+export function serializeFrontmatter(fm: MemoryFrontmatter): string {
   const tags = fm.tags.length > 0
     ? `[${fm.tags.map(t => JSON.stringify(t)).join(', ')}]`
     : '[]';
@@ -63,7 +63,7 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   return lines.join('\n');
 }
 
-function parseFrontmatter(raw: string): { frontmatter: MemoryFrontmatter; body: string } | null {
+export function parseFrontmatter(raw: string): { frontmatter: MemoryFrontmatter; body: string } | null {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!match) return null;
 

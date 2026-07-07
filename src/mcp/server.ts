@@ -23,8 +23,11 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import { fileURLToPath } from 'url';
 
-import { loadConfig }                    from '../config/jambavan.config';
+import pkg from '../../package.json';
+import { loadConfig, applyResolvedRoot } from '../config/jambavan.config';
+import { doctorReport }                  from '../tools/doctor';
 import { ToolRegistry, boundedInt, capOutput } from '../tools/registry';
 import { createReadFileTool }            from '../tools/read-file';
 import { createWriteFileTool, createPatchFileTool } from '../tools/write-file';
@@ -40,6 +43,8 @@ import { vibhishanaNitiInstructions, harvestRin, formatRinReport } from '../tool
 import { MEMORY_TOOL_DEFS, buildMemoryHandlers } from '../tools/memory';
 import { FAILURE_MEMORY_TOOL_DEFS, buildFailureHandlers } from '../tools/failure-memory';
 import { SESSION_HANDOFF_TOOL_DEFS, buildSessionHandoffHandlers } from '../tools/session-handoff';
+import { REVIEW_PACK_TOOL_DEFS, buildReviewPackHandlers } from '../tools/review-pack';
+import { getDaemonStatus, formatDaemonStatus } from '../tools/daemon';
 import { sankshiptaFile } from '../tools/sankshipta';
 import { awakenReport, jambavanInstructions } from '../tools/jambavan';
 import { buildSymbolGraph, graphPath, graphQuery, graphReport } from '../knowledge/graph';
@@ -49,6 +54,29 @@ import { yuktiProtocol } from '../tools/yukti';
 import { vibhaajanProtocol } from '../tools/vibhaajan';
 import { getRecentSymbolChanges, formatRecentChanges } from '../context/diff-enricher';
 import { buildTestMap, formatTestAssociations } from '../index/test-map';
+
+/**
+ * Ask the MCP host for its real workspace root via roots/list, if it supports
+ * that capability. Fixes hosts that spawn the server with cwd=$HOME (see
+ * jambavan.config.ts's findProjectRoot() cwd-walkup fallback).
+ * Runs once, right after the client's `initialized` notification arrives —
+ * before the model's first tool call in practice, since a local stdio
+ * round-trip is far faster than the model deciding to call a tool.
+ */
+async function resolveClientRoots(server: Server, config: ReturnType<typeof loadConfig>): Promise<void> {
+  if (process.env.JAMBAVAN_ROOT) return;
+  if (!server.getClientCapabilities()?.roots) return;
+  try {
+    const { roots } = await server.listRoots();
+    const first = roots?.[0];
+    if (!first?.uri) return;
+    const newRoot = first.uri.startsWith('file://') ? fileURLToPath(first.uri) : first.uri;
+    applyResolvedRoot(config, newRoot);
+  } catch {
+    // Host declared the roots capability but didn't answer in time — keep the
+    // cwd-walkup fallback rather than blocking startup on it.
+  }
+}
 
 function graphTruncationNote(totalSymbols: number, symbolLimit: number): string {
   return totalSymbols > symbolLimit
@@ -91,6 +119,8 @@ function ensureIndex(): JambavanIndex {
   if (!jambavanIndex) jambavanIndex = new JambavanIndex(config);
   return jambavanIndex;
 }
+
+const reviewPackHandlers = buildReviewPackHandlers(config, () => jambavanIndex);
 
 // ── MCP Tool schema helpers ───────────────────────────────────────────────────
 
@@ -302,6 +332,20 @@ const NATIVE_TOOLS: Tool[] = [
       required:   [],
     },
   },
+  {
+    name: 'jambavan_doctor',
+    description: [
+      'One-shot environment health check: root detection source, parser backends, write/bash tool gates,',
+      'token budget, memory dir writability, .gitignore/CI presence, and index/watcher status.',
+      'Call this first when something feels off (e.g. context results look like the wrong project) —',
+      'it catches the most common cause: the MCP host resolving the wrong project root.',
+    ].join(' '),
+    inputSchema: {
+      type:       'object' as const,
+      properties: {},
+      required:   [],
+    },
+  },
   // Memory tools from OKF bundle definitions
   ...(MEMORY_TOOL_DEFS.map(def => ({
     name: def.name,
@@ -316,6 +360,12 @@ const NATIVE_TOOLS: Tool[] = [
   })) as unknown as Tool[]),
   // Session handoff tools
   ...(SESSION_HANDOFF_TOOL_DEFS.map(def => ({
+    name: def.name,
+    description: def.description,
+    inputSchema: def.inputSchema,
+  })) as unknown as Tool[]),
+  // Review pack tool
+  ...(REVIEW_PACK_TOOL_DEFS.map(def => ({
     name: def.name,
     description: def.description,
     inputSchema: def.inputSchema,
@@ -398,9 +448,13 @@ const NATIVE_TOOLS: Tool[] = [
 
 export async function startServer(): Promise<void> {
   const server = new Server(
-    { name: 'jambavan', version: '0.5.0' },
+    { name: 'jambavan', version: pkg.version },
     { capabilities: { tools: {} }, instructions: jambavanInstructions(config) },
   );
+
+  server.oninitialized = () => {
+    void resolveClientRoots(server, config);
+  };
 
   // ── tools/list ─────────────────────────────────────────────────────────────
 
@@ -572,6 +626,15 @@ export async function startServer(): Promise<void> {
       const action = input['action'] as string;
 
       if (action === 'start') {
+        const daemon = getDaemonStatus(config);
+        if (daemon.running) {
+          return {
+            content: [{
+              type: 'text',
+              text: `Background daemon already watching (pid ${daemon.pid}) — skipping in-process watcher to avoid duplicate indexing. Run "jambavan daemon stop" first if you want this session's watcher instead.`,
+            }],
+          };
+        }
         if (!jambavanIndex) {
           return {
             content: [{
@@ -614,7 +677,8 @@ export async function startServer(): Promise<void> {
           lastFile:       null,
         };
         const lines = [
-          `Running:         ${s.running}`,
+          `Background daemon: ${formatDaemonStatus(config)}`,
+          `In-process watcher running: ${s.running}`,
           `Files processed: ${s.filesProcessed}`,
           `Last event:      ${s.lastEvent ?? 'none'}`,
           `Last file:       ${s.lastFile  ?? 'none'}`,
@@ -663,7 +727,7 @@ export async function startServer(): Promise<void> {
       }
       const max = (input['max_nodes'] as number | undefined) ?? 10;
       const symbolLimit = (input['symbol_limit'] as number | undefined) ?? 5000;
-      const graph = buildSymbolGraph(jambavanIndex.getAllSymbols(symbolLimit), config);
+      const graph = buildSymbolGraph(jambavanIndex.getAllSymbols(symbolLimit), config, jambavanIndex.getAllReExports());
       const stats = jambavanIndex.stats();
       return { content: [{ type: 'text', text: graphReport(graph, max) + graphTruncationNote(stats.symbols, symbolLimit) }] };
     }
@@ -674,7 +738,7 @@ export async function startServer(): Promise<void> {
         return { content: [{ type: 'text', text: 'Index not built yet. Call jambavan_index first.' }], isError: true };
       }
       const symbolLimit = (input['symbol_limit'] as number | undefined) ?? 5000;
-      const graph = buildSymbolGraph(jambavanIndex.getAllSymbols(symbolLimit), config);
+      const graph = buildSymbolGraph(jambavanIndex.getAllSymbols(symbolLimit), config, jambavanIndex.getAllReExports());
       const text = name === 'jambavan_graph_query'
         ? graphQuery(graph, String(input['query'] ?? ''), (input['budget'] as number | undefined) ?? 2000)
         : graphPath(graph, String(input['from'] ?? ''), String(input['to'] ?? ''));
@@ -706,11 +770,23 @@ export async function startServer(): Promise<void> {
         indexStats
           ? `Index: ${indexStats.files.totalFiles} files · ${indexStats.symbols} symbols`
           : 'Index: not built (call jambavan_index)',
-        `Watcher: ${fileWatcher?.getStatus().running ? 'running' : 'stopped'}`,
-        `Project root: ${config.projectRoot}`,
+        `Watcher: ${fileWatcher?.getStatus().running ? 'running' : 'stopped'} (in-process) · ${formatDaemonStatus(config)}`,
+        `Project root: ${config.projectRoot} (source: ${config.rootSource})`,
       ];
 
       return { content: [{ type: 'text', text: lines.join('\n') }] };
+    }
+
+    // ── jambavan_doctor ────────────────────────────────────────────────────────
+    if (name === 'jambavan_doctor') {
+      const text = doctorReport(config, {
+        allowWrite: allowWrite,
+        allowBash: allowBash,
+        indexStats: jambavanIndex ? { files: jambavanIndex.stats().files.totalFiles, symbols: jambavanIndex.stats().symbols } : undefined,
+        watcherRunning: fileWatcher?.getStatus().running ?? false,
+        toolCount: NATIVE_TOOLS.length + registry.definitions().length,
+      });
+      return { content: [{ type: 'text', text }] };
     }
 
     // ── Memory tools ─────────────────────────────────────────────────────────
@@ -752,6 +828,11 @@ export async function startServer(): Promise<void> {
       return { content: [{ type: 'text', text: sessionHandoffHandlers.jambavan_session_import(input) }] };
     }
 
+    // ── Review pack tool ─────────────────────────────────────────────────────
+    if (name === 'jambavan_review_pack') {
+      return { content: [{ type: 'text', text: reviewPackHandlers.jambavan_review_pack(input) }] };
+    }
+
     // ── Counsel tools (discipline protocols) ─────────────────────────────────
     if (name === 'jambavan_mool_kaaran') {
       return { content: [{ type: 'text', text: moolKaaranProtocol(input) }] };
@@ -775,8 +856,16 @@ export async function startServer(): Promise<void> {
       const detail = result.output
         ? `${result.error ?? 'Tool execution failed'}\n${result.output}`
         : (result.error ?? 'Tool execution failed');
+
+      // Failed shell commands are the #1 source of cross-session retry loops —
+      // hand the model a copy-paste-ready call instead of hoping it remembers
+      // jambavan_failure_store exists.
+      const tip = name === 'bash'
+        ? `\n\nTip: jambavan_failure_store({ command: ${JSON.stringify(String(input['command'] ?? ''))}, symptom: ${JSON.stringify(detail.slice(0, 300))} })`
+        : '';
+
       return {
-        content:  [{ type: 'text', text: detail }],
+        content:  [{ type: 'text', text: detail + tip }],
         isError: true,
       };
     }

@@ -21,6 +21,15 @@ test('bash: non-zero exit is reported as failure with output preserved', async (
   } finally { cleanup(); }
 });
 
+test('bash: failure error message captures the exit code', async () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const r = await createBashTool(config).handler({ command: 'exit 7' });
+    assert.equal(r.success, false);
+    assert.match(r.error ?? '', /exit code 7/);
+  } finally { cleanup(); }
+});
+
 test('bash: footgun patterns are blocked before execution', async () => {
   const { config, cleanup } = mkTempConfig();
   try {

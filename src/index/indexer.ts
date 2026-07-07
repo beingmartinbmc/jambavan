@@ -36,6 +36,13 @@ export interface SymbolSearchResult {
   score: number;
 }
 
+export interface ReExportRow {
+  filePath: string;
+  specifier: string;
+  imported: string;
+  exported: string;
+}
+
 export class JambavanIndex {
   private cache:  FileCache;
   private parser: ASTParser;
@@ -66,11 +73,69 @@ export class JambavanIndex {
       );
       CREATE INDEX IF NOT EXISTS idx_symbols_name      ON symbols(name);
       CREATE INDEX IF NOT EXISTS idx_symbols_file_path ON symbols(file_path);
+
+      CREATE TABLE IF NOT EXISTS reexports (
+        file_path TEXT NOT NULL,
+        specifier TEXT NOT NULL,
+        imported  TEXT NOT NULL,
+        exported  TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_reexports_file_path ON reexports(file_path);
     `);
     // Migrate pre-refs caches only when the column is actually missing (no throw-and-catch).
     const hasRefs = (this.db.pragma('table_info(symbols)') as { name: string }[])
       .some(c => c.name === 'refs');
+    this.initFts();
     if (!hasRefs) this.db.exec(`ALTER TABLE symbols ADD COLUMN refs TEXT NOT NULL DEFAULT '[]'`);
+  }
+
+  /**
+   * FTS5 external-content index over symbols(name, content), kept in sync via
+   * triggers so every existing write path (storeSymbols, indexFile, deleteFile)
+   * needs zero changes. search() catches any FTS5 query failure and falls back
+   * to the LIKE path, so a tokenizer edge case here degrades, not breaks.
+   */
+  private initFts(): void {
+    // Detect "did this table already exist" via sqlite_master rather than
+    // COUNT(*) on symbols_fts after creation: for an external-content FTS5
+    // table (content='symbols'), COUNT(*) with no MATCH clause can be
+    // satisfied by the query planner straight from the content table's
+    // rowids, silently returning a non-zero count even when the FTS
+    // inverted index itself is still empty — making a "ftsCount === 0"
+    // backfill gate unreliable.
+    const ftsTableExisted = !!this.db
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'symbols_fts'`)
+      .get();
+
+    const statements = [
+      `CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(name, content, content='symbols', content_rowid='id')`,
+      `CREATE TRIGGER IF NOT EXISTS symbols_ai AFTER INSERT ON symbols BEGIN
+         INSERT INTO symbols_fts(rowid, name, content) VALUES (new.id, new.name, new.content);
+       END`,
+      `CREATE TRIGGER IF NOT EXISTS symbols_ad AFTER DELETE ON symbols BEGIN
+         INSERT INTO symbols_fts(symbols_fts, rowid, name, content) VALUES('delete', old.id, old.name, old.content);
+       END`,
+      `CREATE TRIGGER IF NOT EXISTS symbols_au AFTER UPDATE ON symbols BEGIN
+         INSERT INTO symbols_fts(symbols_fts, rowid, name, content) VALUES('delete', old.id, old.name, old.content);
+         INSERT INTO symbols_fts(rowid, name, content) VALUES (new.id, new.name, new.content);
+       END`,
+    ];
+    for (const sql of statements) this.db.prepare(sql).run();
+
+    // First-run migration: back-fill symbols_fts for a DB that predates FTS5
+    // (triggers only fire on writes after creation, not on pre-existing rows).
+    // Uses FTS5's own 'rebuild' command rather than a manual INSERT...SELECT,
+    // which is the documented, safe way to (re)populate an external-content
+    // FTS5 table's inverted index from its content table — cheap no-op when
+    // there are zero rows.
+    if (!ftsTableExisted) {
+      this.db.prepare(`INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')`).run();
+    }
+  }
+
+  /** Escape a raw term into an FTS5 double-quoted prefix token: `"term"*`. */
+  private static ftsToken(term: string): string {
+    return `"${term.replace(/"/g, '""')}"*`;
   }
 
   // ── Full / incremental scan ─────────────────────────────────────────────────
@@ -117,8 +182,9 @@ export class JambavanIndex {
     if (!this.cache.isStale(filePath)) return 0;
     if (!fs.existsSync(filePath))      return 0;
 
-    // Remove stale symbols for this file first
+    // Remove stale symbols/re-exports for this file first
     this.db.prepare('DELETE FROM symbols WHERE file_path = ?').run(filePath);
+    this.db.prepare('DELETE FROM reexports WHERE file_path = ?').run(filePath);
 
     if (!ASTParser.canParse(filePath)) {
       this.cache.markIndexed(filePath, 0);
@@ -128,6 +194,7 @@ export class JambavanIndex {
     try {
       const parsed = this.parser.parseFile(filePath);
       this.storeSymbols(parsed);
+      this.storeReExports(filePath, parsed.reExports);
       this.cache.markIndexed(filePath, parsed.symbols.length);
       return parsed.symbols.length;
     } catch {
@@ -138,24 +205,77 @@ export class JambavanIndex {
   }
 
   /**
-   * Remove all symbols and cache entry for a deleted file.
+   * Remove all symbols, re-exports, and cache entry for a deleted file.
    */
   deleteFile(filePath: string): void {
     this.db.prepare('DELETE FROM symbols WHERE file_path = ?').run(filePath);
+    this.db.prepare('DELETE FROM reexports WHERE file_path = ?').run(filePath);
     this.cache.markDeleted(filePath);
   }
 
   // ── Search ──────────────────────────────────────────────────────────────────
 
+  private static nameScore(name: string, firstTerm: string): number {
+    const lower = name.toLowerCase();
+    return lower === firstTerm ? 100 : lower.includes(firstTerm) ? 50 : 0;
+  }
+
+  private static toResult(row: Symbol & { file_path: string; start_line: number; end_line: number; refs?: string }, nameScore: number): SymbolSearchResult {
+    return {
+      symbol: {
+        name:       row.name,
+        type:       row.type as Symbol['type'],
+        startLine:  row.start_line,
+        endLine:    row.end_line,
+        content:    row.content,
+        filePath:   row.file_path,
+        references: JSON.parse(row.refs ?? '[]'),
+      },
+      score: nameScore + 1,
+    };
+  }
+
   /**
    * Search symbols by name or content.
    * Scores exact name match highest, prefix match second, substring last.
-   * rin: SQLite LIKE scan, no FTS5; add fts5 virtual table if search feels slow on >100k symbols.
+   * Ranks via FTS5 bm25() first (fast, relevance-aware); falls back to a plain
+   * LIKE scan for queries FTS5 can't tokenize well (e.g. pure-punctuation terms)
+   * or on any other FTS5 error, so a tokenizer edge case degrades, not breaks.
    */
   search(query: string, limit = 20): SymbolSearchResult[] {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length === 0) return [];
 
+    try {
+      return this.searchFts(terms, limit);
+    } catch {
+      return this.searchLike(terms, limit);
+    }
+  }
+
+  private searchFts(terms: string[], limit: number): SymbolSearchResult[] {
+    const matchQuery = terms.map(t => JambavanIndex.ftsToken(t)).join(' AND ');
+    // Over-fetch from FTS5's bm25 order, then re-rank by exact/prefix name
+    // match (matching the old LIKE path's priority) while keeping bm25 order
+    // as the stable secondary sort among equal name scores.
+    const overFetch = Math.min(Math.max(limit * 5, 50), 500);
+    const rows = this.db.prepare(`
+      SELECT symbols.*
+      FROM symbols_fts
+      JOIN symbols ON symbols.id = symbols_fts.rowid
+      WHERE symbols_fts MATCH ?
+      ORDER BY bm25(symbols_fts)
+      LIMIT ?
+    `).all(matchQuery, overFetch) as (Symbol & { file_path: string; start_line: number; end_line: number; refs?: string })[];
+
+    return rows
+      .map(row => ({ row, nameScore: JambavanIndex.nameScore(row.name, terms[0]) }))
+      .sort((a, b) => b.nameScore - a.nameScore)
+      .slice(0, limit)
+      .map(({ row, nameScore }) => JambavanIndex.toResult(row, nameScore));
+  }
+
+  private searchLike(terms: string[], limit: number): SymbolSearchResult[] {
     const rows = this.db.prepare(`
       SELECT *,
         (CASE WHEN LOWER(name) = ?        THEN 100
@@ -170,19 +290,20 @@ export class JambavanIndex {
       `%${terms[0]}%`,
       ...terms.flatMap(t => [`%${t}%`, `%${t}%`]),
       limit,
-    ) as (Symbol & { name_score: number; file_path: string; start_line: number; end_line: number })[];
+    ) as (Symbol & { name_score: number; file_path: string; start_line: number; end_line: number; refs?: string })[];
 
-    return rows.map(row => ({
-      symbol: {
-        name:       row.name,
-        type:       row.type as Symbol['type'],
-        startLine:  row.start_line,
-        endLine:    row.end_line,
-        content:    row.content,
-        filePath:   row.file_path,
-        references: JSON.parse((row as { refs?: string }).refs ?? '[]'),
-      },
-      score: row.name_score + 1,
+    return rows.map(row => JambavanIndex.toResult(row, row.name_score));
+  }
+
+  /** All re-export directives across the project (for cross-file graph resolution). */
+  getAllReExports(limit = 20000): ReExportRow[] {
+    return (this.db.prepare('SELECT * FROM reexports LIMIT ?').all(limit) as {
+      file_path: string; specifier: string; imported: string; exported: string;
+    }[]).map(row => ({
+      filePath:  row.file_path,
+      specifier: row.specifier,
+      imported:  row.imported,
+      exported:  row.exported,
     }));
   }
 
@@ -234,6 +355,18 @@ export class JambavanIndex {
       }
     });
     insertMany(parsed.symbols);
+  }
+
+  private storeReExports(filePath: string, reExports: ParsedFile['reExports']): void {
+    if (reExports.length === 0) return;
+    const insert = this.db.prepare(`
+      INSERT INTO reexports (file_path, specifier, imported, exported)
+      VALUES (?, ?, ?, ?)
+    `);
+    const insertMany = this.db.transaction((entries: ParsedFile['reExports']) => {
+      for (const e of entries) insert.run(filePath, e.specifier, e.imported, e.exported);
+    });
+    insertMany(reExports);
   }
 
   private async discoverFiles(): Promise<string[]> {

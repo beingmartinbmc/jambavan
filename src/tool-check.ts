@@ -10,6 +10,7 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 import { performance } from 'perf_hooks';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -36,6 +37,18 @@ async function main(): Promise<void> {
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'jambavan-toolcheck-'));
   fs.writeFileSync(path.join(proj, 'hello.ts'), HELLO);
   fs.writeFileSync(path.join(proj, 'notes.md'), NOTES);
+
+  // Real git history so jambavan_review_pack has something to diff.
+  const git = (args: string[]) => execFileSync('git', args, { cwd: proj });
+  git(['init', '-q', '-b', 'main']);
+  git(['config', 'user.email', 'toolcheck@example.com']);
+  git(['config', 'user.name', 'Tool Check']);
+  git(['add', '.']);
+  git(['commit', '-q', '-m', 'initial']);
+  git(['checkout', '-q', '-b', 'feature']);
+  fs.appendFileSync(path.join(proj, 'hello.ts'), '\nexport function farewell(name: string): string {\n  return "bye " + name;\n}\n');
+  git(['add', '.']);
+  git(['commit', '-q', '-m', 'add farewell']);
 
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v != null) env[k] = v;
@@ -76,6 +89,7 @@ async function main(): Promise<void> {
   // Ordered so dependencies are satisfied (index before context/graph, etc.)
   await call('jambavan_awaken', {});
   await call('jambavan_diagnostics', {});
+  await call('jambavan_doctor', {});
   await call('jambavan_index', {});
   await call('jambavan_context', { query: 'greet' });
   await call('jambavan_graph_report', {});
@@ -111,6 +125,9 @@ async function main(): Promise<void> {
   // ── Session handoff tools ──
   const exported = await call('jambavan_session_export', { scope: 'toolcheck', max_memories: 5 });
   await call('jambavan_session_import', { text: exported || '# Empty handoff\n', scope: 'toolcheck' });
+
+  // ── Review pack tool ──
+  await call('jambavan_review_pack', { base: 'main' });
 
   // ── Counsel tools (discipline protocols) ──
   await call('jambavan_mool_kaaran', { symptom: 'TypeError: Cannot read property of undefined', context: 'greet function', attempts_so_far: 0 });

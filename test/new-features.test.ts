@@ -14,8 +14,8 @@ import type { Symbol } from '../src/index/ast-parser';
 // ── projectScope ─────────────────────────────────────────────────────────────
 
 test('projectScope: two repos with same basename get different scopes', () => {
-  const configA: JambavanConfig = { projectRoot: '/home/user/work/api', indexDir: '', memoryDir: '', contextTokenBudget: 8000, ignore: [] };
-  const configB: JambavanConfig = { projectRoot: '/home/user/side/api', indexDir: '', memoryDir: '', contextTokenBudget: 8000, ignore: [] };
+  const configA: JambavanConfig = { projectRoot: '/home/user/work/api', indexDir: '', memoryDir: '', contextTokenBudget: 8000, ignore: [], rootSource: 'env' };
+  const configB: JambavanConfig = { projectRoot: '/home/user/side/api', indexDir: '', memoryDir: '', contextTokenBudget: 8000, ignore: [], rootSource: 'env' };
   assert.notEqual(projectScope(configA), projectScope(configB));
   // Both start with "api-" (the basename)
   assert.match(projectScope(configA), /^api-/);
@@ -23,7 +23,7 @@ test('projectScope: two repos with same basename get different scopes', () => {
 });
 
 test('projectScope: same path always produces the same scope (deterministic)', () => {
-  const config: JambavanConfig = { projectRoot: '/home/user/work/api', indexDir: '', memoryDir: '', contextTokenBudget: 8000, ignore: [] };
+  const config: JambavanConfig = { projectRoot: '/home/user/work/api', indexDir: '', memoryDir: '', contextTokenBudget: 8000, ignore: [], rootSource: 'env' };
   assert.equal(projectScope(config), projectScope(config));
 });
 
@@ -128,7 +128,10 @@ test('jambavan_session_export: produces markdown with expected sections', () => 
     const handlers = buildSessionHandoffHandlers(config);
     const result = handlers.jambavan_session_export({ include_git: false, include_rin: false });
     assert.match(result, /# Jambavan Session Handoff/);
-    assert.match(result, /## Memories/);
+    assert.match(result, /## Decisions/);
+    assert.match(result, /## Failures/);
+    assert.match(result, /## Other Memories/);
+    assert.match(result, /## Next Command/);
   } finally { cleanup(); }
 });
 
@@ -225,6 +228,28 @@ test('session handoff round-trip preserves FailureRecord type for failure_search
   } finally { cleanup(); }
 });
 
+test('jambavan_session_export: dirty file list preserves full first-file path (no leading-char truncation)', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const { execFileSync } = require('child_process') as typeof import('child_process');
+    const run = (args: string[]) => execFileSync('git', args, { cwd: root });
+    run(['init', '-q']);
+    run(['config', 'user.email', 'test@example.com']);
+    run(['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'committed.txt'), 'v1\n');
+    run(['add', '.']);
+    run(['commit', '-q', '-m', 'initial']);
+    // Unstaged modification — this is the FIRST porcelain line, the one a naive
+    // whole-string .trim() would corrupt by eating its leading status-code space.
+    fs.writeFileSync(path.join(root, 'committed.txt'), 'v2\n');
+
+    const handlers = buildSessionHandoffHandlers(config);
+    const result = handlers.jambavan_session_export({ include_rin: false });
+    assert.match(result, /modified: committed\.txt/);
+    assert.doesNotMatch(result, /modified: [^c]/); // any leading-char-eaten variant of the bug
+  } finally { cleanup(); }
+});
+
 // ── Test-Symbol Association ──────────────────────────────────────────────────
 
 test('isTestFile: correctly identifies test files', () => {
@@ -306,6 +331,7 @@ test('buildSymbolGraph: import specifier resolves ambiguous call to correct file
     memoryDir: path.join(root, '.jambavan/memory'),
     contextTokenBudget: 8000,
     ignore: [],
+    rootSource: 'env',
   };
 
   const symbols: Symbol[] = [
@@ -361,6 +387,7 @@ test('buildSymbolGraph: ambiguous call without import specifier fans out to all 
     memoryDir: path.join(root, '.jambavan/memory'),
     contextTokenBudget: 8000,
     ignore: [],
+    rootSource: 'env',
   };
 
   const symbols: Symbol[] = [
@@ -397,4 +424,97 @@ test('buildSymbolGraph: ambiguous call without import specifier fans out to all 
 
   // Should fan out to both targets (no import info to disambiguate)
   assert.equal(callEdges.length, 2, `Expected 2 call edges (fan-out), got ${callEdges.length}`);
+});
+
+// ── Graph: cross-file resolution (Phase 6) ──────────────────────────────────
+
+test('buildSymbolGraph: resolves an import through a star re-export barrel file', () => {
+  // moduleA.ts and moduleB.ts BOTH define handler (ambiguous by name alone).
+  // barrel.ts does `export * from './moduleA'` (no symbol of its own).
+  // main.ts imports handler from './barrel' and calls it — the graph must
+  // resolve specifically to moduleA's handler via the barrel, not moduleB's.
+  const root = '/tmp/graph-test3';
+  const config: JambavanConfig = {
+    projectRoot: root, indexDir: path.join(root, '.jambavan'), memoryDir: path.join(root, '.jambavan/memory'),
+    contextTokenBudget: 8000, ignore: [], rootSource: 'env',
+  };
+
+  const symbols: Symbol[] = [
+    { name: 'handler', type: 'function', filePath: path.join(root, 'moduleA.ts'), startLine: 1, endLine: 1, content: 'export function handler() { return 1; }' },
+    { name: 'handler', type: 'function', filePath: path.join(root, 'moduleB.ts'), startLine: 1, endLine: 1, content: "export function handler() { return 'B'; }" },
+    {
+      name: 'run', type: 'function', filePath: path.join(root, 'main.ts'), startLine: 1, endLine: 1,
+      content: 'export function run() { return handler(); }',
+      references: [
+        { name: 'handler', type: 'call' },
+        { name: 'handler', type: 'import', specifier: './barrel' },
+      ],
+    },
+  ];
+  const reExports = [{ filePath: path.join(root, 'barrel.ts'), specifier: './moduleA', imported: '*', exported: '*' }];
+
+  const graph = buildSymbolGraph(symbols, config, reExports);
+  const runId = graph.nodes.find(n => n.label === 'run')!.id;
+  const callEdges = graph.edges.filter(e => e.from === runId && e.type === 'call');
+  assert.equal(callEdges.length, 1, `Expected exactly 1 resolved call edge (via barrel to moduleA), got ${callEdges.length}`);
+  assert.equal(graph.nodes.find(n => n.id === callEdges[0].to)!.filePath, 'moduleA.ts');
+});
+
+test('buildSymbolGraph: resolves an import through a named+aliased re-export, multi-hop', () => {
+  // origin.ts defines handler. mid.ts does `export { handler as run } from './origin'`
+  // (a re-export, no local symbol). main.ts imports `run` from './mid' and calls it.
+  const root = '/tmp/graph-test4';
+  const config: JambavanConfig = {
+    projectRoot: root, indexDir: path.join(root, '.jambavan'), memoryDir: path.join(root, '.jambavan/memory'),
+    contextTokenBudget: 8000, ignore: [], rootSource: 'env',
+  };
+
+  const symbols: Symbol[] = [
+    { name: 'handler', type: 'function', filePath: path.join(root, 'origin.ts'), startLine: 1, endLine: 1, content: 'export function handler() { return 1; }' },
+    {
+      name: 'caller', type: 'function', filePath: path.join(root, 'main.ts'), startLine: 1, endLine: 1,
+      content: 'export function caller() { return run(); }',
+      references: [
+        { name: 'run', type: 'call' },
+        { name: 'run', type: 'import', specifier: './mid' },
+      ],
+    },
+  ];
+  const reExports = [{ filePath: path.join(root, 'mid.ts'), specifier: './origin', imported: 'handler', exported: 'run' }];
+
+  const graph = buildSymbolGraph(symbols, config, reExports);
+  const callerId = graph.nodes.find(n => n.label === 'caller')!.id;
+  const callEdges = graph.edges.filter(e => e.from === callerId && e.type === 'call');
+  assert.equal(callEdges.length, 1, 'run() should resolve via the re-export chain, not fan out ambiguously');
+  const target = graph.nodes.find(n => n.id === callEdges[0].to)!;
+  assert.equal(target.filePath, 'origin.ts');
+  assert.equal(target.label, 'handler');
+});
+
+test('buildSymbolGraph: resolves a bare import via tsconfig paths alias', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    fs.writeFileSync(path.join(root, 'tsconfig.json'), JSON.stringify({
+      compilerOptions: { baseUrl: '.', paths: { '@app/*': ['src/app/*'] } },
+    }));
+
+    const symbols: Symbol[] = [
+      { name: 'widget', type: 'function', filePath: path.join(root, 'src/app/widget.ts'), startLine: 1, endLine: 1, content: 'export function widget() { return 1; }' },
+      { name: 'other', type: 'function', filePath: path.join(root, 'lib/other.ts'), startLine: 1, endLine: 1, content: "export function widget() { return 'shadow'; }" },
+      {
+        name: 'main', type: 'function', filePath: path.join(root, 'main.ts'), startLine: 1, endLine: 1,
+        content: 'export function main() { return widget(); }',
+        references: [
+          { name: 'widget', type: 'call' },
+          { name: 'widget', type: 'import', specifier: '@app/widget' },
+        ],
+      },
+    ];
+
+    const graph = buildSymbolGraph(symbols, config);
+    const mainId = graph.nodes.find(n => n.label === 'main')!.id;
+    const callEdges = graph.edges.filter(e => e.from === mainId && e.type === 'call');
+    assert.equal(callEdges.length, 1);
+    assert.match(graph.nodes.find(n => n.id === callEdges[0].to)!.filePath!, /src\/app\/widget\.ts$/);
+  } finally { cleanup(); }
 });

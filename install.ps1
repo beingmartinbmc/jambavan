@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 
 Write-Host "Jambavan install`n" -ForegroundColor White
 
+# --- Node version check -------------------------------------------------------
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
   Write-Error "Node.js >= 20 is required. Install it from https://nodejs.org and re-run."
@@ -23,6 +24,26 @@ Write-Host "  [ok] Node $(node -v)" -ForegroundColor Green
 # the one paying for the download.
 npx -y jambavan --help *> $null
 
+# --- Opt-in tools prompt ------------------------------------------------------
+$allowWrite = $false
+$allowBash  = $false
+if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+  Write-Host "`nEnable opt-in tools?" -ForegroundColor White
+  Write-Host "  write_file / patch_file / jambavan_sankshipta  (JAMBAVAN_ALLOW_WRITE=1)"
+  Write-Host "  bash                                           (JAMBAVAN_ALLOW_BASH=1)"
+  Write-Host "These are disabled by default for safety. You can change this later by"
+  Write-Host "editing the 'env' block in your agent's MCP config.`n"
+  $ansWrite = Read-Host "  Enable write tools? [y/N]"
+  $allowWrite = $ansWrite -match '^[Yy]$'
+  $ansBash  = Read-Host "  Enable bash tool?   [y/N]"
+  $allowBash  = $ansBash  -match '^[Yy]$'
+  Write-Host ""
+} else {
+  Write-Host "  [!] Non-interactive run: write_file, patch_file, bash, and jambavan_sankshipta are disabled by default." -ForegroundColor Yellow
+  Write-Host "  [!] Re-run the installer in a terminal to enable them, or set JAMBAVAN_ALLOW_WRITE=1 / JAMBAVAN_ALLOW_BASH=1" -ForegroundColor Yellow
+  Write-Host "  [!] in your agent's MCP server env config.`n" -ForegroundColor Yellow
+}
+
 $found = $false
 
 # --- Claude Code -------------------------------------------------------------
@@ -34,7 +55,10 @@ if ($claude) {
     Write-Host "  [.] Claude Code - already registered" -ForegroundColor DarkGray
   } else {
     try {
-      claude mcp add jambavan -- npx -y jambavan | Out-Null
+      $envFlags = @()
+      if ($allowWrite) { $envFlags += '-e'; $envFlags += 'JAMBAVAN_ALLOW_WRITE=1' }
+      if ($allowBash)  { $envFlags += '-e'; $envFlags += 'JAMBAVAN_ALLOW_BASH=1'  }
+      & claude mcp add @envFlags jambavan -- npx -y jambavan | Out-Null
       Write-Host "  [ok] Claude Code - registered" -ForegroundColor Green
     } catch {
       Write-Host "  [!] Claude Code - found but registration failed; try: claude mcp add jambavan -- npx -y jambavan" -ForegroundColor Yellow
@@ -44,7 +68,7 @@ if ($claude) {
   Write-Host "  [.] Claude Code - not found" -ForegroundColor DarkGray
 }
 
-# --- Codex CLI -----------------------------------------------------------------
+# --- Codex CLI ----------------------------------------------------------------
 $codex = Get-Command codex -ErrorAction SilentlyContinue
 if ($codex) {
   $found = $true
@@ -53,7 +77,10 @@ if ($codex) {
     Write-Host "  [.] Codex CLI - already registered" -ForegroundColor DarkGray
   } else {
     try {
-      codex mcp add jambavan -- npx -y jambavan | Out-Null
+      $envFlags = @()
+      if ($allowWrite) { $envFlags += '-e'; $envFlags += 'JAMBAVAN_ALLOW_WRITE=1' }
+      if ($allowBash)  { $envFlags += '-e'; $envFlags += 'JAMBAVAN_ALLOW_BASH=1'  }
+      & codex mcp add @envFlags jambavan -- npx -y jambavan | Out-Null
       Write-Host "  [ok] Codex CLI - registered" -ForegroundColor Green
     } catch {
       Write-Host "  [!] Codex CLI - found but registration failed; try: codex mcp add jambavan -- npx -y jambavan" -ForegroundColor Yellow
@@ -77,7 +104,14 @@ if (Test-Path $cursorDir) {
   if ($cfg['mcpServers'].ContainsKey('jambavan')) {
     Write-Host "  [.] Cursor - already registered" -ForegroundColor DarkGray
   } else {
-    $cfg['mcpServers']['jambavan'] = @{ command = 'npx'; args = @('-y', 'jambavan') }
+    $entry = @{ command = 'npx'; args = @('-y', 'jambavan') }
+    if ($allowWrite -or $allowBash) {
+      $envBlock = @{}
+      if ($allowWrite) { $envBlock['JAMBAVAN_ALLOW_WRITE'] = '1' }
+      if ($allowBash)  { $envBlock['JAMBAVAN_ALLOW_BASH']  = '1' }
+      $entry['env'] = $envBlock
+    }
+    $cfg['mcpServers']['jambavan'] = $entry
     $cfg | ConvertTo-Json -Depth 10 | Set-Content $mcpFile
     Write-Host "  [ok] Cursor - registered in $mcpFile" -ForegroundColor Green
   }
@@ -95,7 +129,14 @@ if (Test-Path $continueDir) {
     Write-Host "  [.] Continue - already registered" -ForegroundColor DarkGray
   } else {
     New-Item -ItemType Directory -Force -Path $serversDir | Out-Null
-    '{ "command": "npx", "args": ["-y", "jambavan"] }' | Set-Content $target
+    $entry = @{ command = 'npx'; args = @('-y', 'jambavan') }
+    if ($allowWrite -or $allowBash) {
+      $envBlock = @{}
+      if ($allowWrite) { $envBlock['JAMBAVAN_ALLOW_WRITE'] = '1' }
+      if ($allowBash)  { $envBlock['JAMBAVAN_ALLOW_BASH']  = '1' }
+      $entry['env'] = $envBlock
+    }
+    $entry | ConvertTo-Json -Depth 5 | Set-Content $target
     Write-Host "  [ok] Continue - registered in $target" -ForegroundColor Green
   }
 } else {

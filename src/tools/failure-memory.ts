@@ -65,7 +65,9 @@ export const FAILURE_MEMORY_TOOL_DEFS = [
 ] as const;
 
 export function buildFailureHandlers(config: JambavanConfig) {
-  const store = new MemoryStore(config.memoryDir);
+  // Lazy per-call construction — see buildMemoryHandlers() in memory.ts for why
+  // a build-time-captured store goes stale after roots/list root resolution.
+  const store = () => new MemoryStore(config.memoryDir);
 
   return {
     jambavan_failure_store(input: Record<string, unknown>): string {
@@ -95,7 +97,7 @@ export function buildFailureHandlers(config: JambavanConfig) {
       const title = `Failure: ${command.slice(0, 50)} [${hash}]`;
       const failScope = input['scope'] ? String(input['scope']) : projectScope(config);
 
-      const id = store.store({
+      const id = store().store({
         title,
         body,
         scope: failScope,
@@ -119,7 +121,7 @@ export function buildFailureHandlers(config: JambavanConfig) {
       // would pollute BM25 scoring and cause false positives on any FailureRecord.
       // The type filter ensures only FailureRecords are returned; BM25 ranking
       // naturally pushes irrelevant results to the bottom.
-      const results = store.search(query, { scope, limit: limit * 2 })
+      const results = store().search(query, { scope, limit: limit * 2 })
         .filter(r => r.doc.frontmatter.type === 'FailureRecord')
         .slice(0, limit);
 

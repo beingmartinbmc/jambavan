@@ -12,6 +12,7 @@ export function mkTempConfig(): { config: JambavanConfig; root: string; cleanup:
     memoryDir: path.join(root, '.jambavan', 'memory'),
     contextTokenBudget: 8000,
     ignore: [],
+    rootSource: 'env',
   };
   return { config, root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }

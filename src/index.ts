@@ -15,11 +15,201 @@
  * Usage:
  *   npx -y jambavan → starts MCP server over stdio
  *   npx -y jambavan --help    → show registration instructions
+ *   npx -y jambavan doctor    → one-shot environment/config health check
+ *   npx -y jambavan badges    → print local Benchmark/Rin Ledger/Failure Immunity README badges
+ *   npx -y jambavan bridge    → convert memories to/from a MemPalace-shaped markdown tree
+ *   npx -y jambavan handoff --write-pr-template  → inject the session handoff card into a local PR template
+ *   npx -y jambavan daemon start|stop|status  → run the file watcher standalone in a detached background process
+ *   npx -y jambavan gui [--port <n>] [--no-open]  → local dependency-free graph/rin/failure visualizer
  */
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { execFileSync } from 'child_process';
 import { startServer } from './mcp/server';
+import { loadConfig } from './config/jambavan.config';
+import { doctorReport } from './tools/doctor';
+import { JambavanIndex } from './index/indexer';
+import { harvestRin } from './tools/vibhishana-niti';
+import { MemoryStore } from './memory/store';
+import { projectScope } from './tools/jambavan';
+import type { BenchmarkReport } from './benchmark';
+import { exportToMemPalace, importFromMemPalace } from './tools/memory-bridge';
+import { buildSessionHandoffHandlers } from './tools/session-handoff';
+import { injectHandoffBlock } from './tools/pr-handoff';
+import { startDaemon, stopDaemon, formatDaemonStatus } from './tools/daemon';
+import { startGuiServer, openBrowser } from './tools/gui';
 
 const args = process.argv.slice(2);
+
+if (args[0] === 'gui') {
+  const config = loadConfig();
+  const portFlagIdx = args.indexOf('--port');
+  const port = portFlagIdx >= 0 ? Number(args[portFlagIdx + 1]) : 4173;
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    console.error(`Invalid --port value: ${args[portFlagIdx + 1]}`);
+    process.exit(1);
+  }
+
+  const index = new JambavanIndex(config);
+  void index.index().then((stats) => {
+    console.log(`Indexed ${stats.indexedFiles}/${stats.totalFiles} files before starting the GUI.`);
+    const server = startGuiServer(config, index, port);
+    server.on('error', (err) => {
+      console.error(`Failed to start GUI server: ${err.message}`);
+      process.exit(1);
+    });
+    server.on('listening', () => {
+      const url = `http://127.0.0.1:${port}`;
+      console.log(`Jambavan GUI running at ${url} (Ctrl+C to stop)`);
+      if (!args.includes('--no-open')) openBrowser(url);
+    });
+  });
+}
+
+if (args[0] === 'daemon') {
+  const config = loadConfig();
+  const sub = args[1];
+
+  if (sub === 'start') {
+    const result = startDaemon(config);
+    console.log(result.message);
+    process.exit(result.started ? 0 : 1);
+  }
+  if (sub === 'stop') {
+    const result = stopDaemon(config);
+    console.log(result.message);
+    process.exit(result.stopped ? 0 : 1);
+  }
+  if (sub === 'status') {
+    console.log(formatDaemonStatus(config));
+    process.exit(0);
+  }
+
+  console.error('Usage: jambavan daemon start|stop|status');
+  process.exit(1);
+}
+
+if (args[0] === 'handoff') {
+  const config = loadConfig();
+  const flag = (name: string): string | undefined => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+
+  if (!args.includes('--write-pr-template')) {
+    console.error('Usage: jambavan handoff --write-pr-template [--scope <scope>] [--post]');
+    process.exit(1);
+  }
+
+  const handoffText = buildSessionHandoffHandlers(config).jambavan_session_export({ scope: flag('--scope') });
+  const templatePath = path.join(config.projectRoot, '.github', 'pull_request_template.md');
+  const existing = fs.existsSync(templatePath) ? fs.readFileSync(templatePath, 'utf-8') : '';
+
+  fs.mkdirSync(path.dirname(templatePath), { recursive: true });
+  fs.writeFileSync(templatePath, injectHandoffBlock(existing, handoffText), 'utf-8');
+  console.log(`Wrote handoff block to ${templatePath}`);
+
+  if (!args.includes('--post')) process.exit(0);
+
+  const tmp = path.join(os.tmpdir(), `jambavan-handoff-${Date.now()}.md`);
+  fs.writeFileSync(tmp, handoffText, 'utf-8');
+  let posted = true;
+  try {
+    execFileSync('gh', ['pr', 'comment', '--body-file', tmp], { cwd: config.projectRoot, stdio: 'inherit' });
+    console.log('Posted handoff as a PR comment via gh.');
+  } catch (err) {
+    posted = false;
+    console.error(`gh pr comment failed: ${err instanceof Error ? err.message : err}`);
+    console.error('Is gh installed, authenticated, and is there an open PR for this branch?');
+  }
+  fs.rmSync(tmp, { force: true });
+  process.exit(posted ? 0 : 1);
+}
+
+if (args[0] === 'bridge') {
+  const config = loadConfig();
+  const flag = (name: string): string | undefined => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const defaultDir = path.join(config.indexDir, 'bridge', 'mempalace');
+
+  if (flag('--to') === 'mempalace') {
+    const outDir = flag('--out') ?? defaultDir;
+    const { files, wings } = exportToMemPalace(config, outDir, flag('--scope'));
+    console.log(`Exported ${files} memor${files === 1 ? 'y' : 'ies'} to ${outDir}`);
+    console.log(`Wings: ${wings.join(', ') || '(none)'}`);
+    console.log(`\nJambavan makes no network calls itself — have your host model walk this tree`);
+    console.log(`and call mempalace_add_drawer(wing, room, title, content) once per file.`);
+    process.exit(0);
+  }
+
+  if (flag('--from') === 'mempalace') {
+    const inDir = flag('--in') ?? defaultDir;
+    const { imported, skipped } = importFromMemPalace(config, inDir);
+    console.log(`Imported ${imported} memor${imported === 1 ? 'y' : 'ies'} from ${inDir}` +
+      (skipped ? ` (${skipped} file(s) skipped — no parseable frontmatter)` : ''));
+    process.exit(0);
+  }
+
+  console.error('Usage: jambavan bridge --to mempalace [--out <dir>] [--scope <scope>]');
+  console.error('       jambavan bridge --from mempalace [--in <dir>]');
+  process.exit(1);
+}
+
+if (args[0] === 'badges') {
+  const config = loadConfig();
+
+  let benchmarkCard = '📊 **Benchmark:** run `npx jambavan bench` to measure context savings on this repo.';
+  try {
+    // stdio must be explicit: the benchmark spawns a real MCP server subprocess
+    // whose "[jambavan] MCP server ready" stderr line otherwise inherits all
+    // the way up through this process's own stderr, printing before the
+    // copy-paste badge lines below. Piping still preserves err.stderr on failure.
+    const raw = execFileSync(process.execPath, [path.join(__dirname, 'benchmark.js'), '--json'], {
+      cwd: config.projectRoot, encoding: 'utf-8', timeout: 120_000, maxBuffer: 10 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const report = JSON.parse(raw) as BenchmarkReport;
+    benchmarkCard = `📊 **Benchmark:** Jambavan saved ${report.context.savedPct}% context tokens on this repo vs. reading whole files.`;
+  } catch (err) {
+    process.stderr.write(`[jambavan badges] benchmark run failed, using placeholder card: ${err instanceof Error ? err.message : err}\n`);
+  }
+
+  const { markers } = harvestRin(config);
+  const noTrigger = markers.filter(m => !m.hasUpgrade).length;
+  const rinLedger = markers.length === 0
+    ? '🪶 **Rin Ledger:** clean — no tracked debt.'
+    : `🪶 **Rin Ledger:** ${markers.length} debt marker${markers.length === 1 ? '' : 's'} tracked, ${noTrigger} with no upgrade trigger.`;
+
+  const store = new MemoryStore(config.memoryDir);
+  const failureCount = store.list(projectScope(config)).filter(d => d.frontmatter.type === 'FailureRecord').length;
+  const failureImmunity = `🛡️ **Failure Immunity:** immune to ${failureCount} past loop trap${failureCount === 1 ? '' : 's'}.`;
+
+  console.log([benchmarkCard, rinLedger, failureImmunity].join('\n'));
+  console.error('\n(Paste the lines above into your README. Prefer a rendered badge? Use a shields.io static-badge URL instead — that pulls from an external CDN when the README renders, so it is opt-in, not default.)');
+  process.exit(0);
+}
+
+if (args[0] === 'doctor') {
+  const config = loadConfig();
+  const dbPath = path.join(config.indexDir, 'symbols.db');
+  let indexStats: { files: number; symbols: number } | undefined;
+  if (fs.existsSync(dbPath)) {
+    const idx = new JambavanIndex(config);
+    const stats = idx.stats();
+    indexStats = { files: stats.files.totalFiles, symbols: stats.symbols };
+    idx.close();
+  }
+  console.log(doctorReport(config, {
+    allowWrite: process.env.JAMBAVAN_ALLOW_WRITE === '1',
+    allowBash: process.env.JAMBAVAN_ALLOW_BASH === '1',
+    indexStats,
+  }));
+  process.exit(0);
+}
 
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
@@ -39,6 +229,8 @@ Jambavan exposes these MCP tools to the host model:
   jambavan_vibhishana_niti  Activate efficient senior-dev mode (lite / full / ultra)
   jambavan_rin_mochan    Harvest rin comments into a tracked debt ledger
   jambavan_diagnostics   Show parser backends (tree-sitter vs regex) and index stats
+  jambavan_doctor        One-shot health check: root source, parsers, gates, memory dir, CI
+  jambavan_review_pack   Review pack for the current branch: touched symbols/callers/tests/failures/risk
 
   jambavan_memory_store  Persist a memory as an OKF markdown document
   jambavan_memory_search BM25 search across stored memories
@@ -105,7 +297,11 @@ Environment:
   process.exit(0);
 }
 
-startServer().catch(err => {
-  process.stderr.write(`[jambavan] Fatal: ${err}\n`);
-  process.exit(1);
-});
+// `gui` starts its own long-lived HTTP server above and returns without exiting;
+// every other branch above this point calls process.exit() before falling through.
+if (args[0] !== 'gui') {
+  startServer().catch(err => {
+    process.stderr.write(`[jambavan] Fatal: ${err}\n`);
+    process.exit(1);
+  });
+}

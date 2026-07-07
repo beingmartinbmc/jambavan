@@ -23,6 +23,9 @@ function findProjectRoot(): string {
   return process.cwd();
 }
 
+/** Where projectRoot came from — surfaced by jambavan_doctor to explain root confusion. */
+export type RootSource = 'env' | 'client-roots' | 'cwd-fallback';
+
 export interface JambavanConfig {
   /** Absolute path to the project being indexed/served */
   projectRoot: string;
@@ -34,10 +37,14 @@ export interface JambavanConfig {
   contextTokenBudget: number;
   /** File / directory patterns to skip during indexing */
   ignore: string[];
+  /** How projectRoot was determined. Mutated in place by applyResolvedRoot(). */
+  rootSource: RootSource;
 }
 
 export function loadConfig(overrides: Partial<JambavanConfig> = {}): JambavanConfig {
-  const projectRoot = process.env.JAMBAVAN_ROOT ?? findProjectRoot();
+  const envRoot = process.env.JAMBAVAN_ROOT;
+  const projectRoot = envRoot ?? findProjectRoot();
+  const rootSource: RootSource = envRoot ? 'env' : 'cwd-fallback';
 
   const indexDir = path.join(projectRoot, '.jambavan');
 
@@ -50,6 +57,26 @@ export function loadConfig(overrides: Partial<JambavanConfig> = {}): JambavanCon
       'node_modules', '.git', 'dist', 'build', '.jambavan',
       '*.lock', '*.log', '.DS_Store', 'coverage', '.next', '.nuxt',
     ],
+    rootSource,
     ...overrides,
   };
+}
+
+/**
+ * Mutates `config` in place once the MCP host reports its real workspace root
+ * via the `roots/list` request — this fixes hosts that spawn the server with
+ * cwd=$HOME (findProjectRoot() then silently resolves to $HOME).
+ * No-op if JAMBAVAN_ROOT was set explicitly (that always wins) or the new
+ * root matches what's already resolved.
+ */
+export function applyResolvedRoot(config: JambavanConfig, newRoot: string): void {
+  if (process.env.JAMBAVAN_ROOT) return;
+  if (newRoot === config.projectRoot) return;
+
+  config.projectRoot = newRoot;
+  config.indexDir = path.join(newRoot, '.jambavan');
+  if (!process.env.JAMBAVAN_MEMORY_HOME) {
+    config.memoryDir = path.join(config.indexDir, 'memory');
+  }
+  config.rootSource = 'client-roots';
 }

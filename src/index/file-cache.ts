@@ -92,7 +92,17 @@ export class FileCache {
   }
 
   getAll(): CachedFile[] {
-    return this.db.prepare('SELECT * FROM files').all() as CachedFile[];
+    // Map snake_case columns to the camelCase CachedFile shape explicitly —
+    // a raw `as CachedFile[]` cast here previously left `.filePath` undefined
+    // for every row, silently breaking the deleted-file purge in index().
+    return (this.db.prepare('SELECT * FROM files').all() as {
+      file_path: string; content_hash: string; indexed_at: number; symbol_count: number;
+    }[]).map(row => ({
+      filePath:    row.file_path,
+      contentHash: row.content_hash,
+      indexedAt:   row.indexed_at,
+      symbolCount: row.symbol_count,
+    }));
   }
 
   /** Return files that have changed since last index.

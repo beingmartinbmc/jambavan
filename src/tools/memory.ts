@@ -143,7 +143,11 @@ export const MEMORY_TOOL_DEFS = [
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 export function buildMemoryHandlers(config: JambavanConfig) {
-  const store = new MemoryStore(config.memoryDir);
+  // Lazy per-call construction (not captured once at build time): handlers are
+  // built before the MCP host's roots/list root resolution lands, so a cached
+  // instance would keep pointing at a stale config.memoryDir. Construction is
+  // just an mkdirSync — cheap enough to redo per call.
+  const store = () => new MemoryStore(config.memoryDir);
 
   return {
     jambavan_memory_store(input: Record<string, unknown>): string {
@@ -151,7 +155,7 @@ export function buildMemoryHandlers(config: JambavanConfig) {
       const body   = String(input['body']  ?? '');
       if (!title || !body) return 'Error: title and body are required.';
 
-      const id = store.store({
+      const id = store().store({
         title,
         body,
         scope:       input['scope']       ? String(input['scope'])       : undefined,
@@ -168,7 +172,7 @@ export function buildMemoryHandlers(config: JambavanConfig) {
       const query = String(input['query'] ?? '');
       if (!query) return 'Error: query is required.';
 
-      const results = store.search(query, {
+      const results = store().search(query, {
         scope: input['scope'] ? String(input['scope']) : undefined,
         limit: input['limit'] ? Number(input['limit']) : undefined,
       });
@@ -193,7 +197,7 @@ export function buildMemoryHandlers(config: JambavanConfig) {
     jambavan_memory_recall(input: Record<string, unknown>): string {
       const scope = input['scope'] ? String(input['scope']) : undefined;
       const limit = input['limit'] ? Number(input['limit']) : 20;
-      const docs  = store.list(scope)
+      const docs  = store().list(scope)
         .sort((a, b) => b.frontmatter.timestamp.localeCompare(a.frontmatter.timestamp))
         .slice(0, limit);
 
@@ -249,7 +253,7 @@ export function buildMemoryHandlers(config: JambavanConfig) {
       const ids = blocks.map((block, i) => {
         // Title from the first keyword-bearing line in the block; body keeps context.
         const titleLine = block.split('\n').find(l => KEYWORD.test(l)) ?? block;
-        return store.store({
+        return store().store({
           title: titleLine.replace(/^[-*#\s]+/, '').slice(0, 80) || `Session memory ${i + 1}`,
           body: block,
           scope,
@@ -265,7 +269,7 @@ export function buildMemoryHandlers(config: JambavanConfig) {
     jambavan_memory_invalidate(input: Record<string, unknown>): string {
       const id = input['id'] ? String(input['id']) : '';
       if (!id) return 'Error: id is required.';
-      const ok = store.invalidate(id, input['reason'] ? String(input['reason']) : undefined);
+      const ok = store().invalidate(id, input['reason'] ? String(input['reason']) : undefined);
       return ok ? `Invalidated memory: ${id}` : `Memory not found: ${id}`;
     },
 
@@ -275,18 +279,18 @@ export function buildMemoryHandlers(config: JambavanConfig) {
       const deleteScope = Boolean(input['delete_scope']);
 
       if (deleteScope && scope) {
-        const n = store.deleteByScope(scope);
+        const n = store().deleteByScope(scope);
         return `Deleted ${n} memories from scope "${scope}".`;
       }
       if (id) {
-        const ok = store.delete(id);
+        const ok = store().delete(id);
         return ok ? `Deleted memory: ${id}` : `Memory not found: ${id}`;
       }
       return 'Provide id (single delete) or scope + delete_scope: true (scope wipe).';
     },
 
     jambavan_memory_status(_input: Record<string, unknown>): string {
-      const { totalMemories, scopes } = store.status();
+      const { totalMemories, scopes } = store().status();
       if (totalMemories === 0) return 'No memories stored yet.';
       const lines = [
         `Total memories: ${totalMemories}`,

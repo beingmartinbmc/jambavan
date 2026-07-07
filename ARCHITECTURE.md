@@ -88,6 +88,14 @@ Session-continuity tools — the goal is that a fresh session (or a different ho
 
 Both are built on `MemoryStore` — a failure record is just a memory with `type: 'FailureRecord'` and a title that includes a content hash of `command + symptom`, so two different failures never collide on the same stored title.
 
+### Review pack
+
+| Tool | Purpose |
+|---|---|
+| `jambavan_review_pack` | Diff the current branch vs a base ref (auto-detects `main`/`master`), then per touched file: list its symbols, callers via `buildSymbolGraph`, associated tests via `buildTestMap`, and risk flags (open `rin:` debt via `harvestRin`, no matching test, or past `FailureRecord`s mentioning the file) |
+
+Pure composition — no new subsystem. Requires `jambavan_index` to have run at least once; without an index it still returns the raw touched-file list.
+
 ### Awaken
 
 | Tool | Purpose |
@@ -126,6 +134,23 @@ Read-only tools are always registered. Mutating and shell tools are **opt-in** (
 
 ---
 
+## CLI subcommands
+
+Local, no-server helpers run as `npx jambavan <subcommand>` — none call an LLM or an external service.
+
+| Subcommand | Purpose |
+|---|---|
+| `jambavan doctor` | Thin CLI wrapper around `jambavan_doctor` (see above) — root source, parser backends, gates, index stats |
+| `jambavan badges` | Print three local markdown lines for a README: benchmark card (context tokens saved, via `node dist/benchmark.js --json`), Rin Ledger, Failure Immunity count |
+| `jambavan bridge --to mempalace` / `--from mempalace` | Convert Jambavan memories to/from a MemPalace-shaped `wing/room/drawer.md` folder tree (see `src/tools/memory-bridge.ts`). MemPalace's real store is a Chroma vector index, not files, so this produces/consumes a portable interchange tree for a host model to walk with its own `mempalace_*` tools — Jambavan never calls MemPalace directly |
+| `jambavan handoff --write-pr-template [--post]` | Runs the `jambavan_session_export` handoff card and injects it as an HTML-comment-bounded block into `.github/pull_request_template.md` (see `src/tools/pr-handoff.ts` for the pure inject/replace transform); idempotent re-injection, no duplication. `--post` additionally shells to the caller's own authenticated `gh pr comment` — off by default, never automatic, same trust boundary as the `bash` tool |
+| `jambavan daemon start\|stop\|status` | Spawns/stops/inspects a detached background process (`src/daemon-worker.ts`, managed by `src/tools/daemon.ts`) that runs the same `FileWatcher` as `jambavan_watch`, standalone. PID file at `.jambavan/daemon.pid`, log at `.jambavan/daemon.log`, liveness checked via `process.kill(pid, 0)`. `jambavan_watch`/`jambavan_diagnostics`/`jambavan_awaken` all check this PID file first to avoid starting a redundant in-process watcher |
+| `jambavan gui [--port <n>] [--no-open]` | Indexes the project, then serves a dependency-free static page (`src/tools/gui.ts`) over Node's `http` module bound to `127.0.0.1` only — a force-directed graph view (from `buildSymbolGraph`, capped to the 400 highest-degree nodes), rin debt (`harvestRin`), and failure records (`MemoryStore`), all via a local `/api/data` JSON endpoint. Opens the default browser unless `--no-open` is passed |
+
+`node dist/benchmark.js --json` (not a `jambavan` subcommand, run directly) emits the same benchmark data as `npm run bench` as one JSON object instead of tables.
+
+---
+
 ## Registration
 
 `install.sh` / `install.ps1` (see README) auto-detect and register all four below. Manual equivalents:
@@ -155,7 +180,17 @@ Persists to `~/.codex/config.toml` as `[mcp_servers.jambavan]` (top-level key is
 { "command": "npx", "args": ["-y", "jambavan"] }
 ```
 
-**Claude Code plugin** — this repo is also a plugin marketplace (`.claude-plugin/marketplace.json` + `plugins/jambavan/`). The plugin's `plugin.json` declares the same MCP server and ships two skills: Vibhishana Niti (`plugins/jambavan/skills/vibhishana-niti/`, invoked as `/jambavan:vibhishana-niti`) for the efficient-dev discipline, and Using Jambavan (`plugins/jambavan/skills/using-jambavan/`, invoked as `/jambavan:using-jambavan`) for the tool session protocol — so `/plugin install jambavan@jambavan` wires up the server and both skills without manual config:
+**Claude Code plugin** — this repo is also a plugin marketplace (`.claude-plugin/marketplace.json` + `plugins/jambavan/`). The plugin's `plugin.json` declares the same MCP server and ships five skills, each auto-discovered from `plugins/jambavan/skills/<name>/SKILL.md` — no listing in `plugin.json` needed:
+
+| Skill | Invoke as | Purpose |
+|---|---|---|
+| Vibhishana Niti | `/jambavan:vibhishana-niti` | Efficient-dev discipline (the ladder, non-negotiable rules) |
+| Using Jambavan | `/jambavan:using-jambavan` | Tool session protocol (index → context → memory) |
+| Root Cause Debugger | `/jambavan:root-cause-debugger` | Observe/compare/hypothesize/fix before any bug fix — same protocol as `jambavan_mool_kaaran` |
+| Release Checker | `/jambavan:release-checker` | Evidence gate before claiming tests/build/fix/requirements/release are done — same protocol as `jambavan_praman` |
+| Strict Reviewer | `/jambavan:strict-reviewer` | Severe-senior-engineer review checklist built on `jambavan_review_pack` |
+
+So `/plugin install jambavan@jambavan` wires up the server and all five skills without manual config:
 ```shell
 /plugin marketplace add beingmartinbmc/jambavan
 /plugin install jambavan@jambavan
@@ -167,7 +202,8 @@ Persists to `~/.codex/config.toml` as `[mcp_servers.jambavan]` (top-level key is
 
 ```
 src/
-├── index.ts                  # Entrypoint — starts MCP server, shows --help
+├── index.ts                  # Entrypoint — starts MCP server, shows --help, CLI subcommands
+├── daemon-worker.ts          # Standalone process spawned by `jambavan daemon start` (see tools/daemon.ts)
 │
 ├── mcp/
 │   └── server.ts             # MCP Server (stdio transport): tools/list + tools/call,
@@ -210,7 +246,13 @@ src/
 │   ├── mool-kaaran.ts       # jambavan_mool_kaaran — root-cause investigation protocol
 │   ├── praman.ts            # jambavan_praman — verification gate protocol
 │   ├── yukti.ts             # jambavan_yukti — approach strategy protocol
-│   └── vibhaajan.ts         # jambavan_vibhaajan — parallel decomposition protocol
+│   ├── vibhaajan.ts         # jambavan_vibhaajan — parallel decomposition protocol
+│   ├── doctor.ts            # jambavan_doctor — environment/config health check
+│   ├── review-pack.ts       # jambavan_review_pack — touched symbols/callers/tests/failures/risk
+│   ├── memory-bridge.ts     # `jambavan bridge` CLI — Jambavan <-> MemPalace markdown conversion
+│   ├── pr-handoff.ts        # `jambavan handoff` CLI — inject handoff card into a PR template
+│   ├── daemon.ts            # `jambavan daemon` CLI — spawn/stop/inspect the background watcher process
+│   └── gui.ts               # `jambavan gui` CLI — local dependency-free graph/rin/failure visualizer
 │
 ├── config/
 │   └── jambavan.config.ts    # Runtime config (project root, token budget, ignore list)

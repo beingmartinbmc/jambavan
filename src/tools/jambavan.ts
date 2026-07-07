@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import { vibhishanaNitiInstructions } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
+import { getDaemonStatus } from './daemon';
 import type { JambavanConfig } from '../config/jambavan.config';
 
 /**
@@ -47,7 +48,7 @@ export function jambavanInstructions(config: JambavanConfig): string {
     '14. Every tool byte spends context: filter/project/count at the source; prefer line ranges, max_results, git --stat/name-only, jq/yq/awk/cut/head, and hash/mtime polling over dump-and-read loops.',
     '',
     'After important decisions:',
-    `15. Store durable facts/architecture decisions with jambavan_memory_store scope "${scope}".`,
+    `15. Store durable facts/architecture decisions with jambavan_memory_store scope "${scope}" type="Decision" (surfaces in jambavan_session_export's Decisions section).`,
     '16. After a command fails, store it with jambavan_failure_store (prevents retry loops in future sessions).',
     '17. Use jambavan_rin_mochan before releases/refactors.',
     '',
@@ -61,6 +62,11 @@ export function jambavanInstructions(config: JambavanConfig): string {
 export function awakenReport(config: JambavanConfig, opts: { includeMemories?: boolean } = {}): string {
   const scope = projectScope(config);
   const parts = [jambavanInstructions(config)];
+
+  const daemon = getDaemonStatus(config);
+  if (daemon.running) {
+    parts.push('', `Background daemon already watching this project (pid ${daemon.pid}) — skip jambavan_watch action=start, the index is already staying live.`);
+  }
 
   if (opts.includeMemories ?? true) {
     const docs = new MemoryStore(config.memoryDir).list(scope)

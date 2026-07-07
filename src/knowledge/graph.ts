@@ -1,6 +1,8 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 import type { Symbol, SymbolReference } from '../index/ast-parser';
+import type { ReExportRow } from '../index/indexer';
 import { countTokens } from '../context/token-counter';
 import { truncateToTokenBudget } from '../context/token-counter';
 
@@ -17,6 +19,8 @@ export interface GraphEdge {
   to: string;
   type: 'contains' | 'mentions' | 'same_file' | SymbolReference['type'];
   confidence: 'EXTRACTED' | 'INFERRED';
+  /** Human-readable explanation of why this edge exists — shown in graph_query/graph_path output. */
+  reason: string;
 }
 
 export interface KnowledgeGraph {
@@ -25,6 +29,7 @@ export interface KnowledgeGraph {
 }
 
 const MAX_INFERRED_MENTION_TARGETS_PER_NAME = 25;
+const MAX_REEXPORT_DEPTH = 5;
 
 function rel(filePath: string, config: JambavanConfig): string {
   return path.relative(config.projectRoot, filePath).replace(/\\/g, '/') || filePath;
@@ -40,7 +45,7 @@ function nodeLine(n: GraphNode): string {
 }
 
 function edgeLine(e: GraphEdge, byId: Map<string, GraphNode>): string {
-  return `${byId.get(e.from)?.label ?? e.from} -[${e.type}/${e.confidence}]-> ${byId.get(e.to)?.label ?? e.to}`;
+  return `${byId.get(e.from)?.label ?? e.from} -[${e.type}/${e.confidence}]-> ${byId.get(e.to)?.label ?? e.to}  (${e.reason})`;
 }
 
 function dedupeEdges(edges: GraphEdge[]): GraphEdge[] {
@@ -67,16 +72,8 @@ function buildFileExportMap(symbols: Symbol[], config: JambavanConfig): Map<stri
   return map;
 }
 
-/**
- * Resolve a relative import specifier (e.g. './foo', '../utils/bar') from a source file
- * to a relative file path in the project. Returns the resolved path (without extension)
- * or null if it can't be resolved. Tries common extensions.
- */
-function resolveImportPath(fromFile: string, specifier: string, fileExports: Map<string, Set<string>>): string | null {
-  if (!specifier.startsWith('.')) return null; // skip bare/package imports
-  const dir = path.dirname(fromFile);
-  const base = path.join(dir, specifier).replace(/\\/g, '/');
-  // Try exact match, then common extensions, then /index variants
+/** Try a base path (no extension) against the same candidate suffixes relative imports use. */
+function matchFileCandidate(base: string, fileExports: Map<string, Set<string>>): string | null {
   const candidates = [
     base,
     `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.jsx`, `${base}.mts`,
@@ -89,7 +86,166 @@ function resolveImportPath(fromFile: string, specifier: string, fileExports: Map
   return null;
 }
 
-export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig): KnowledgeGraph {
+interface TsconfigAliases {
+  baseUrl: string;
+  paths: Record<string, string[]>;
+}
+
+/** Strip `//` and `/* *‍/` comments so tsconfig.json's common JSONC form parses as JSON. */
+function stripJsonComments(raw: string): string {
+  return raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+/**
+ * Load `compilerOptions.baseUrl`/`paths` from the project's tsconfig.json, if any.
+ * Best-effort: a missing, comment-only-malformed, or path-less tsconfig just
+ * means alias resolution is skipped, not an indexing failure.
+ */
+function loadTsconfigAliases(projectRoot: string): TsconfigAliases | null {
+  const tsconfigPath = path.join(projectRoot, 'tsconfig.json');
+  if (!fs.existsSync(tsconfigPath)) return null;
+  try {
+    const json = JSON.parse(stripJsonComments(fs.readFileSync(tsconfigPath, 'utf-8')));
+    const co = json.compilerOptions ?? {};
+    if (!co.paths) return null;
+    return { baseUrl: co.baseUrl ?? '.', paths: co.paths };
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a bare specifier (e.g. `@app/foo`) via tsconfig `paths` glob-style patterns. */
+function resolveAliasedImportPath(
+  specifier: string,
+  fileExports: Map<string, Set<string>>,
+  aliases: TsconfigAliases | null,
+): string | null {
+  if (!aliases) return null;
+  for (const [pattern, targets] of Object.entries(aliases.paths)) {
+    const starIdx = pattern.indexOf('*');
+    let capture: string | null = null;
+    if (starIdx === -1) {
+      if (specifier !== pattern) continue;
+      capture = '';
+    } else {
+      const prefix = pattern.slice(0, starIdx);
+      const suffix = pattern.slice(starIdx + 1);
+      if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
+      capture = specifier.slice(prefix.length, specifier.length - suffix.length);
+    }
+    for (const target of targets) {
+      const resolvedTarget = target.replace('*', capture ?? '');
+      const base = path.join(aliases.baseUrl, resolvedTarget).replace(/\\/g, '/');
+      const match = matchFileCandidate(base, fileExports);
+      if (match) return match;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve an import specifier from a source file to a relative file path in the
+ * project: relative (`./foo`, `../utils/bar`) via the importing file's directory,
+ * or bare/aliased (`@app/foo`) via tsconfig `paths`. Returns null if unresolved
+ * (e.g. a real package import with no local file).
+ */
+function resolveImportPath(
+  fromFile: string,
+  specifier: string,
+  fileExports: Map<string, Set<string>>,
+  aliases: TsconfigAliases | null,
+): string | null {
+  if (specifier.startsWith('.')) {
+    const base = path.join(path.dirname(fromFile), specifier).replace(/\\/g, '/');
+    return matchFileCandidate(base, fileExports);
+  }
+  return resolveAliasedImportPath(specifier, fileExports, aliases);
+}
+
+function groupReExportsByFile(reExports: ReExportRow[], config: JambavanConfig): Map<string, ReExportRow[]> {
+  const byFile = new Map<string, ReExportRow[]>();
+  for (const r of reExports) {
+    const file = rel(r.filePath, config);
+    if (!byFile.has(file)) byFile.set(file, []);
+    byFile.get(file)!.push(r);
+  }
+  return byFile;
+}
+
+/**
+ * Expand `fileExports` in place to include names reachable through re-export
+ * chains (`export * from './x'`, `export { a as b } from './x'`), so a file
+ * that only re-exports a symbol still resolves as a valid import target for
+ * callers. Runs as a bounded fixed-point pass (not a single hop) so chains
+ * spanning multiple re-exporting files (a → b → c) still resolve, capped at
+ * MAX_REEXPORT_DEPTH passes for the same reason INFERRED mentions are capped —
+ * bound the work on adversarial/circular re-export graphs.
+ */
+function expandReExports(
+  fileExports: Map<string, Set<string>>,
+  byFile: Map<string, ReExportRow[]>,
+  aliases: TsconfigAliases | null,
+): void {
+  if (byFile.size === 0) return;
+
+  for (let depth = 0; depth < MAX_REEXPORT_DEPTH; depth++) {
+    let changed = false;
+    for (const [file, entries] of byFile) {
+      const exportSet = fileExports.get(file) ?? new Set<string>();
+      for (const entry of entries) {
+        const resolved = resolveImportPath(file, entry.specifier, fileExports, aliases);
+        const sourceExports = resolved ? fileExports.get(resolved) : undefined;
+        if (!sourceExports) continue;
+
+        if (entry.imported === '*') {
+          for (const name of sourceExports) {
+            if (!exportSet.has(name)) { exportSet.add(name); changed = true; }
+          }
+        } else if (sourceExports.has(entry.imported) && !exportSet.has(entry.exported)) {
+          exportSet.add(entry.exported);
+          changed = true;
+        }
+      }
+      if (exportSet.size > 0) fileExports.set(file, exportSet);
+    }
+    if (!changed) break;
+  }
+}
+
+/**
+ * Resolve `name` as visible from `file` (which may only re-export it under
+ * that name) back to the file+name where it's actually declared. Needed
+ * because a caller importing a re-exported/aliased name (e.g. `run` from a
+ * barrel that does `export { handler as run } from './origin'`) has no
+ * symbol literally named `run` anywhere — name-based lookup alone can't
+ * find a target, only a chain walk back to the real declaration can.
+ * `directExports` (pre-expansion) distinguishes "really declared here" from
+ * "only visible here via re-export", which is what stops the recursion.
+ */
+function resolveExportOrigin(
+  file: string,
+  name: string,
+  directExports: Map<string, Set<string>>,
+  reExportsByFile: Map<string, ReExportRow[]>,
+  fileExports: Map<string, Set<string>>,
+  aliases: TsconfigAliases | null,
+  depth = 0,
+): { file: string; name: string } | null {
+  if (directExports.get(file)?.has(name)) return { file, name };
+  if (depth >= MAX_REEXPORT_DEPTH) return null;
+
+  for (const entry of reExportsByFile.get(file) ?? []) {
+    const nextName = entry.imported === '*' ? name : entry.exported === name ? entry.imported : null;
+    if (nextName === null) continue;
+    const resolvedFile = resolveImportPath(file, entry.specifier, fileExports, aliases);
+    if (!resolvedFile) continue;
+    const origin = resolveExportOrigin(resolvedFile, nextName, directExports, reExportsByFile, fileExports, aliases, depth + 1);
+    if (origin) return origin;
+  }
+  return null;
+}
+
+export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig, reExports: ReExportRow[] = []): KnowledgeGraph {
   const nodes = new Map<string, GraphNode>();
   const edges: GraphEdge[] = [];
 
@@ -100,7 +256,10 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig): Kno
 
     nodes.set(fileId, { id: fileId, label: file, type: 'file', filePath: file });
     nodes.set(id, { id, label: s.name, type: 'symbol', filePath: file, line: s.startLine });
-    edges.push({ from: fileId, to: id, type: 'contains', confidence: 'EXTRACTED' });
+    edges.push({
+      from: fileId, to: id, type: 'contains', confidence: 'EXTRACTED',
+      reason: `${s.name} defined at ${file}:${s.startLine}`,
+    });
   }
 
   const symbolsByName = new Map<string, string[]>();
@@ -110,13 +269,29 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig): Kno
     symbolsByName.get(node.label)!.push(node.id);
   }
 
-  // Build file-level export map for import resolution
+  // Build file-level export map for import resolution, then widen it with
+  // names only reachable through re-export chains and tsconfig path aliases.
+  // directExports is kept as the pre-expansion snapshot: resolveExportOrigin
+  // needs to tell "really declared here" from "only visible here via re-export".
   const fileExports = buildFileExportMap(symbols, config);
+  const directExports = new Map([...fileExports].map(([f, names]) => [f, new Set(names)]));
+  const aliases = loadTsconfigAliases(config.projectRoot);
+  const reExportsByFile = groupReExportsByFile(reExports, config);
+  expandReExports(fileExports, reExportsByFile, aliases);
 
   // Map node id → its relative file path for quick lookup
   const nodeFile = new Map<string, string>();
   for (const node of nodes.values()) {
     if (node.filePath) nodeFile.set(node.id, node.filePath);
+  }
+
+  // (file, name) → node ids, for resolving a re-export chain's endpoint back to a real symbol node.
+  const nodeByFileAndName = new Map<string, string[]>();
+  for (const node of nodes.values()) {
+    if (node.type !== 'symbol' || !node.filePath) continue;
+    const key = `${node.filePath}\0${node.label}`;
+    if (!nodeByFileAndName.has(key)) nodeByFileAndName.set(key, []);
+    nodeByFileAndName.get(key)!.push(node.id);
   }
 
   for (const s of symbols) {
@@ -137,24 +312,55 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig): Kno
       if (ref.type === 'import') continue;
 
       const targets = symbolsByName.get(ref.name) ?? [];
-      if (targets.length === 0) continue;
+      if (targets.length === 0) {
+        // No symbol is literally named this — it may be a re-exported or
+        // aliased name (e.g. `run` from `export { handler as run } from './x'`).
+        // Walk the chain back to where it's actually declared.
+        const specifier = importSpecifiers.get(ref.name);
+        const resolvedFile = specifier ? resolveImportPath(fromFile, specifier, fileExports, aliases) : null;
+        const origin = resolvedFile
+          ? resolveExportOrigin(resolvedFile, ref.name, directExports, reExportsByFile, fileExports, aliases)
+          : null;
+        for (const to of origin ? nodeByFileAndName.get(`${origin.file}\0${origin.name}`) ?? [] : []) {
+          if (to !== from) {
+            edges.push({
+              from, to, type: ref.type, confidence: 'EXTRACTED',
+              reason: `${ref.type} site — resolved via re-export chain '${specifier}' to ${origin!.file}:${origin!.name}`,
+            });
+          }
+        }
+        continue;
+      }
 
       if (targets.length === 1) {
         // Unambiguous — single target
-        if (targets[0] !== from) edges.push({ from, to: targets[0], type: ref.type, confidence: 'EXTRACTED' });
+        if (targets[0] !== from) {
+          edges.push({
+            from, to: targets[0], type: ref.type, confidence: 'EXTRACTED',
+            reason: `${ref.type} site — only one symbol named '${ref.name}' in the index`,
+          });
+        }
         continue;
       }
 
       // Multiple targets with same name: try import-path resolution first.
       const specifier = importSpecifiers.get(ref.name);
       if (specifier) {
-        const resolved = resolveImportPath(fromFile, specifier, fileExports);
+        const resolved = resolveImportPath(fromFile, specifier, fileExports, aliases);
         if (resolved) {
-          // Only link to targets in the resolved file
+          // The resolved file may only re-export the name (star or same-name
+          // named re-export) rather than declare it — chase that back to
+          // where it's actually declared before matching against targets.
+          const origin = resolveExportOrigin(resolved, ref.name, directExports, reExportsByFile, fileExports, aliases);
+          const targetFile = origin?.file ?? resolved;
+
           let linked = false;
           for (const to of targets) {
-            if (to !== from && nodeFile.get(to) === resolved) {
-              edges.push({ from, to, type: ref.type, confidence: 'EXTRACTED' });
+            if (to !== from && nodeFile.get(to) === targetFile) {
+              edges.push({
+                from, to, type: ref.type, confidence: 'EXTRACTED',
+                reason: `${ref.type} site — resolved via import specifier '${specifier}' among ${targets.length} same-named symbols`,
+              });
               linked = true;
             }
           }
@@ -165,11 +371,21 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig): Kno
       // Fallback: prefer same-file target, then fan out to all
       const sameFile = targets.filter(t => t !== from && nodeFile.get(t) === fromFile);
       if (sameFile.length > 0) {
-        for (const to of sameFile) edges.push({ from, to, type: ref.type, confidence: 'EXTRACTED' });
+        for (const to of sameFile) {
+          edges.push({
+            from, to, type: ref.type, confidence: 'EXTRACTED',
+            reason: `${ref.type} site — no import info; picked the same-file symbol among ${targets.length} candidates named '${ref.name}'`,
+          });
+        }
       } else {
         // Fall back: link to all (original behavior)
         for (const to of targets) {
-          if (to !== from) edges.push({ from, to, type: ref.type, confidence: 'EXTRACTED' });
+          if (to !== from) {
+            edges.push({
+              from, to, type: ref.type, confidence: 'EXTRACTED',
+              reason: `${ref.type} site — ambiguous fan-out, no import info or same-file match among ${targets.length} candidates named '${ref.name}'`,
+            });
+          }
         }
       }
     }
@@ -187,7 +403,12 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig): Kno
       const targets = symbolsByName.get(name) ?? [];
       if (targets.length > MAX_INFERRED_MENTION_TARGETS_PER_NAME) continue;
       for (const to of targets) {
-        if (to !== from) edges.push({ from, to, type: 'mentions', confidence: 'INFERRED' });
+        if (to !== from) {
+          edges.push({
+            from, to, type: 'mentions', confidence: 'INFERRED',
+            reason: `name mention — '${name}' appears in ${s.name}'s body, ${targets.length} of max ${MAX_INFERRED_MENTION_TARGETS_PER_NAME} candidates`,
+          });
+        }
       }
     }
   }
@@ -319,7 +540,7 @@ export function graphPath(graph: KnowledgeGraph, fromQuery: string, toQuery: str
       const edge = graph.edges.find(e =>
         (e.from === ids[i] && e.to === ids[i + 1]) || (e.to === ids[i] && e.from === ids[i + 1])
       );
-      if (edge) lines.push(`   via ${edge.type}/${edge.confidence}`);
+      if (edge) lines.push(`   via ${edge.type}/${edge.confidence} — ${edge.reason}`);
     }
   }
   return lines.join('\n');

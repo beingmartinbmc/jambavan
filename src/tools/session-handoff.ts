@@ -10,12 +10,54 @@
  * without calling recall/index/search again.
  */
 
-import { execSync } from 'child_process';
-import { MemoryStore } from '../memory/store';
+import { execFileSync } from 'child_process';
+import { MemoryStore, type MemoryDoc } from '../memory/store';
 import type { JambavanConfig } from '../config/jambavan.config';
 import { projectScope } from './jambavan';
 import { harvestRin } from './vibhishana-niti';
 import { countTokens } from '../context/token-counter';
+
+/**
+ * Run a git subcommand as an argv array — no shell, no string interpolation.
+ * Does NOT trim: porcelain output is line-structured and a whole-string trim
+ * would eat the leading status-code space of just the first line. Callers
+ * that want a single trimmed value (branch name, counts, log) trim themselves.
+ */
+function git(root: string, args: string[]): string {
+  return execFileSync('git', args, {
+    cwd: root, encoding: 'utf-8', timeout: 3000, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+}
+
+/** Decode a `git status --porcelain -b` status code into a short human label. */
+function describeStatusCode(code: string): string {
+  const map: Record<string, string> = {
+    'M ': 'modified (staged)', ' M': 'modified', 'A ': 'added', ' D': 'deleted',
+    'D ': 'deleted (staged)', '??': 'untracked', 'R ': 'renamed', 'AM': 'added+modified',
+    'UU': 'conflict',
+  };
+  return map[code] ?? (code.trim() || 'changed');
+}
+
+/** One `### ` block for a memory doc — shared by every memory-derived section. */
+function renderMemoryBlock(doc: MemoryDoc): string {
+  const typeBadge = doc.frontmatter.type && doc.frontmatter.type !== 'Memory'
+    ? ` [${doc.frontmatter.type}]` : '';
+  return [
+    `### ${doc.frontmatter.title}`,
+    `*${doc.frontmatter.timestamp.slice(0, 10)}*` +
+    typeBadge +
+    (doc.frontmatter.tags.length ? ` · tags: ${doc.frontmatter.tags.join(', ')}` : ''),
+    '',
+    doc.body.trim(),
+  ].join('\n');
+}
+
+/** Pull the `→ **Next path:** ...` line failure-memory.ts embeds in a FailureRecord body. */
+function extractNextPath(doc: MemoryDoc): string | undefined {
+  const match = doc.body.match(/→ \*\*Next path:\*\*\s*(.+)/);
+  return match?.[1]?.trim();
+}
 
 export const SESSION_HANDOFF_TOOL_DEFS = [
   {
@@ -56,12 +98,14 @@ export const SESSION_HANDOFF_TOOL_DEFS = [
 ] as const;
 
 export function buildSessionHandoffHandlers(config: JambavanConfig) {
-  const store = new MemoryStore(config.memoryDir);
-  const scope = projectScope(config);
+  // Lazy per-call construction — see buildMemoryHandlers() in memory.ts for why
+  // a build-time-captured store goes stale after roots/list root resolution.
+  const store = () => new MemoryStore(config.memoryDir);
+  const scope = () => projectScope(config);
 
   return {
     jambavan_session_export(input: Record<string, unknown>): string {
-      const targetScope  = input['scope'] ? String(input['scope']) : scope;
+      const targetScope  = input['scope'] ? String(input['scope']) : scope();
       const includeRin   = input['include_rin'] !== false;
       const includeGit   = input['include_git'] !== false;
       const maxMemories  = input['max_memories'] ? Number(input['max_memories']) : 15;
@@ -74,29 +118,35 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
         '',
       ];
 
-      // ── Memories ──
-      const docs = store.list(targetScope)
-        .sort((a, b) => b.frontmatter.timestamp.localeCompare(a.frontmatter.timestamp))
-        .slice(0, maxMemories);
+      // ── Memories, split into Decisions / Failures / Other for scanability ──
+      const allDocs = store().list(targetScope)
+        .sort((a, b) => b.frontmatter.timestamp.localeCompare(a.frontmatter.timestamp));
 
-      sections.push(`## Memories (${docs.length})`);
-      if (docs.length === 0) {
-        sections.push('No memories in scope.');
+      const decisions = allDocs.filter(d => d.frontmatter.type === 'Decision').slice(0, maxMemories);
+      const failures  = allDocs.filter(d => d.frontmatter.type === 'FailureRecord');
+      const openFailures = failures.filter(d => !d.frontmatter.tags.includes('resolved') && !d.frontmatter.tags.includes('wontfix'));
+      const resolvedFailures = failures.filter(d => d.frontmatter.tags.includes('resolved') || d.frontmatter.tags.includes('wontfix'));
+      const shown = new Set([...decisions, ...failures].map(d => d.id));
+      const otherDocs = allDocs.filter(d => !shown.has(d.id)).slice(0, maxMemories);
+
+      sections.push(`## Decisions (${decisions.length})`);
+      sections.push(decisions.length
+        ? decisions.map(renderMemoryBlock).join('\n\n')
+        : 'None recorded. Tag durable architecture decisions with jambavan_memory_store(type="Decision") so they surface here.');
+      sections.push('');
+
+      sections.push(`## Failures (${openFailures.length} open, ${resolvedFailures.length} resolved)`);
+      if (failures.length === 0) {
+        sections.push('None recorded.');
       } else {
-        for (const doc of docs) {
-          const typeBadge = doc.frontmatter.type && doc.frontmatter.type !== 'Memory'
-            ? ` [${doc.frontmatter.type}]` : '';
-          sections.push(
-            `### ${doc.frontmatter.title}`,
-            `*${doc.frontmatter.timestamp.slice(0, 10)}*` +
-            typeBadge +
-            (doc.frontmatter.tags.length ? ` · tags: ${doc.frontmatter.tags.join(', ')}` : ''),
-            '',
-            doc.body.trim(),
-            '',
-          );
-        }
+        sections.push(...[...openFailures.slice(0, 10), ...resolvedFailures.slice(0, 5)].map(renderMemoryBlock).map(b => b + '\n'));
       }
+      sections.push('');
+
+      sections.push(`## Other Memories (${otherDocs.length})`);
+      sections.push(otherDocs.length
+        ? otherDocs.map(renderMemoryBlock).join('\n\n')
+        : 'None.');
       sections.push('');
 
       // ── Rin debt ──
@@ -116,18 +166,40 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
       }
 
       // ── Git status ──
+      let dirtyFiles: { code: string; path: string }[] = [];
       if (includeGit) {
         sections.push('## Git Status');
         try {
-          const gitOpts = { cwd: config.projectRoot, encoding: 'utf-8' as const, timeout: 3000, stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'] };
-          const status = execSync('git status --short', gitOpts).trim();
-          const recentLog = execSync('git log --oneline -5', gitOpts).trim();
+          const root = config.projectRoot;
+          const branch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
+          let aheadBehind = '';
+          try {
+            const counts = git(root, ['rev-list', '--left-right', '--count', '@{u}...HEAD']).trim();
+            const [behind, ahead] = counts.split(/\s+/);
+            aheadBehind = ` (ahead ${ahead}, behind ${behind} of upstream)`;
+          } catch {
+            // No upstream configured — branch line without ahead/behind is fine.
+          }
+
+          const porcelain = git(root, ['status', '--porcelain']);
+          dirtyFiles = porcelain.split('\n').filter(Boolean).map(line => ({
+            code: line.slice(0, 2),
+            path: line.slice(3),
+          }));
+
+          const diffStat = git(root, ['diff', '--stat']).trim();
+          const recentLog = git(root, ['log', '--oneline', '-5']).trim();
 
           sections.push(
-            '```',
-            status || '(clean)',
-            '```',
+            `**Branch:** ${branch}${aheadBehind}`,
             '',
+            `**Dirty files (${dirtyFiles.length}):**`,
+            dirtyFiles.length
+              ? dirtyFiles.slice(0, 20).map(f => `- ${describeStatusCode(f.code)}: ${f.path}`).join('\n')
+              : '(clean)',
+            dirtyFiles.length > 20 ? `  … and ${dirtyFiles.length - 20} more` : '',
+            '',
+            ...(diffStat ? ['**Diff stat:**', '```', diffStat, '```', ''] : []),
             '**Recent commits:**',
             '```',
             recentLog,
@@ -138,6 +210,23 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
         }
         sections.push('');
       }
+
+      // ── Next command ──
+      sections.push('## Next Command');
+      const openWithPath = openFailures.map(d => ({ doc: d, next: extractNextPath(d) })).find(x => x.next);
+      if (openWithPath) {
+        sections.push(
+          `Suggested by the most recent open failure ("${openWithPath.doc.frontmatter.title}"):`,
+          '```',
+          openWithPath.next!,
+          '```',
+        );
+      } else if (dirtyFiles.length > 0) {
+        sections.push(`No recorded next step — ${dirtyFiles.length} dirty file(s) above are the likely resume point.`);
+      } else {
+        sections.push('No recorded next step and a clean working tree — start from jambavan_awaken.');
+      }
+      sections.push('');
 
       // ── Token budget note ──
       const output = sections.join('\n');
@@ -151,21 +240,25 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
       const text = String(input['text'] ?? '').trim();
       if (!text) return 'Error: text is required.';
 
-      const targetScope = input['scope'] ? String(input['scope']) : scope;
+      const targetScope = input['scope'] ? String(input['scope']) : scope();
 
       // Parse memory sections from handoff document.
-      // Resilient: matches any ## heading containing "memor" (case-insensitive),
-      // e.g. "## Memories (3)", "## Prior Memories", "## Stored memories".
-      // Fallback: if no memory heading found, scan the entire document for ### blocks.
-      const memHeadingRe = /^## [^\n]*memor[^\n]*/im;
-      const headingMatch = text.match(memHeadingRe);
+      // Resilient: gathers EVERY `## ` heading containing memor/decision/failure
+      // (case-insensitive) — e.g. "## Memories (3)", "## Decisions (2)",
+      // "## Failures (1 open, 0 resolved)" — since export now splits memories
+      // into named sections rather than one "## Memories" block.
+      // Fallback: if no such heading found, scan the entire document for ### blocks.
+      const memHeadingRe = /^## [^\n]*(?:memor|decision|failure)[^\n]*$/gim;
+      const headingMatches = [...text.matchAll(memHeadingRe)];
       let memorySection: string;
-      if (headingMatch) {
-        const start = headingMatch.index! + headingMatch[0].length;
-        const rest = text.slice(start);
-        // Section ends at next ## heading, horizontal rule, or end of doc
-        const sectionEnd = rest.match(/\n## |\n---\n/);
-        memorySection = sectionEnd ? rest.slice(0, sectionEnd.index!) : rest;
+      if (headingMatches.length > 0) {
+        memorySection = headingMatches.map(m => {
+          const start = m.index! + m[0].length;
+          const rest = text.slice(start);
+          // Section ends at next ## heading, horizontal rule, or end of doc
+          const sectionEnd = rest.match(/\n## |\n---\n/);
+          return sectionEnd ? rest.slice(0, sectionEnd.index!) : rest;
+        }).join('\n');
       } else if (/^### /m.test(text)) {
         // No memory heading but document has ### blocks — try extracting them
         memorySection = text;
@@ -196,7 +289,7 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
         const body = lines.slice(2).join('\n').trim(); // skip title + metadata line
         if (!body) continue;
 
-        store.store({
+        store().store({
           title,
           body,
           scope: targetScope,
@@ -207,7 +300,7 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
         imported++;
       }
 
-      if (imported === 0 && !headingMatch) {
+      if (imported === 0 && headingMatches.length === 0) {
         return `Imported 0 memories into scope "${targetScope}". Warning: no heading matching "## …Memories…" found — document may not be a valid handoff format.`;
       }
       return `Imported ${imported} memories into scope "${targetScope}".`;

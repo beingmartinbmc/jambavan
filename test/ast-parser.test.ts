@@ -33,7 +33,7 @@ test('ASTParser: reports support, unknown files, and diagnostics', () => {
     assert.equal(ASTParser.canParse('file.tsx'), true);
     assert.equal(ASTParser.canParse('file.txt'), false);
     assert.ok(ASTParser.supportedExtensions().includes('ts'));
-    assert.deepEqual(new ASTParser().parseFile(unknown), { filePath: unknown, symbols: [], language: 'unknown' });
+    assert.deepEqual(new ASTParser().parseFile(unknown), { filePath: unknown, symbols: [], language: 'unknown', reExports: [] });
     assert.ok(ASTParser.diagnostics().some(d => d.language === 'typescript' && ['tree-sitter', 'regex'].includes(d.backend)));
   } finally { cleanup(); }
 });
@@ -83,6 +83,28 @@ test('ASTParser: exported declarations keep their real kind, not "export"', () =
     assert.equal(byName.get('f'), 'function');
     assert.equal(byName.get('I'), 'interface');
     assert.equal(byName.get('g'), 'variable');
+  } finally { cleanup(); }
+});
+
+test('ASTParser: captures star and named re-export directives, but not local export/declarations', () => {
+  const { root, cleanup } = mkTempConfig();
+  try {
+    const file = path.join(root, 'barrel.ts');
+    fs.writeFileSync(file, [
+      "export * from './origin';",
+      "export { a, b as c } from './other';",
+      'const local = 1;',
+      'export { local };',
+    ].join('\n'));
+    const parsed = new ASTParser().parseFile(file);
+    assert.deepEqual(parsed.reExports, [
+      { specifier: './origin', imported: '*', exported: '*' },
+      { specifier: './other', imported: 'a', exported: 'a' },
+      { specifier: './other', imported: 'b', exported: 'c' },
+    ]);
+    // `export { local }` has no from-clause — not cross-file, and `local` is
+    // already captured as its own variable symbol, so no extra symbol/re-export.
+    assert.deepEqual(parsed.symbols.map(s => s.name), ['local']);
   } finally { cleanup(); }
 });
 

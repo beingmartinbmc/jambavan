@@ -155,7 +155,7 @@ Persists to `~/.codex/config.toml` as `[mcp_servers.jambavan]` (top-level key is
 { "command": "npx", "args": ["-y", "jambavan"] }
 ```
 
-**Claude Code plugin** — this repo is also a plugin marketplace (`.claude-plugin/marketplace.json` + `plugins/jambavan/`). The plugin's `plugin.json` declares the same MCP server and ships a Vibhishana Niti skill (`plugins/jambavan/skills/vibhishana-niti/`, invoked as `/jambavan:vibhishana-niti`), so `/plugin install jambavan@jambavan` wires up both without manual config:
+**Claude Code plugin** — this repo is also a plugin marketplace (`.claude-plugin/marketplace.json` + `plugins/jambavan/`). The plugin's `plugin.json` declares the same MCP server and ships two skills: Vibhishana Niti (`plugins/jambavan/skills/vibhishana-niti/`, invoked as `/jambavan:vibhishana-niti`) for the efficient-dev discipline, and Using Jambavan (`plugins/jambavan/skills/using-jambavan/`, invoked as `/jambavan:using-jambavan`) for the tool session protocol — so `/plugin install jambavan@jambavan` wires up the server and both skills without manual config:
 ```shell
 /plugin marketplace add beingmartinbmc/jambavan
 /plugin install jambavan@jambavan

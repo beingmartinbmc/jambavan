@@ -134,7 +134,7 @@ This repo is also a Claude Code [plugin marketplace](https://code.claude.com/doc
 /plugin install jambavan@jambavan
 ```
 
-The plugin registers the same `npx -y jambavan` MCP server (read-only tools by default) and bundles a **Vibhishana Niti skill** — run `/jambavan:vibhishana-niti` to activate the efficient-dev discipline in any Claude Code session. Refresh later with `/plugin marketplace update jambavan`. The catalog lives in [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json); the plugin manifest in [`plugins/jambavan/.claude-plugin/plugin.json`](plugins/jambavan/.claude-plugin/plugin.json).
+The plugin registers the same `npx -y jambavan` MCP server (read-only tools by default) and bundles two skills — run `/jambavan:vibhishana-niti` to activate the efficient-dev discipline, or `/jambavan:using-jambavan` for the tool session protocol (index → context → memory) — in any Claude Code session. Refresh later with `/plugin marketplace update jambavan`. The catalog lives in [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json); the plugin manifest in [`plugins/jambavan/.claude-plugin/plugin.json`](plugins/jambavan/.claude-plugin/plugin.json).
 
 ## Run directly
 

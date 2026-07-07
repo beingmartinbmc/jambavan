@@ -1,7 +1,7 @@
 {
   "name": "jambavan",
   "description": "MCP server that awakens any coding model's latent powers. Tools: AST-aware code index (jambavan_index, jambavan_context, jambavan_watch, jambavan_diagnostics, jambavan_doctor), inferred code graph (jambavan_graph_report, jambavan_graph_query, jambavan_graph_path), prompt compression (jambavan_sankshipta), durable memory (jambavan_memory_store, jambavan_memory_search, jambavan_memory_recall, jambavan_memory_mine_session, jambavan_memory_invalidate, jambavan_memory_delete, jambavan_memory_status), session continuity (jambavan_failure_store, jambavan_failure_search, jambavan_session_export, jambavan_session_import, jambavan_review_pack), discipline protocols (jambavan_mool_kaaran, jambavan_praman, jambavan_yukti, jambavan_vibhaajan), dev workflow (jambavan_vibhishana_niti, jambavan_rin_mochan, jambavan_awaken), and guarded file/shell tools (read_file, search, list_files; write_file, patch_file, bash opt-in). The host model thinks; Jambavan gives it the ground to leap from.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": {
     "name": "beingmartinbmc"
   },

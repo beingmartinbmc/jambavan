@@ -30,7 +30,7 @@ Jambavan does not call an LLM and is not an agent. **The host model thinks. Jamb
 
 | Power | Tools | What it does |
 |---|---|---|
-| **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_diagnostics`, `jambavan_doctor` | AST-aware code index (tree-sitter, incremental, live-watched). Retrieve ranked, token-budgeted context instead of re-reading whole files. `jambavan_context` also takes `compress_prose`, `include_diff` (recent git changes per symbol), and `include_tests` (associated test files) — enrichments share the same token budget, not added on top. `jambavan_doctor` is the one-shot health check for root detection, parser backends, gates, memory dir, CI, and index/watcher status. `npx jambavan daemon start\|stop\|status` runs the same watcher standalone in a detached background process (PID file at `.jambavan/daemon.pid`), so the index stays live even between MCP sessions. |
+| **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_diagnostics`, `jambavan_doctor` | AST-aware code index: tree-sitter extracts symbols/references, SQLite stores them under `.jambavan/`, and the watcher keeps it incremental. Retrieve ranked, token-budgeted context instead of re-reading whole files. `jambavan_context` also takes `compress_prose`, `include_diff` (recent git changes per symbol), and `include_tests` (associated test files) — enrichments share the same token budget, not added on top. `jambavan_doctor` is the one-shot health check for root detection, parser backends, gates, memory dir, CI, and index/watcher status. `npx jambavan daemon start\|stop\|status` runs the same watcher standalone in a detached background process (PID file at `.jambavan/daemon.pid`), so the index stays live even between MCP sessions. |
 | **The bridge** | `jambavan_graph_report`, `jambavan_graph_query`, `jambavan_graph_path` | A **lightweight inferred code graph** — callers, callees, imports, mentions — built from AST-extracted references matched **by symbol name** (not scope-resolved). Direct `import` statements are resolved to their actual source file, so an ambiguous call between two same-named symbols links to the one actually imported; unresolved calls still fan out by name. Edges are labelled `EXTRACTED` (from the AST) or `INFERRED` (name mention); verify before large refactors. `npx jambavan gui` renders the same graph, plus rin debt and failure records, as a local, dependency-free force-directed view in your browser. |
 | **Memory** | `jambavan_memory_store`, `jambavan_memory_search`, `jambavan_memory_recall`, `jambavan_memory_mine_session`, `jambavan_memory_invalidate`, `jambavan_memory_delete`, `jambavan_memory_status` | Durable, human-readable memory as markdown files under `.jambavan/memory/`. BM25 search, no database, no embeddings, no external service. Decisions survive across sessions and models. |
 | **Session continuity** | `jambavan_failure_store`, `jambavan_failure_search`, `jambavan_session_export`, `jambavan_session_import` | Structured failure records (command, symptom, root cause, do-not-retry advice) so a fresh session doesn't repeat a dead end. `jambavan_session_export` produces a single portable handoff document (decisions, open/resolved failures, dirty files, next command, git status) to resume work in a new session, host, or with a colleague. `npx jambavan handoff --write-pr-template` injects the same card into a local PR template. |
@@ -97,6 +97,8 @@ codex mcp add jambavan -- npx -y jambavan
 
 **2. Corporate npm registry / release-age policy.** You'll see `No versions available for jambavan` (npm pointed at an internal mirror that doesn't proxy it) or `No matching version found ... with a date before <date>` (an `--before` / release-age policy rejecting a freshly published version). Fix: force the public registry, clear `--before`, and pin the version.
 
+In Claude Code this can surface as `-32000` / `failed to reconnect`, because the MCP server process never starts cleanly. Check the MCP server logs for the npm error, then apply the same npm/PATH fix in `.claude.json`.
+
 Find your paths:
 
 ```bash
@@ -116,7 +118,7 @@ Cursor config with all workarounds applied:
         "-y",
         "--registry=https://registry.npmjs.org",
         "--before=",
-        "jambavan@0.5.1"
+        "jambavan@0.5.2"
       ],
       "env": { "PATH": "/abs/path/to/node/dir:/usr/bin:/bin" }
     }
@@ -125,6 +127,25 @@ Cursor config with all workarounds applied:
 ```
 
 Apply only the pieces you need: the absolute `node` + `npx-cli.js` + `PATH` fixes NVM/GUI PATH; `--registry`/`--before`/pinned version fix corporate npm policy.
+
+Claude Code `.claude.json` uses the same shape. Put npm policy overrides and the project root in `env` so reconnects do not fall back to an empty environment:
+
+```json
+{
+  "mcpServers": {
+    "jambavan": {
+      "command": "/abs/path/to/node",
+      "args": ["/abs/path/to/npm/bin/npx-cli.js", "-y", "jambavan@0.5.2"],
+      "env": {
+        "PATH": "/abs/path/to/node/dir:/usr/bin:/bin",
+        "npm_config_registry": "https://registry.npmjs.org",
+        "npm_config_min_release_age": "0",
+        "JAMBAVAN_ROOT": "/abs/path/to/one/repo"
+      }
+    }
+  }
+}
+```
 
 ## Claude Code plugin
 
@@ -148,10 +169,30 @@ node dist/index.js
 
 Set `JAMBAVAN_ROOT=/path/to/project` when launching from outside the target repo.
 
+## Fix first-run root confusion
+
+Jambavan resolves the project root in this order: explicit `JAMBAVAN_ROOT`, MCP `roots/list` from the host, then a walk up from the server process cwd. Some MCP hosts start servers with `cwd=$HOME`; if they also do not answer `roots/list`, Jambavan can treat your home directory as the project and index far too much.
+
+Run `jambavan_doctor` or `npx jambavan doctor` first. If it reports `Project root: ... (source: cwd-fallback)` and the path is `$HOME` or a parent folder containing many repos, set `JAMBAVAN_ROOT` in that MCP server's config and reconnect. Point it at exactly one repo root, not `~/repositories`, `$HOME`, or a monorepo parent unless that whole tree is the project you want indexed.
+
+For Claude Code, put it under the server's `.claude.json` `env` block:
+
+```json
+{
+  "mcpServers": {
+    "jambavan": {
+      "env": { "JAMBAVAN_ROOT": "/abs/path/to/one/repo" }
+    }
+  }
+}
+```
+
+After reconnecting, run doctor again. The healthy result is the target repo with `source: env` (explicit) or `source: client-roots` (host supplied).
+
 ## The leap (recommended workflow)
 
 1. `jambavan_awaken` — read the protocol and recent project memories.
-2. `jambavan_index` — build the local SQLite code index.
+2. `jambavan_index` — build the local AST-backed index (tree-sitter parse, SQLite storage in `.jambavan/`).
 3. `jambavan_watch start` — keep the index live while editing.
 4. `jambavan_context` — pull ranked, token-budgeted context *before* touching unfamiliar code.
 5. `patch_file` over `write_file` — surgical edits, cheaper tokens. *(needs `JAMBAVAN_ALLOW_WRITE=1`)*
@@ -180,7 +221,7 @@ File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROO
 
 | Env var | Default | Description |
 |---|---|---|
-| `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
+| `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve; set this explicitly when the MCP host starts Jambavan outside the target repo |
 | `JAMBAVAN_MEMORY_HOME` | `<indexDir>/memory` | Where OKF memory docs live; point at a shared palace to reuse memory across projects |
 | `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite` / `full` / `ultra`) |
@@ -222,7 +263,7 @@ File, search, list, and `bash` working directories are confined to `JAMBAVAN_ROO
 
 **4. Sankshipta** — prose compression holds steady around **24%**.
 
-**5. Tool latency** — **all 32 tools the MCP server advertises**, timed over the real stdio transport (the same request/response path a host model uses): min/median/max over 10 calls for read-only tools, single-shot for mutating ones. Representative medians:
+**5. Tool latency** — every tool advertised by the benchmark server, with write and bash gates enabled, timed over the real stdio transport (the same request/response path a host model uses): min/median/max over 10 calls for read-only tools, single-shot for mutating ones. Representative medians:
 
 | tool | median | tool | median |
 |---|---|---|---|
@@ -253,7 +294,17 @@ JAMBAVAN_ROOT=/path/to/your/repo npm run bench
 
 Add `--json` (`node dist/benchmark.js --json`) for the same data as a single machine-readable object instead of tables — same run, same numbers, no extra instrumentation.
 
-**README badges** — `npx jambavan badges` prints three local, plain-text markdown lines to paste straight into a README: a benchmark card (context tokens saved on your repo), a Rin Ledger summary (`// rin:` debt markers), and a Failure Immunity count (`FailureRecord` memories stored). No network call — if you'd rather have a rendered badge image, use a [shields.io static badge](https://shields.io/badges/static-badge) URL instead; that's an opt-in choice since it makes the README fetch from shields.io's CDN when it renders.
+## Badges
+
+`npx jambavan badges` prints three local markdown lines you can paste into a README:
+
+```bash
+npx jambavan badges
+```
+
+The lines summarize benchmark context-token savings for the current repo, Rin Ledger debt markers (`// rin:` comments), and Failure Immunity (`FailureRecord` memories in the default project scope). The command makes no network calls; it runs the local benchmark and reads local repo/memory state.
+
+If you want rendered badge images instead of plain markdown text, use a [shields.io static badge](https://shields.io/badges/static-badge) URL explicitly. That makes README renders fetch from shields.io's CDN, so Jambavan leaves it as an opt-in choice.
 
 ## Memory Bridge (MemPalace)
 
@@ -265,6 +316,8 @@ npx jambavan bridge --from mempalace [--in <dir>]                    # default i
 ```
 
 `--to mempalace` writes one file per memory under `<dir>/<wing>/<room>/<title>.md` (wing = Jambavan scope, room = decisions/problems/technical inferred from memory type) using Jambavan's own frontmatter format unchanged. Hand that tree to your host model and ask it to walk the files and call `mempalace_add_drawer(wing, room, title, content)` per file. `--from mempalace` is the reverse: point it at a tree written the same way (e.g. after the host model runs `mempalace_list_drawers` + `mempalace_get_drawer` and saves the results) to import every file into Jambavan's own store.
+
+`--scope` is the memory namespace. By default Jambavan derives it from the repo folder plus a short hash of the absolute path, so two repos named `api` do not collide; override it only when you intentionally want to share or import a specific memory namespace.
 
 ## PR Handoff
 

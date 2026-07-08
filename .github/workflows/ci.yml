@@ -19,6 +19,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
+      - run: npm run docs-check
       - run: npm test
       - name: Run coverage on Node 20
         # Node 20 supports coverage collection, but not coverage include/threshold flags.

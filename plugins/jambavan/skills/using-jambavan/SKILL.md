@@ -36,12 +36,13 @@ Every session follows this sequence:
 | Check before retrying | `jambavan_failure_search` | query |
 | Hand off to next session | `jambavan_session_export` | — |
 | Resume from handoff | `jambavan_session_import` | document |
-| Compress verbose prose | `jambavan_sankshipta` | file path |
-| Audit shortcut debt | `jambavan_rin_mochan` | — |
-| Investigate bug/failure root cause | `jambavan_mool_kaaran` | `symptom`, `context`, `attempts_so_far` |
-| Verification gate before completion | `jambavan_praman` | `claim`, `type` |
-| Sequence multi-step task strategy | `jambavan_yukti` | `task`, `constraints`, `scale` |
-| Decompose task to parallel units | `jambavan_vibhaajan` | `task`, `units`, `constraints` |
+| Prepare review context | `jambavan_review_pack` | `base`, `max_files` |
+| Compress verbose prose | `compress_prompt` (`jambavan_sankshipta`) | file path |
+| Audit shortcut debt | `debt_ledger` (`jambavan_rin_mochan`) | — |
+| Investigate bug/failure root cause | `root_cause` (`jambavan_mool_kaaran`) | `symptom`, `context`, `attempts_so_far` |
+| Verification gate before completion | `verify_gate` (`jambavan_praman`) | `claim`, `type` |
+| Sequence multi-step task strategy | `strategy_plan` (`jambavan_yukti`) | `task`, `constraints`, `scale` |
+| Decompose task to parallel units | `decompose_task` (`jambavan_vibhaajan`) | `task`, `units`, `constraints` |
 
 ## When to Use Each Power
 
@@ -79,14 +80,20 @@ After hitting a dead end: `jambavan_failure_store` with command, symptom, root c
 
 Use the 4 counsel tools to avoid thrashing, enforce verification, and maintain rigorous planning:
 
-- **Root Cause Protocol (`jambavan_mool_kaaran`)**: Call BEFORE debugging any test failure or unexpected behavior. Focuses on Observe → Compare → Hypothesize → Fix. Escalates at 3+ attempts.
-- **Verification Gate (`jambavan_praman`)**: Call BEFORE asserting that your work is done. Forces execution of fresh, complete commands and pasting of exact output text.
-- **Approach Strategy (`jambavan_yukti`)**: Call BEFORE writing any non-trivial code. Returns scaled structures (small/medium/large) for executing the task safely.
-- **Parallel Decomposition (`jambavan_vibhaajan`)**: Call BEFORE undertaking complex multi-component tasks. Breaks work into independent units with clear contracts.
+- **Root Cause Protocol (`root_cause`, canonical `jambavan_mool_kaaran`)**: Call BEFORE debugging any test failure or unexpected behavior. Focuses on Observe → Compare → Hypothesize → Fix. Escalates at 3+ attempts.
+- **Verification Gate (`verify_gate`, canonical `jambavan_praman`)**: Call BEFORE asserting that your work is done. Forces execution of fresh, complete commands and pasting of exact output text.
+- **Approach Strategy (`strategy_plan`, canonical `jambavan_yukti`)**: Call BEFORE writing any non-trivial code. Returns scaled structures (small/medium/large) for executing the task safely.
+- **Parallel Decomposition (`decompose_task`, canonical `jambavan_vibhaajan`)**: Call BEFORE undertaking complex multi-component tasks. Breaks work into independent units with clear contracts.
 
 ### Session Handoff
 
 Ending a session? `jambavan_session_export` produces a single portable document (memories, rin debt, git status). Paste it into the next session or pass it to a colleague via `jambavan_session_import`.
+
+For human handoff outside the MCP host, `npx jambavan html-handoff --out <file>` writes a self-contained browser report with memories, failure records, rin debt, index stats, and git status.
+
+### Review Pack
+
+Before opening or updating a PR, call `jambavan_review_pack` after indexing. It maps touched files to symbols, callers, associated tests, touched rin debt, and past failure records. Outside the MCP host, use `npx jambavan review-pack --base origin/main --format json` for CI or PR-comment automation.
 
 ## Token Discipline
 

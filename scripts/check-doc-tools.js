@@ -3,6 +3,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const server = fs.readFileSync(path.join(root, 'src/mcp/server.ts'), 'utf8');
+const aliases = fs.readFileSync(path.join(root, 'src/mcp/tool-aliases.ts'), 'utf8');
 const architecture = fs.readFileSync(path.join(root, 'ARCHITECTURE.md'), 'utf8');
 const readme = fs.readFileSync(path.join(root, 'README.md'), 'utf8');
 const pluginJson = JSON.parse(fs.readFileSync(path.join(root, 'plugins/jambavan/.claude-plugin/plugin.json'), 'utf8'));
@@ -28,24 +29,26 @@ for (const f of defFiles) {
 }
 
 const allJambavanTools = [...new Set([...nativeTools, ...defTools])].filter(n => n.startsWith('jambavan_'));
+const aliasTools = [...aliases.matchAll(/^\s*([a-z][a-z0-9_]*):\s*'jambavan_[a-z0-9_]+'/gm)].map(m => m[1]);
+const documentedTools = [...new Set([...allJambavanTools, ...aliasTools])];
 
 // --- 3. Check ARCHITECTURE.md documents every tool ---
-const missingFromArch = allJambavanTools.filter(tool => !architecture.includes('`' + tool + '`'));
+const missingFromArch = documentedTools.filter(tool => !architecture.includes('`' + tool + '`'));
 if (missingFromArch.length) {
   throw new Error(`ARCHITECTURE.md is missing MCP tools:\n  ${missingFromArch.join('\n  ')}`);
 }
 
 // --- 4. Check README.md documents every tool ---
-const missingFromReadme = allJambavanTools.filter(tool => !readme.includes(tool));
+const missingFromReadme = documentedTools.filter(tool => !readme.includes(tool));
 if (missingFromReadme.length) {
   throw new Error(`README.md is missing MCP tools:\n  ${missingFromReadme.join('\n  ')}`);
 }
 
 // --- 5. Check plugin.json description enumerates every tool ---
 const pluginDesc = pluginJson.description || '';
-const missingFromPlugin = allJambavanTools.filter(tool => !pluginDesc.includes(tool));
+const missingFromPlugin = documentedTools.filter(tool => !pluginDesc.includes(tool));
 if (missingFromPlugin.length) {
   throw new Error(`plugins/jambavan/.claude-plugin/plugin.json description is missing tools:\n  ${missingFromPlugin.join('\n  ')}`);
 }
 
-console.log(`docs-check: ${allJambavanTools.length} jambavan_ tools verified across ARCHITECTURE.md, README.md, and plugin.json`);
+console.log(`docs-check: ${documentedTools.length} MCP tools verified across ARCHITECTURE.md, README.md, and plugin.json`);

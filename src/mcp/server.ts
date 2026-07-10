@@ -27,6 +27,7 @@ import { fileURLToPath } from 'url';
 
 import pkg from '../../package.json';
 import { loadConfig, applyResolvedRoot } from '../config/jambavan.config';
+import { aliasToolsFor, resolveToolAlias } from './tool-aliases';
 import { doctorReport }                  from '../tools/doctor';
 import { ToolRegistry, boundedInt, capOutput } from '../tools/registry';
 import { createReadFileTool }            from '../tools/read-file';
@@ -465,7 +466,7 @@ export async function startServer(): Promise<void> {
     const native = allowWrite
       ? NATIVE_TOOLS
       : NATIVE_TOOLS.filter(t => t.name !== 'jambavan_sankshipta');
-    return { tools: [...native, ...registryTools] };
+    return { tools: [...native, ...aliasToolsFor(native), ...registryTools] };
   });
 
   // ── tools/call ─────────────────────────────────────────────────────────────
@@ -486,7 +487,8 @@ export async function startServer(): Promise<void> {
   async function handleToolCall(
     request: { params: { name: string; arguments?: Record<string, unknown> } },
   ): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> {
-    const { name, arguments: args = {} } = request.params;
+    const { name: requestedName, arguments: args = {} } = request.params;
+    const name = resolveToolAlias(requestedName);
     const input = args as Record<string, unknown>;
 
     // ── jambavan_awaken ───────────────────────────────────────────────────────

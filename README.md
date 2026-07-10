@@ -1,10 +1,6 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/assets/jambavan.png" alt="Jambavan — the wise elder awakening latent power" width="640">
-</p>
-
 <h1 align="center">Jambavan</h1>
 
-<p align="center"><em>The mentor that reminds your model of powers it already has.</em></p>
+<p align="center"><em>Stop your coding agent from forgetting your repo.</em></p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/jambavan"><img src="https://img.shields.io/npm/v/jambavan.svg" alt="npm version"></a>
@@ -18,13 +14,70 @@
 
 ---
 
-In the Ramayana, when the army despaired at the ocean's edge, it was **Jambavan** — the ancient, wise bear-king — who turned to Hanuman and reminded him of his own forgotten, immeasurable strength. Hanuman had the power all along. He only needed to be reminded. Then he crossed the ocean in a single leap.
+<p align="center">
+  <img src="./assets/30-second-demo.gif" alt="30-second Jambavan demo showing registration, doctor, indexing, context retrieval, and failure recall" width="820">
+</p>
 
-A large language model is Hanuman. It can already reason, plan, and write code. What it lacks is not intelligence — it is *awareness of the ground it stands on*: which files exist, what calls what, what was decided last week, what it already tried.
+Jambavan is a local-first [Model Context Protocol](https://modelcontextprotocol.io) server for Claude Code, Cursor, Codex, Continue, and any MCP client. It gives coding agents the missing state layer: precise code context, durable memory, failure history, review packs, and a lightweight symbol graph.
 
-**Jambavan is the voice at the ocean's edge.** It is a [Model Context Protocol](https://modelcontextprotocol.io) server that gives any coding model a live map of the codebase, a durable memory, and a set of surgical tools — so the model's existing power actually lands.
+Use it when the agent keeps forgetting what was decided, rereads whole files for every question, repeats dead-end fixes, or starts a review without knowing touched symbols, callers, and tests.
 
-Jambavan does not call an LLM and is not an agent. **The host model thinks. Jambavan gives it the ground to leap from.**
+## 30-second demo
+
+```bash
+claude mcp add jambavan -- npx -y jambavan
+npx jambavan doctor
+# In your MCP host: jambavan_awaken → jambavan_index → jambavan_context "where is auth handled?"
+```
+
+The model now has local repo context, previous decisions, and searchable failure history before it edits.
+
+<p align="center">
+  <img src="./assets/usage-screenshot.svg" alt="Terminal screenshot showing Jambavan install, doctor, index, context, and badges usage" width="820">
+</p>
+
+## Privacy first
+
+**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, and memories locally under `.jambavan/` by default. Read/search/list tools are on by default; file writes and shell execution are not advertised unless you opt in with `JAMBAVAN_ALLOW_WRITE=1` or `JAMBAVAN_ALLOW_BASH=1`.
+
+## Before / after
+
+| Without Jambavan | With Jambavan |
+|---|---|
+| Agent rereads whole files and burns tokens. | Agent retrieves ranked symbols, callers, tests, and recent diff. |
+| Decisions vanish between sessions. | Durable markdown memory survives across hosts and models. |
+| Failed fixes get retried. | Failure records say what failed, why, and what not to retry. |
+| PR review starts from raw changed files. | Review pack maps touched files to symbols, callers, tests, and risk. |
+
+## Works with
+
+| Host | Status | Setup |
+|---|---|---|
+| Claude Code | supported | `claude mcp add jambavan -- npx -y jambavan` |
+| Cursor | supported | `.cursor/mcp.json` |
+| Codex CLI | supported | `codex mcp add jambavan -- npx -y jambavan` |
+| Continue | supported | `~/.continue/mcpServers/jambavan.json` |
+| Any MCP client | supported | command: `npx -y jambavan` |
+
+What it gives the model:
+
+- **Indexed context** — ranked symbols, callers, tests, and recent diff without dumping whole files.
+- **Durable memory** — decisions and handoffs stored as local markdown under `.jambavan/memory/`.
+- **Failure immunity** — prior failed commands and root causes are searchable before the next retry.
+- **Review intelligence** — MCP and CLI review packs map touched files to symbols, graph callers, tests, touched rin debt, and past failures.
+- **Local graph and GUI** — searchable code relationships, rin debt, failure hotspots, and node details served from localhost.
+
+## Why not just grep?
+
+Grep finds text. Jambavan gives the model indexed symbols, token-budgeted snippets, callers, tests, recent diffs, durable memory, failure history, and review risk flags — without uploading code or running embeddings.
+
+## Killer use case
+
+You are three sessions into a refactor. Claude forgot the design decision, retries the same failed test fix, and wants to reread half the repo. Jambavan recalls the decision, finds the previous failure record, retrieves only the relevant symbols/callers/tests, and exports a handoff when the session ends.
+
+## The Name
+
+In the Ramayana, when the army despaired at the ocean's edge, **Jambavan** reminded Hanuman of his forgotten strength. Large language models already know how to reason and write code; what they lack is awareness of the ground they stand on: which files exist, what calls what, what was decided last week, and what already failed.
 
 ## The powers it hands over
 
@@ -33,13 +86,72 @@ Jambavan does not call an LLM and is not an agent. **The host model thinks. Jamb
 | **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_diagnostics`, `jambavan_doctor` | AST-aware code index: tree-sitter extracts symbols/references, SQLite stores them under `.jambavan/`, and the watcher keeps it incremental. Retrieve ranked, token-budgeted context instead of re-reading whole files. `jambavan_context` also takes `compress_prose`, `include_diff` (recent git changes per symbol), and `include_tests` (associated test files) — enrichments share the same token budget, not added on top. `jambavan_doctor` is the one-shot health check for root detection, parser backends, gates, memory dir, CI, and index/watcher status. `npx jambavan daemon start\|stop\|status` runs the same watcher standalone in a detached background process (PID file at `.jambavan/daemon.pid`), so the index stays live even between MCP sessions. |
 | **The bridge** | `jambavan_graph_report`, `jambavan_graph_query`, `jambavan_graph_path` | A **lightweight inferred code graph** — callers, callees, imports, mentions — built from AST-extracted references matched **by symbol name** (not scope-resolved). Direct `import` statements are resolved to their actual source file, so an ambiguous call between two same-named symbols links to the one actually imported; unresolved calls still fan out by name. Edges are labelled `EXTRACTED` (from the AST) or `INFERRED` (name mention); verify before large refactors. `npx jambavan gui` renders the same graph, plus rin debt and failure records, as a local, dependency-free force-directed view in your browser. |
 | **Memory** | `jambavan_memory_store`, `jambavan_memory_search`, `jambavan_memory_recall`, `jambavan_memory_mine_session`, `jambavan_memory_invalidate`, `jambavan_memory_delete`, `jambavan_memory_status` | Durable, human-readable memory as markdown files under `.jambavan/memory/`. BM25 search, no database, no embeddings, no external service. Decisions survive across sessions and models. |
-| **Session continuity** | `jambavan_failure_store`, `jambavan_failure_search`, `jambavan_session_export`, `jambavan_session_import` | Structured failure records (command, symptom, root cause, do-not-retry advice) so a fresh session doesn't repeat a dead end. `jambavan_session_export` produces a single portable handoff document (decisions, open/resolved failures, dirty files, next command, git status) to resume work in a new session, host, or with a colleague. `npx jambavan handoff --write-pr-template` injects the same card into a local PR template. |
-| **Review pack** | `jambavan_review_pack` | Diffs the current branch against a base (auto-detects `main`/`master`), then for each touched file lists its symbols, callers (via the graph), associated tests, and risk flags — open rin debt or no matching test. One call before opening/updating a PR. |
+| **Session continuity** | `jambavan_failure_store`, `jambavan_failure_search`, `jambavan_session_export`, `jambavan_session_import` | Structured failure records (command, symptom, root cause, do-not-retry advice) so a fresh session doesn't repeat a dead end. `jambavan_session_export` produces a single portable handoff document (decisions, open/resolved failures, dirty files, next command, git status) to resume work in a new session, host, or with a colleague. `npx jambavan handoff --write-pr-template` injects the same card into a local PR template; `npx jambavan html-handoff` writes a self-contained browser report. |
+| **Review pack** | `jambavan_review_pack` | Diffs the current branch against a base (auto-detects `main`/`master`), then for each touched file lists its symbols, callers (via the graph), associated tests, and risk flags — touched rin debt, no matching test, or past failures. `npx jambavan review-pack --format json` emits the same analysis as structured JSON for CI/PR comments. |
 | **Sankshipta** *(brevity)* | `jambavan_sankshipta` | Deterministically compress prose and prompts to fewer tokens while preserving code, paths, versions, and facts. |
 | **Vibhishana Niti** *(wise counsel)* | `jambavan_vibhishana_niti`, `jambavan_rin_mochan` | Activate an efficient-dev discipline mid-session, and audit deliberate shortcuts (`// rin:` markers) into a tracked debt ledger. |
 | **Counsel** *(discipline protocols)* | `jambavan_mool_kaaran`, `jambavan_praman`, `jambavan_yukti`, `jambavan_vibhaajan` | Four discipline protocols: root-cause investigation before debugging, verification gates before claiming completion, approach strategy before multi-step tasks, and parallel decomposition for independent sub-units. |
 | **The hands** | `read_file`, `search`, `list_files` (default) · `write_file`, `patch_file`, `bash` (opt-in) | Guarded file, search, and shell tools — confined to the project root. Read-only tools are on by default; **mutating and shell tools are OFF unless you opt in** (see [Safety](#safety)). `bash` has a best-effort footgun filter (not a security boundary). |
 | **The reminder** | `jambavan_awaken` | Reminds the model of every power above, plus the session protocol and recent project memories. Call it first. |
+
+### Functional aliases
+
+The Sanskrit/Ramayana names remain stable, but Jambavan also exposes English aliases for model recall and searchability: `root_cause` (`jambavan_mool_kaaran`), `verify_gate` (`jambavan_praman`), `strategy_plan` (`jambavan_yukti`), `decompose_task` (`jambavan_vibhaajan`), `dev_rules` (`jambavan_vibhishana_niti`), `debt_ledger` (`jambavan_rin_mochan`), and `compress_prompt` (`jambavan_sankshipta`, write-gated).
+
+## Real outputs
+
+`jambavan_context "review pack"` returns focused code spans instead of whole files:
+
+```text
+# Jambavan Context
+query: review pack
+budget: 8000 tokens
+
+## src/tools/review-pack.ts: buildReviewPack
+kind: function · score: 0.92
+Uses git diff to list touched files, maps symbols from the index, adds callers via graph,
+associated tests via test-map, and risk flags for rin debt / missing tests / failures.
+```
+
+`jambavan_review_pack` turns a branch into reviewer-ready context:
+
+```text
+# Jambavan Review Pack
+Base: main
+Touched files: src/mcp/server.ts, src/mcp/tool-aliases.ts
+
+src/mcp/server.ts
+- touched symbols: startServer, handleToolCall
+- callers: dist/index.js → startServer
+- associated tests: test/tool-aliases.test.ts
+- risk flags: write-gated tool alias; verify disabled-tool listing
+```
+
+The CLI form is useful outside an MCP host and in CI:
+
+```bash
+npx jambavan review-pack --base origin/main --format json --max-files 30
+```
+
+JSON output uses `touchedCount`, `files[]`, `rinMarkers[]` for rin debt in touched files only, and `failures[]` for prior failure records mentioning touched paths. The sample workflow in [`.github/workflows/jambavan-review.yml`](.github/workflows/jambavan-review.yml) renders that JSON into an idempotent PR comment.
+
+`jambavan_failure_search "timeout"` prevents repeat dead ends:
+
+```text
+FailureRecord: flaky auth test timeout
+Root cause: unawaited promise in token refresh mock.
+Do not retry: increasing the test timeout; it hid the race.
+Next check: run the focused auth test with fake timers enabled.
+```
+
+`jambavan_awaken` gives the host a session protocol plus recent memories:
+
+```text
+1. Recall durable memories for this project.
+2. Run jambavan_index, then jambavan_watch start.
+3. Use jambavan_context before edits.
+4. Store durable decisions and failures before handoff.
+```
 
 ## Install
 
@@ -157,6 +269,14 @@ This repo is also a Claude Code [plugin marketplace](https://code.claude.com/doc
 ```
 
 The plugin registers the same `npx -y jambavan` MCP server (read-only tools by default) and bundles five skills in any Claude Code session: `/jambavan:vibhishana-niti` (efficient-dev discipline), `/jambavan:using-jambavan` (tool session protocol — index → context → memory), `/jambavan:root-cause-debugger` (observe/compare/hypothesize/fix before any bug fix), `/jambavan:release-checker` (evidence gate before claiming tests/build/fix/release are done), and `/jambavan:strict-reviewer` (severe-senior-engineer review checklist, built on `jambavan_review_pack`). Refresh later with `/plugin marketplace update jambavan`. The catalog lives in [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json); the plugin manifest in [`plugins/jambavan/.claude-plugin/plugin.json`](plugins/jambavan/.claude-plugin/plugin.json).
+
+## Examples
+
+- [Claude Code setup](examples/claude-code.md) — `claude mcp add jambavan -- npx -y jambavan`
+- [Cursor setup](examples/cursor.md) — `.cursor/mcp.json`
+- [Codex CLI setup](examples/codex.md) — `codex mcp add jambavan -- npx -y jambavan`
+- [Continue setup](examples/continue.md) — `~/.continue/mcpServers/jambavan.json`
+- [Review pack output](examples/review-pack.md) — MCP, CLI JSON, and GitHub Action review-pack shapes
 
 ## Run directly
 
@@ -330,6 +450,16 @@ npx jambavan handoff --write-pr-template --post   # also posts the handoff as a 
 
 `--post` is opt-in and off by default: it shells out to your already-authenticated `gh pr comment` (same trust boundary as the `bash` tool) so a reviewer sees session context without leaving GitHub. If you want this to run automatically, wire it into a local `.git/hooks/pre-push` hook yourself — Jambavan doesn't install one for you.
 
+## HTML Handoff
+
+`npx jambavan html-handoff` writes a self-contained HTML report for humans: memory timeline grouped into decisions/failures/other, rin debt, indexed symbol count, dirty files, recent commits, collapsible sections, and a copy-text button. It has no external CDN or telemetry.
+
+```bash
+npx jambavan html-handoff                         # writes jambavan-handoff.html in the project root
+npx jambavan html-handoff --out /tmp/handoff.html # choose an output path
+npx jambavan html-handoff --scope my-scope        # read a specific memory scope
+```
+
 ## Background Daemon
 
 `npx jambavan daemon start` runs the same `FileWatcher` used by `jambavan_watch` standalone, in a detached background process — the index keeps updating on save even when no MCP host is attached. It writes a PID file to `.jambavan/daemon.pid` and logs to `.jambavan/daemon.log`.
@@ -354,21 +484,30 @@ npx jambavan gui --port 5000     # pick a different port
 npx jambavan gui --no-open       # print the URL instead of opening a browser (CI/headless)
 ```
 
-The page has three tabs: a force-directed **graph** view (same nodes/edges as `jambavan_graph_report`, capped to the 400 highest-degree nodes so large repos stay responsive), the **Rin Debt** ledger (`// rin:` markers), and **Failures** (stored `FailureRecord` memories). All data comes from a local `/api/data` JSON endpoint — no external requests, no telemetry.
+The page has three tabs: a force-directed **graph** view (same nodes/edges as `jambavan_graph_report`, capped to the 400 highest-degree nodes so large repos stay responsive), the **Rin Debt** ledger (`// rin:` markers), and **Failures** (stored `FailureRecord` memories). The graph view includes search, pan/zoom, rin/failure heat markers, and a click-through detail panel that fetches source snippets, callers, and callees from `/api/node/:id`. All data comes from local JSON endpoints — no external requests, no telemetry.
+
+<p align="center">
+  <img src="./assets/gui-screenshot.svg" alt="Local Jambavan GUI showing graph, Rin Debt, and Failures tabs" width="820">
+</p>
 
 ## Checks
 
 ```bash
 npm run lint
-npm run docs-check  # docs mention the MCP tools registered in src/mcp/server.ts
+npm run docs-check  # docs mention the MCP tools and aliases advertised by the server
 npm run build
 npm run unit        # node:test unit suite (test/*.test.ts)
 npm run self-check
+npm run tool-check  # every advertised MCP tool over stdio
 npm run bench
 ```
+
+## Social preview
+
+This repo includes [`.github/social-preview.png`](.github/social-preview.png). Set it as the GitHub repository social preview under **Settings → Social preview** so shares explain the project before anyone opens the README.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for internals.
 
 ---
 
-<p align="center"><sub>You already have the power. Jambavan only reminds you.</sub></p>
+<p align="center"><sub>If Jambavan saves your agent from rereading, forgetting, or retrying the same failed fix, star the repo — it helps MCP users find local-first tooling.</sub></p>

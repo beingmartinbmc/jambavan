@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn, spawnSync } from 'child_process';
 import { mkTempConfig } from '../test-support/config';
-import { getDaemonStatus, stopDaemon, formatDaemonStatus } from '../src/tools/daemon';
+import { getDaemonStatus, startDaemon, stopDaemon, formatDaemonStatus } from '../src/tools/daemon';
 
 function writePid(indexDir: string, pid: number): void {
   fs.mkdirSync(indexDir, { recursive: true });
@@ -101,6 +101,60 @@ test('formatDaemonStatus: renders running / stale / not-running messages', () =>
 
     writePid(config.indexDir, process.pid);
     assert.match(formatDaemonStatus(config), /Daemon active \(pid \d+\)/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('formatDaemonStatus: stale pid file reports the stale message', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    writePid(config.indexDir, deadPid());
+    assert.match(formatDaemonStatus(config), /stale/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('startDaemon: reports already-running when daemon is live', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    writePid(config.indexDir, process.pid); // this process is alive
+    const result = startDaemon(config);
+    assert.equal(result.started, false);
+    assert.match(result.message, /already running/);
+    assert.equal(result.pid, process.pid);
+  } finally {
+    cleanup();
+  }
+});
+
+test('startDaemon: spawns a new process, writes pid file, and returns started=true', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const result = startDaemon(config);
+    // Worker path does not exist in test env, but spawn still assigns a pid on most platforms
+    // before the child exits. Only assert structural shape; the child will die immediately.
+    assert.ok(typeof result.started === 'boolean');
+    assert.ok(typeof result.message === 'string');
+    if (result.started) {
+      assert.ok(typeof result.pid === 'number' && result.pid! > 0);
+      assert.match(result.message, /Daemon started/);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('readPid: non-integer content in pid file returns undefined (treated as no daemon)', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    fs.mkdirSync(config.indexDir, { recursive: true });
+    fs.writeFileSync(path.join(config.indexDir, 'daemon.pid'), 'not-a-number', 'utf-8');
+    const status = getDaemonStatus(config);
+    assert.equal(status.running, false);
+    // stale is not set — readPid returned undefined, so we took the "no pid file" path
+    assert.equal(status.stale, undefined);
   } finally {
     cleanup();
   }

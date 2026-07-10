@@ -17,6 +17,8 @@
  *   npx -y jambavan --help    → show registration instructions
  *   npx -y jambavan doctor    → one-shot environment/config health check
  *   npx -y jambavan badges    → print local Benchmark/Rin Ledger/Failure Immunity README badges
+ *   npx -y jambavan review-pack [--base <branch>] [--format json|markdown]  → review pack for the current branch
+ *   npx -y jambavan html-handoff [--out <file>] [--scope <scope>]  → write interactive HTML handoff report
  *   npx -y jambavan bridge    → convert memories to/from a MemPalace-shaped markdown tree
  *   npx -y jambavan handoff --write-pr-template  → inject the session handoff card into a local PR template
  *   npx -y jambavan daemon start|stop|status  → run the file watcher standalone in a detached background process
@@ -40,8 +42,62 @@ import { buildSessionHandoffHandlers } from './tools/session-handoff';
 import { injectHandoffBlock } from './tools/pr-handoff';
 import { startDaemon, stopDaemon, formatDaemonStatus } from './tools/daemon';
 import { startGuiServer, openBrowser } from './tools/gui';
+import { buildReviewPackJson } from './tools/review-pack-json';
+import { buildHtmlHandoff } from './tools/html-handoff';
 
 const args = process.argv.slice(2);
+
+if (args[0] === 'review-pack') {
+  const config = loadConfig();
+  const flagVal = (name: string): string | undefined => {
+    const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined;
+  };
+  const base      = flagVal('--base');
+  const maxFiles  = flagVal('--max-files') ? Number(flagVal('--max-files')) : undefined;
+  const format    = flagVal('--format') ?? 'markdown';
+
+  const index = new JambavanIndex(config);
+  void index.index().then(() => {
+    if (format === 'json') {
+      try {
+        const pack = buildReviewPackJson(config, index, base, maxFiles);
+        process.stdout.write(JSON.stringify(pack, null, 2) + '\n');
+      } catch (err) {
+        process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
+        process.exit(1);
+      }
+    } else {
+      // markdown — reuse existing MCP handler
+      const { buildReviewPackHandlers } = require('./tools/review-pack') as typeof import('./tools/review-pack');
+      const handlers = buildReviewPackHandlers(config, () => index);
+      const input: Record<string, unknown> = {};
+      if (base)     input['base']      = base;
+      if (maxFiles) input['max_files'] = maxFiles;
+      process.stdout.write(handlers.jambavan_review_pack(input) + '\n');
+    }
+    index.close();
+    process.exit(0);
+  });
+}
+
+if (args[0] === 'html-handoff') {
+  const config = loadConfig();
+  const flagVal = (name: string): string | undefined => {
+    const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined;
+  };
+  const outFile = flagVal('--out') ?? path.join(config.projectRoot, 'jambavan-handoff.html');
+  const scope   = flagVal('--scope');
+
+  const index = new JambavanIndex(config);
+  void index.index().then(() => {
+    const html = buildHtmlHandoff(config, index, { scope });
+    fs.mkdirSync(path.dirname(outFile), { recursive: true });
+    fs.writeFileSync(outFile, html, 'utf-8');
+    console.log(`Wrote interactive handoff to ${outFile}`);
+    index.close();
+    process.exit(0);
+  });
+}
 
 if (args[0] === 'gui') {
   const config = loadConfig();
@@ -251,6 +307,15 @@ Jambavan exposes these MCP tools to the host model:
   jambavan_yukti         Approach strategy protocol (call before multi-step tasks)
   jambavan_vibhaajan     Parallel work decomposition (call when task has independent units)
 
+  Functional aliases:
+  root_cause       Alias for jambavan_mool_kaaran
+  verify_gate      Alias for jambavan_praman
+  strategy_plan    Alias for jambavan_yukti
+  decompose_task   Alias for jambavan_vibhaajan
+  dev_rules        Alias for jambavan_vibhishana_niti
+  debt_ledger      Alias for jambavan_rin_mochan
+  compress_prompt  Alias for jambavan_sankshipta (write-gated)
+
   read_file            Read a file (with optional line range)
   write_file           Write or overwrite a file
   patch_file           Find-and-replace patch on an existing file
@@ -297,9 +362,10 @@ Environment:
   process.exit(0);
 }
 
-// `gui` starts its own long-lived HTTP server above and returns without exiting;
-// every other branch above this point calls process.exit() before falling through.
-if (args[0] !== 'gui') {
+// All CLI sub-commands above schedule process.exit() before reaching here.
+// Only start the MCP server when no sub-command matched.
+const CLI_COMMANDS = new Set(['gui', 'review-pack', 'html-handoff', 'daemon', 'bridge', 'badges', 'doctor', '--help', '-h', '--version']);
+if (!CLI_COMMANDS.has(args[0] ?? '')) {
   startServer().catch(err => {
     process.stderr.write(`[jambavan] Fatal: ${err}\n`);
     process.exit(1);

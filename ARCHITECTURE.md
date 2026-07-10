@@ -100,6 +100,20 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 > AST) or `INFERRED` (name mention). Treat it as a navigation aid, not ground
 > truth — verify before large refactors.
 
+### Functional aliases
+
+The mythological tool names are the canonical API. These English aliases are also advertised as real MCP tools for easier discovery and model recall:
+
+| Alias | Canonical tool |
+|---|---|
+| `root_cause` | `jambavan_mool_kaaran` |
+| `verify_gate` | `jambavan_praman` |
+| `strategy_plan` | `jambavan_yukti` |
+| `decompose_task` | `jambavan_vibhaajan` |
+| `dev_rules` | `jambavan_vibhishana_niti` |
+| `debt_ledger` | `jambavan_rin_mochan` |
+| `compress_prompt` | `jambavan_sankshipta` |
+
 ### Memory
 
 | Tool | Purpose |
@@ -129,9 +143,9 @@ Both are built on `MemoryStore` — a failure record is just a memory with `type
 
 | Tool | Purpose |
 |---|---|
-| `jambavan_review_pack` | Diff the current branch vs a base ref (auto-detects `main`/`master`), then per touched file: list its symbols, callers via `buildSymbolGraph`, associated tests via `buildTestMap`, and risk flags (open `rin:` debt via `harvestRin`, no matching test, or past `FailureRecord`s mentioning the file) |
+| `jambavan_review_pack` | Diff the current branch vs a base ref (auto-detects `main`/`master`), then per touched file: list its symbols, callers via `buildSymbolGraph`, associated tests via `buildTestMap`, and risk flags (touched `rin:` debt via `harvestRin`, no matching test, or past `FailureRecord`s mentioning the file) |
 
-Pure composition — no new subsystem. Requires `jambavan_index` to have run at least once; without an index it still returns the raw touched-file list.
+Pure composition — no new subsystem. Requires `jambavan_index` to have run at least once; without an index it still returns the raw touched-file list. The CLI wrapper `jambavan review-pack --format json` reuses the same primitives and emits `{ base, touchedCount, files, rinMarkers, failures }` for CI/PR comments; `rinMarkers` is filtered to touched files only.
 
 ### Awaken
 
@@ -181,8 +195,10 @@ Local, no-server helpers run as `npx jambavan <subcommand>` — none call an LLM
 | `jambavan badges` | Print three local markdown lines for a README: benchmark card (context tokens saved, via `node dist/benchmark.js --json`), Rin Ledger, Failure Immunity count |
 | `jambavan bridge --to mempalace` / `--from mempalace` | Convert Jambavan memories to/from a MemPalace-shaped `wing/room/drawer.md` folder tree (see `src/tools/memory-bridge.ts`). MemPalace's real store is a Chroma vector index, not files, so this produces/consumes a portable interchange tree for a host model to walk with its own `mempalace_*` tools — Jambavan never calls MemPalace directly |
 | `jambavan handoff --write-pr-template [--post]` | Runs the `jambavan_session_export` handoff card and injects it as an HTML-comment-bounded block into `.github/pull_request_template.md` (see `src/tools/pr-handoff.ts` for the pure inject/replace transform); idempotent re-injection, no duplication. `--post` additionally shells to the caller's own authenticated `gh pr comment` — off by default, never automatic, same trust boundary as the `bash` tool |
+| `jambavan review-pack [--base <ref>] [--format markdown\|json] [--max-files <n>]` | Indexes the project, then writes a branch review pack to stdout. Markdown delegates to `jambavan_review_pack`; JSON uses `src/tools/review-pack-json.ts` for `{ touchedCount, files[], rinMarkers[], failures[] }`, which is what the GitHub Action consumes |
+| `jambavan html-handoff [--out <file>] [--scope <scope>]` | Indexes the project and writes a self-contained HTML handoff report (`src/tools/html-handoff.ts`) with memory timeline, rin debt, indexed-symbol stats, git dirty files/recent commits, collapsible sections, and copy-to-clipboard. No external assets or network calls |
 | `jambavan daemon start\|stop\|status` | Spawns/stops/inspects a detached background process (`src/daemon-worker.ts`, managed by `src/tools/daemon.ts`) that runs the same `FileWatcher` as `jambavan_watch`, standalone. PID file at `.jambavan/daemon.pid`, log at `.jambavan/daemon.log`, liveness checked via `process.kill(pid, 0)`. `jambavan_watch`/`jambavan_diagnostics`/`jambavan_awaken` all check this PID file first to avoid starting a redundant in-process watcher |
-| `jambavan gui [--port <n>] [--no-open]` | Indexes the project, then serves a dependency-free static page (`src/tools/gui.ts`) over Node's `http` module bound to `127.0.0.1` only — a force-directed graph view (from `buildSymbolGraph`, capped to the 400 highest-degree nodes), rin debt (`harvestRin`), and failure records (`MemoryStore`), all via a local `/api/data` JSON endpoint. Opens the default browser unless `--no-open` is passed |
+| `jambavan gui [--port <n>] [--no-open]` | Indexes the project, then serves a dependency-free static page (`src/tools/gui.ts`) over Node's `http` module bound to `127.0.0.1` only — a force-directed graph view (from `buildSymbolGraph`, capped to the 400 highest-degree nodes), rin debt (`harvestRin`), and failure records (`MemoryStore`). `/api/data` serves the graph/sidebar data; `/api/node/:id` serves click-through source snippets, callers, callees, and heat counts. Opens the default browser unless `--no-open` is passed |
 
 `node dist/benchmark.js --json` (not a `jambavan` subcommand, run directly) emits the same benchmark data as `npm run bench` as one JSON object instead of tables.
 
@@ -286,6 +302,8 @@ src/
 │   ├── vibhaajan.ts         # jambavan_vibhaajan — parallel decomposition protocol
 │   ├── doctor.ts            # jambavan_doctor — environment/config health check
 │   ├── review-pack.ts       # jambavan_review_pack — touched symbols/callers/tests/failures/risk
+│   ├── review-pack-json.ts  # `jambavan review-pack --format json` — CI/PR-comment schema
+│   ├── html-handoff.ts      # `jambavan html-handoff` — self-contained browser handoff report
 │   ├── memory-bridge.ts     # `jambavan bridge` CLI — Jambavan <-> MemPalace markdown conversion
 │   ├── pr-handoff.ts        # `jambavan handoff` CLI — inject handoff card into a PR template
 │   ├── daemon.ts            # `jambavan daemon` CLI — spawn/stop/inspect the background watcher process

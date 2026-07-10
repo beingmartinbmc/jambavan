@@ -1,0 +1,132 @@
+name: Jambavan PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install jambavan
+        run: npm install --global jambavan@latest
+
+      - name: Run jambavan review pack
+        id: pack
+        run: |
+          npx jambavan review-pack \
+            --base "origin/${{ github.event.pull_request.base.ref }}" \
+            --format json \
+            > /tmp/review-pack.json
+        env:
+          JAMBAVAN_ROOT: ${{ github.workspace }}
+
+      - name: Post or update PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let pack;
+            try {
+              pack = JSON.parse(fs.readFileSync('/tmp/review-pack.json', 'utf8'));
+            } catch {
+              console.log('No review pack output — index may not have run. Skipping comment.');
+              return;
+            }
+
+            const body = buildComment(pack, context.payload.pull_request);
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const MARKER = '<!-- jambavan-review -->';
+            const existing = comments.find(c => c.body && c.body.includes(MARKER));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner:      context.repo.owner,
+                repo:       context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner:       context.repo.owner,
+                repo:        context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+            function buildComment(pack, pr) {
+              const lines = [
+                MARKER,
+                '## 🐻 Jambavan Review Pack',
+                '',
+                `**Base:** \`${pack.base || pr.base.ref}\`  ·  **Touched files:** ${pack.touchedCount ?? 0}`,
+                '',
+              ];
+
+              if (pack.files && pack.files.length > 0) {
+                lines.push('### Blast Radius');
+                for (const f of pack.files) {
+                  lines.push(`<details><summary><b>${f.status} ${f.path}</b>${f.risks?.length ? ' ⚠️' : ''}</summary>`);
+                  lines.push('');
+                  if (f.symbols?.length) {
+                    for (const sym of f.symbols) {
+                      lines.push(`- **\`${sym.name}\`** (${sym.type}, L${sym.startLine})`);
+                      if (sym.callers?.length) {
+                        lines.push(`  - Callers: ${sym.callers.slice(0, 5).join(', ')}${sym.callers.length > 5 ? ` +${sym.callers.length - 5} more` : ''}`);
+                      }
+                      if (sym.tests?.length) {
+                        lines.push(`  - Tests: ${sym.tests.join(', ')}`);
+                      }
+                    }
+                  } else {
+                    lines.push('_No indexed symbols_');
+                  }
+                  if (f.risks?.length) {
+                    lines.push('');
+                    lines.push(`**⚠ Risks:** ${f.risks.join('; ')}`);
+                  }
+                  lines.push('</details>');
+                  lines.push('');
+                }
+              }
+
+              if (pack.rinMarkers?.length) {
+                lines.push('### Rin Debt Touched');
+                for (const m of pack.rinMarkers) {
+                  lines.push(`- \`${m.file}:${m.line}\`: ${m.comment}${m.hasUpgrade ? '' : ' _(no upgrade trigger)_'}`);
+                }
+                lines.push('');
+              }
+
+              if (pack.failures?.length) {
+                lines.push('### Failure Immunity');
+                for (const f of pack.failures) {
+                  lines.push(`- **${f.title}** — ${f.status}`);
+                }
+                lines.push('');
+              }
+
+              lines.push('---');
+              lines.push(`<sub>Analyzed by [Jambavan](https://github.com/sharma-ankit2/jambavan) · local-first MCP memory for coding agents · no LLM calls · no telemetry</sub>`);
+              return lines.join('\n');
+            }

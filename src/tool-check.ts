@@ -101,6 +101,9 @@ async function main(): Promise<void> {
   await call('jambavan_vibhishana_niti', { mode: 'full' });
   await call('jambavan_rin_mochan', {});
   await call('jambavan_sankshipta', { path: 'notes.md', in_place: false });
+  await call('dev_rules', { mode: 'full' });
+  await call('debt_ledger', {});
+  await call('compress_prompt', { path: 'notes.md', in_place: false });
 
   const stored = await call('jambavan_memory_store', { title: 'Test fact', body: 'The sky is blue.', scope: 'toolcheck' });
   const id = stored.match(/ID:\s*(\S+)/)?.[1] ?? 'toolcheck/test-fact';
@@ -134,6 +137,10 @@ async function main(): Promise<void> {
   await call('jambavan_praman', { claim: 'all tests pass', type: 'tests' });
   await call('jambavan_yukti', { task: 'add input validation to greet function', scale: 'small' });
   await call('jambavan_vibhaajan', { task: 'add auth module and notification service — independent subsystems', units: 2 });
+  await call('root_cause', { symptom: 'TypeError: Cannot read property of undefined', context: 'greet function', attempts_so_far: 0 });
+  await call('verify_gate', { claim: 'all tests pass', type: 'tests' });
+  await call('strategy_plan', { task: 'add input validation to greet function', scale: 'small' });
+  await call('decompose_task', { task: 'add auth module and notification service — independent subsystems', units: 2 });
 
   await call('read_file', { path: 'hello.ts' });
   await call('write_file', { path: 'scratch.txt', content: 'hi' });

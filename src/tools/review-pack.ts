@@ -12,7 +12,7 @@ import * as path from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 import type { JambavanIndex } from '../index/indexer';
 import { buildSymbolGraph, type GraphNode } from '../knowledge/graph';
-import { buildTestMap, formatTestAssociations } from '../index/test-map';
+import { buildTestMap, formatTestAssociations, isTestFile } from '../index/test-map';
 import { harvestRin } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
 import { projectScope } from './jambavan';
@@ -137,6 +137,7 @@ export function buildReviewPackHandlers(config: JambavanConfig, getIndex: () => 
 
       for (const file of analyzed) {
         const absPath = path.join(root, file.path);
+        const isTest = isTestFile(absPath);
         const fileSymbols = file.status === 'D' ? [] : index.getFileSymbols(absPath);
 
         sections.push(`## ${file.status}\t${file.path}`);
@@ -166,7 +167,7 @@ export function buildReviewPackHandlers(config: JambavanConfig, getIndex: () => 
 
         const risks: string[] = [];
         if (rinByFile.has(file.path)) risks.push('has open rin debt marker(s)');
-        if (fileSymbols.length > 0 && !fileSymbols.some(s => (testMap.get(s.name) ?? []).length > 0)) {
+        if (!isTest && fileSymbols.length > 0 && !fileSymbols.some(s => (testMap.get(s.name) ?? []).length > 0)) {
           risks.push('no symbol in this file has a matching test');
         }
         const fileFailures = failures.filter(d => d.body.includes(file.path));

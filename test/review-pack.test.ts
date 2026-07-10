@@ -5,7 +5,10 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { mkTempConfig } from '../test-support/config';
 import { JambavanIndex } from '../src/index/indexer';
+import { MemoryStore } from '../src/memory/store';
+import { projectScope } from '../src/tools/jambavan';
 import { buildReviewPackHandlers } from '../src/tools/review-pack';
+import { buildReviewPackJson } from '../src/tools/review-pack-json';
 
 function git(root: string, args: string[]): void {
   execFileSync('git', args, { cwd: root });
@@ -155,5 +158,221 @@ test('jambavan_review_pack: reports index-not-built with a plain touched-file li
 
     assert.match(result, /src\/util\.ts/);
     assert.match(result, /Index not built yet/);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: rin debt and failure record risks are flagged', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'src', 'risky.ts'),
+      'export function risky() { return 1; }\n// rin: linear scan, add index if list grows\n',
+    );
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add risky']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    // Store a failure record that mentions risky.ts
+    new MemoryStore(config.memoryDir).store({
+      title: 'Failure: risky.ts blew up',
+      body: 'src/risky.ts caused an out-of-memory error.',
+      scope: projectScope(config),
+      type: 'FailureRecord',
+      description: 'unresolved',
+      tags: ['failure', 'unresolved'],
+    });
+
+    const handlers = buildReviewPackHandlers(config, () => index);
+    const result = handlers.jambavan_review_pack({ base: 'main' });
+
+    assert.match(result, /has open rin debt marker/);
+    assert.match(result, /past failure record/);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: max_files limits depth of analysis', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    for (let i = 1; i <= 3; i++) {
+      fs.writeFileSync(path.join(root, 'src', `file${i}.ts`), `export function fn${i}() { return ${i}; }\n`);
+    }
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add three files']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const handlers = buildReviewPackHandlers(config, () => index);
+    const result = handlers.jambavan_review_pack({ base: 'main', max_files: 1 });
+
+    assert.match(result, /analyzing first 1/);
+  } finally { cleanup(); }
+});
+
+test('jambavan review-pack JSON reports when file analysis is truncated', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    for (let i = 1; i <= 3; i++) {
+      fs.writeFileSync(path.join(root, 'src', `json${i}.ts`), `export function json${i}() { return ${i}; }\n`);
+    }
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add json files']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const pack = buildReviewPackJson(config, index, 'main', 1);
+
+    assert.equal(pack.touchedCount, 3);
+    assert.equal(pack.analyzedCount, 1);
+    assert.equal(pack.truncated, true);
+    assert.equal(pack.files.length, 1);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: rin markers inside fixture strings are ignored', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'test', 'fixture.test.ts'),
+      "const fixture = '// rin: this is test data, not debt';\n",
+    );
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add fixture']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const handlers = buildReviewPackHandlers(config, () => index);
+    const result = handlers.jambavan_review_pack({ base: 'main' });
+    const pack = buildReviewPackJson(config, index, 'main');
+
+    assert.doesNotMatch(result, /has open rin debt marker/);
+    assert.equal(pack.rinMarkers.length, 0);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: test files are not flagged for missing matching tests', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'test', 'helper.test.ts'), 'export function helper() { return 1; }\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add test helper']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const handlers = buildReviewPackHandlers(config, () => index);
+    const result = handlers.jambavan_review_pack({ base: 'main' });
+    const pack = buildReviewPackJson(config, index, 'main');
+
+    assert.doesNotMatch(result, /no symbol in this file has a matching test/);
+    assert.ok(!pack.files.some(f => f.risks.includes('no symbol in this file has a matching test')));
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: deleted file shows "No indexed symbols" placeholder', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'gone.ts'), 'export function gone() { return 0; }\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.rmSync(path.join(root, 'src', 'gone.ts'));
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'delete gone.ts']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const handlers = buildReviewPackHandlers(config, () => index);
+    const result = handlers.jambavan_review_pack({ base: 'main' });
+
+    assert.match(result, /src\/gone\.ts/);
+    assert.match(result, /No indexed symbols/);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: shows caller list when a touched symbol is called by another', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'util.ts'), 'export function add(a: number, b: number) { return a + b; }\n');
+    fs.writeFileSync(path.join(root, 'src', 'main.ts'), 'import { add } from "./util"; export function run() { return add(1, 2); }\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    // Modify util.ts (the callee file)
+    fs.writeFileSync(
+      path.join(root, 'src', 'util.ts'),
+      'export function add(a: number, b: number) { return a + b; }\nexport function sub(a: number, b: number) { return a - b; }\n',
+    );
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add sub']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const handlers = buildReviewPackHandlers(config, () => index);
+    const result = handlers.jambavan_review_pack({ base: 'main' });
+
+    // add is called by run in main.ts — Callers section should appear
+    assert.match(result, /Callers:/);
   } finally { cleanup(); }
 });

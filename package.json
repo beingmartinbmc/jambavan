@@ -2,13 +2,19 @@
   "name": "jambavan",
   "version": "0.5.2",
   "license": "MIT",
-  "description": "Jambavan — an MCP server that awakens any coding model's latent powers: live code index, precise context, durable memory, a code knowledge graph, prompt compression, and guarded file/shell tools.",
+  "description": "Local-first MCP memory and codebase awareness for coding agents: indexed context, persistent memory, failure history, review packs, prompt compression, and a local graph GUI.",
   "main": "dist/index.js",
   "bin": {
     "jambavan": "dist/index.js"
   },
   "files": [
     "dist",
+    "assets/30-second-demo.gif",
+    "assets/30-second-demo.svg",
+    "assets/usage-screenshot.svg",
+    "assets/gui-screenshot.svg",
+    "examples",
+    ".github/social-preview.png",
     "ARCHITECTURE.md",
     "LICENSE"
   ],
@@ -17,7 +23,19 @@
     "model-context-protocol",
     "code-index",
     "tree-sitter",
-    "developer-tools"
+    "developer-tools",
+    "mcp-server",
+    "llm-memory",
+    "coding-agents",
+    "persistent-memory",
+    "prompt-compression",
+    "codebase-index",
+    "local-first",
+    "review-automation",
+    "agent-memory",
+    "claude-code",
+    "cursor",
+    "codex"
   ],
   "engines": {
     "node": ">=20 <27"
@@ -36,7 +54,7 @@
     "bench": "npm run build && node dist/benchmark.js",
     "tool-check": "npm run build && node dist/tool-check.js",
     "unit": "node --require ts-node/register --test test/*.test.ts",
-    "coverage": "node --require ts-node/register --experimental-test-coverage --test-coverage-include='src/context/token-counter.ts' --test-coverage-include='src/index/ast-parser.ts' --test-coverage-include='src/index/indexer.ts' --test-coverage-include='src/knowledge/graph.ts' --test-coverage-include='src/memory/store.ts' --test-coverage-include='src/tools/bash.ts' --test-coverage-include='src/tools/review-pack.ts' --test-coverage-include='src/tools/memory-bridge.ts' --test-coverage-include='src/tools/pr-handoff.ts' --test-coverage-include='src/tools/daemon.ts' --test-coverage-include='src/tools/gui.ts' --test-coverage-include='src/tools/path-guard.ts' --test-coverage-include='src/tools/read-file.ts' --test-coverage-include='src/tools/registry.ts' --test-coverage-include='src/tools/sankshipta.ts' --test-coverage-include='src/tools/write-file.ts' --test-coverage-lines=90 --test test/*.test.ts",
+    "coverage": "node --require ts-node/register --experimental-test-coverage --test-coverage-include='src/context/token-counter.ts' --test-coverage-include='src/index/ast-parser.ts' --test-coverage-include='src/index/indexer.ts' --test-coverage-include='src/knowledge/graph.ts' --test-coverage-include='src/memory/store.ts' --test-coverage-include='src/mcp/tool-aliases.ts' --test-coverage-include='src/tools/bash.ts' --test-coverage-include='src/tools/review-pack.ts' --test-coverage-include='src/tools/memory-bridge.ts' --test-coverage-include='src/tools/pr-handoff.ts' --test-coverage-include='src/tools/daemon.ts' --test-coverage-include='src/tools/gui.ts' --test-coverage-include='src/tools/path-guard.ts' --test-coverage-include='src/tools/read-file.ts' --test-coverage-include='src/tools/registry.ts' --test-coverage-include='src/tools/sankshipta.ts' --test-coverage-include='src/tools/write-file.ts' --test-coverage-lines=90 --test test/*.test.ts",
     "test": "npm run unit && npm run self-check && npm run tool-check",
     "prepack": "npm run build"
   },

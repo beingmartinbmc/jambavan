@@ -168,6 +168,9 @@ async function benchTools(): Promise<ToolTiming[]> {
   await bench('jambavan_vibhishana_niti', { mode: 'full' });
   await bench('jambavan_rin_mochan', {});
   await bench('jambavan_sankshipta', { path: 'notes.md', in_place: false });
+  await bench('dev_rules', { mode: 'full' });
+  await bench('debt_ledger', {});
+  await bench('compress_prompt', { path: 'notes.md', in_place: false });
 
   const stored = await benchOnce('jambavan_memory_store', { title: 'Bench fact', body: 'The sky is blue.', scope: 'bench' });
   const id = stored.match(/ID:\s*(\S+)/)?.[1] ?? 'bench/bench-fact';
@@ -198,6 +201,10 @@ async function benchTools(): Promise<ToolTiming[]> {
   await bench('jambavan_praman', { claim: 'all tests pass', type: 'tests' });
   await bench('jambavan_yukti', { task: 'add input validation to greet function' });
   await bench('jambavan_vibhaajan', { task: 'add auth module and notification service', units: 2 });
+  await bench('root_cause', { symptom: 'TypeError: Cannot read property of undefined', attempts_so_far: 1 });
+  await bench('verify_gate', { claim: 'all tests pass', type: 'tests' });
+  await bench('strategy_plan', { task: 'add input validation to greet function' });
+  await bench('decompose_task', { task: 'add auth module and notification service', units: 2 });
 
   await bench('read_file', { path: 'hello.ts' });
   await benchOnce('write_file', { path: 'scratch.txt', content: 'hi' });

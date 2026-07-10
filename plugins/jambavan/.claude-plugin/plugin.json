@@ -1,6 +1,6 @@
 {
   "name": "jambavan",
-  "description": "MCP server that awakens any coding model's latent powers. Tools: AST-aware code index (jambavan_index, jambavan_context, jambavan_watch, jambavan_diagnostics, jambavan_doctor), inferred code graph (jambavan_graph_report, jambavan_graph_query, jambavan_graph_path), prompt compression (jambavan_sankshipta), durable memory (jambavan_memory_store, jambavan_memory_search, jambavan_memory_recall, jambavan_memory_mine_session, jambavan_memory_invalidate, jambavan_memory_delete, jambavan_memory_status), session continuity (jambavan_failure_store, jambavan_failure_search, jambavan_session_export, jambavan_session_import, jambavan_review_pack), discipline protocols (jambavan_mool_kaaran, jambavan_praman, jambavan_yukti, jambavan_vibhaajan), dev workflow (jambavan_vibhishana_niti, jambavan_rin_mochan, jambavan_awaken), and guarded file/shell tools (read_file, search, list_files; write_file, patch_file, bash opt-in). The host model thinks; Jambavan gives it the ground to leap from.",
+  "description": "Local-first MCP server for coding agents: persistent memory, AST-aware code index, token-budgeted context, failure history, review packs, prompt compression, and a local graph GUI. Tools: code index (jambavan_index, jambavan_context, jambavan_watch, jambavan_diagnostics, jambavan_doctor), inferred code graph (jambavan_graph_report, jambavan_graph_query, jambavan_graph_path), prompt compression (compress_prompt alias for jambavan_sankshipta), durable memory (jambavan_memory_store, jambavan_memory_search, jambavan_memory_recall, jambavan_memory_mine_session, jambavan_memory_invalidate, jambavan_memory_delete, jambavan_memory_status), session continuity (jambavan_failure_store, jambavan_failure_search, jambavan_session_export, jambavan_session_import, jambavan_review_pack), discipline protocols (root_cause alias for jambavan_mool_kaaran, verify_gate alias for jambavan_praman, strategy_plan alias for jambavan_yukti, decompose_task alias for jambavan_vibhaajan), dev workflow (dev_rules alias for jambavan_vibhishana_niti, debt_ledger alias for jambavan_rin_mochan, jambavan_awaken), and guarded file/shell tools (read_file, search, list_files; write_file, patch_file, bash opt-in). It does not call an LLM or upload code; data stays local under .jambavan/ by default.",
   "version": "0.5.2",
   "author": {
     "name": "beingmartinbmc"
@@ -13,12 +13,26 @@
     "model-context-protocol",
     "code-index",
     "tree-sitter",
-    "developer-tools"
+    "developer-tools",
+    "mcp-server",
+    "llm-memory",
+    "coding-agents",
+    "persistent-memory",
+    "prompt-compression",
+    "local-first",
+    "review-automation",
+    "agent-memory",
+    "claude-code",
+    "cursor",
+    "codex"
   ],
   "mcpServers": {
     "jambavan": {
       "command": "npx",
-      "args": ["-y", "jambavan"]
+      "args": [
+        "-y",
+        "jambavan"
+      ]
     }
   }
 }

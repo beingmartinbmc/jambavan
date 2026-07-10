@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Jambavan terminal usage screenshot</title>
+  <desc id="desc">A terminal-style screenshot showing Jambavan install, doctor, index, context, and badges commands with representative output.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#312e81"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="720" rx="34" fill="url(#bg)"/>
+  <circle cx="990" cy="108" r="170" fill="#f59e0b" opacity="0.12"/>
+  <circle cx="160" cy="605" r="220" fill="#14b8a6" opacity="0.10"/>
+
+  <g filter="url(#shadow)">
+    <rect x="90" y="70" width="1020" height="580" rx="22" fill="#0b1020"/>
+    <rect x="90" y="70" width="1020" height="54" rx="22" fill="#151b2e"/>
+    <path d="M90 102 h1020 v22 h-1020 z" fill="#151b2e"/>
+    <circle cx="124" cy="98" r="8" fill="#ef4444"/>
+    <circle cx="154" cy="98" r="8" fill="#f59e0b"/>
+    <circle cx="184" cy="98" r="8" fill="#22c55e"/>
+    <text x="600" y="104" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#a7b0c8">jambavan usage</text>
+
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20">
+      <text x="124" y="168" fill="#60a5fa">$ claude mcp add jambavan -- npx -y jambavan</text>
+      <text x="124" y="204" fill="#94a3b8">Registered MCP server: jambavan</text>
+
+      <text x="124" y="258" fill="#60a5fa">$ npx jambavan doctor</text>
+      <text x="124" y="294" fill="#e5e7eb">## Jambavan Doctor</text>
+      <text x="124" y="330" fill="#94a3b8">Project root:     /repo/jambavan (source: env)</text>
+      <text x="124" y="366" fill="#94a3b8">Parser backends:  tree-sitter (6): typescript, javascript, python...</text>
+      <text x="124" y="402" fill="#94a3b8">Write tools:      disabled (default)</text>
+      <text x="124" y="438" fill="#94a3b8">Index:            not built (call jambavan_index)</text>
+
+      <text x="124" y="492" fill="#60a5fa">$ jambavan_index &amp;&amp; jambavan_context query="review pack"</text>
+      <text x="124" y="528" fill="#94a3b8">Indexed 43 files, 181 symbols in 164ms</text>
+      <text x="124" y="564" fill="#94a3b8">Context: ranked snippets, callers, tests, and recent diff under budget</text>
+
+      <text x="124" y="618" fill="#60a5fa">$ npx jambavan badges</text>
+      <text x="124" y="654" fill="#f8fafc">Benchmark saved context tokens | Rin Ledger clean | Failure Immunity 0</text>
+    </g>
+  </g>
+</svg>

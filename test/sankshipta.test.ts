@@ -3,6 +3,7 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as path from 'path';
 import { sankshiptaFile, sankshiptaText } from '../src/tools/sankshipta';
+import { countTokens, countTokensMany, truncateToTokenBudget } from '../src/context/token-counter';
 import { mkTempConfig } from '../test-support/config';
 
 test('sankshipta: drops filler words and shortens phrases', () => {
@@ -85,4 +86,27 @@ test('sankshiptaFile: backup can be skipped', () => {
     assert.match(out, /Backup: skipped/);
     assert.equal(fs.existsSync(path.join(root, 'notes.md.original.md')), false);
   } finally { cleanup(); }
+});
+
+test('truncateToTokenBudget: returns text unchanged when it fits within budget', () => {
+  const short = 'hello world';
+  assert.equal(truncateToTokenBudget(short, 1000), short);
+});
+
+test('truncateToTokenBudget: truncates and inserts a marker when text exceeds budget', () => {
+  // Generate a text that is definitely longer than 10 tokens.
+  const long = Array.from({ length: 50 }, (_, i) => `word${i}`).join(' ');
+  const result = truncateToTokenBudget(long, 10);
+  assert.match(result, /tokens truncated/);
+  assert.ok(result.length < long.length, 'truncated result must be shorter');
+});
+
+test('countTokensMany: sums token counts across an array of strings', () => {
+  const a = 'hello';
+  const b = 'world';
+  assert.equal(countTokensMany([a, b]), countTokens(a) + countTokens(b));
+});
+
+test('countTokensMany: empty array returns zero', () => {
+  assert.equal(countTokensMany([]), 0);
 });

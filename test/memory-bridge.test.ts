@@ -85,3 +85,34 @@ test('memory bridge: a stray non-frontmatter markdown file is skipped, not fatal
     dest.cleanup();
   }
 });
+
+test('memory bridge: exportToMemPalace uses the "technical" room for unknown memory types', () => {
+  const source = mkTempConfig();
+  const bridgeDir = fs.mkdtempSync(path.join(source.root, 'bridge-'));
+  try {
+    new MemoryStore(source.config.memoryDir).store({
+      title: 'A plain memory',
+      body: 'Just a note.',
+      scope: 'proj',
+      // type defaults to 'Memory' — not in TYPE_TO_ROOM → should land in 'technical'
+    });
+
+    const result = exportToMemPalace(source.config, bridgeDir);
+    assert.equal(result.files, 1);
+    assert.ok(fs.existsSync(path.join(bridgeDir, 'proj', 'technical')));
+  } finally { source.cleanup(); }
+});
+
+test('memory bridge: exportToMemPalace with a scope filter only exports matching docs', () => {
+  const source = mkTempConfig();
+  const bridgeDir = fs.mkdtempSync(path.join(source.root, 'bridge-'));
+  try {
+    const store = new MemoryStore(source.config.memoryDir);
+    store.store({ title: 'In scope', body: 'yes', scope: 'alpha', type: 'Decision', tags: [] });
+    store.store({ title: 'Out of scope', body: 'no', scope: 'beta', type: 'Decision', tags: [] });
+
+    const result = exportToMemPalace(source.config, bridgeDir, 'alpha');
+    assert.equal(result.files, 1);
+    assert.deepEqual(result.wings, ['alpha']);
+  } finally { source.cleanup(); }
+});

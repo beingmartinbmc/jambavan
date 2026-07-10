@@ -15,6 +15,8 @@
  */
 
 import { execSync } from 'child_process';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 
 // ── Ruleset ───────────────────────────────────────────────────────────────────
@@ -117,6 +119,17 @@ export interface RinMarker {
   hasUpgrade: boolean;
 }
 
+function isInsideBacktickString(projectRoot: string, file: string, lineNumber: number): boolean {
+  if (!/\.[cm]?[jt]sx?$/.test(file)) return false;
+  try {
+    const lines = readFileSync(join(projectRoot, file), 'utf8').split('\n').slice(0, lineNumber - 1);
+    const before = lines.join('\n').replace(/\\`/g, '');
+    return (before.match(/`/g)?.length ?? 0) % 2 === 1;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Grep the project for rin comments and return a structured ledger.
  * Recognises `// rin:` markers.
@@ -143,8 +156,9 @@ export function harvestRin(config: JambavanConfig): { markers: RinMarker[]; raw:
   const markers: RinMarker[] = [];
 
   for (const line of raw.split('\n').filter(Boolean)) {
-    const m = line.match(/^([^:]+):(\d+):[^`"]*(?:\/\/|#|\*)\s*rin:\s*(.+)$/i);
+    const m = line.match(/^([^:]+):(\d+):\s*(?:\/\/|#|\*)\s*rin:\s*(.+)$/i);
     if (!m) continue;
+    if (isInsideBacktickString(config.projectRoot, m[1], Number(m[2]))) continue;
     const comment = m[3].trim();
     // A comment has an upgrade path if it names a trigger: comma, "if", "when", "until"
     const hasUpgrade = /,|if\s|when\s|until\s/i.test(comment);

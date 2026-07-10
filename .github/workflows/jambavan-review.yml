@@ -32,6 +32,7 @@ jobs:
           node dist/index.js review-pack \
             --base "origin/${{ github.event.pull_request.base.ref }}" \
             --format json \
+            --max-files 200 \
             > /tmp/review-pack.json
         env:
           JAMBAVAN_ROOT: ${{ github.workspace }}
@@ -84,11 +85,16 @@ jobs:
             }
 
             function buildComment(pack, pr) {
+              const touched = pack.touchedCount ?? 0;
+              const analyzed = pack.analyzedCount ?? pack.files?.length ?? 0;
+              const fileSummary = pack.truncated
+                ? `${touched} (analyzed ${analyzed})`
+                : `${touched}`;
               const lines = [
                 MARKER,
                 '## 🐻 Jambavan Review Pack',
                 '',
-                `**Base:** \`${pack.base || pr.base.ref}\`  ·  **Touched files:** ${pack.touchedCount ?? 0}`,
+                `**Base:** \`${pack.base || pr.base.ref}\`  ·  **Touched files:** ${fileSummary}`,
                 '',
               ];
 

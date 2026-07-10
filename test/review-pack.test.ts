@@ -8,6 +8,7 @@ import { JambavanIndex } from '../src/index/indexer';
 import { MemoryStore } from '../src/memory/store';
 import { projectScope } from '../src/tools/jambavan';
 import { buildReviewPackHandlers } from '../src/tools/review-pack';
+import { buildReviewPackJson } from '../src/tools/review-pack-json';
 
 function git(root: string, args: string[]): void {
   execFileSync('git', args, { cwd: root });
@@ -225,6 +226,95 @@ test('jambavan_review_pack: max_files limits depth of analysis', async () => {
     const result = handlers.jambavan_review_pack({ base: 'main', max_files: 1 });
 
     assert.match(result, /analyzing first 1/);
+  } finally { cleanup(); }
+});
+
+test('jambavan review-pack JSON reports when file analysis is truncated', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    for (let i = 1; i <= 3; i++) {
+      fs.writeFileSync(path.join(root, 'src', `json${i}.ts`), `export function json${i}() { return ${i}; }\n`);
+    }
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add json files']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const pack = buildReviewPackJson(config, index, 'main', 1);
+
+    assert.equal(pack.touchedCount, 3);
+    assert.equal(pack.analyzedCount, 1);
+    assert.equal(pack.truncated, true);
+    assert.equal(pack.files.length, 1);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: rin markers inside fixture strings are ignored', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'test', 'fixture.test.ts'),
+      "const fixture = '// rin: this is test data, not debt';\n",
+    );
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add fixture']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const handlers = buildReviewPackHandlers(config, () => index);
+    const result = handlers.jambavan_review_pack({ base: 'main' });
+    const pack = buildReviewPackJson(config, index, 'main');
+
+    assert.doesNotMatch(result, /has open rin debt marker/);
+    assert.equal(pack.rinMarkers.length, 0);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: test files are not flagged for missing matching tests', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'test', 'helper.test.ts'), 'export function helper() { return 1; }\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add test helper']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const handlers = buildReviewPackHandlers(config, () => index);
+    const result = handlers.jambavan_review_pack({ base: 'main' });
+    const pack = buildReviewPackJson(config, index, 'main');
+
+    assert.doesNotMatch(result, /no symbol in this file has a matching test/);
+    assert.ok(!pack.files.some(f => f.risks.includes('no symbol in this file has a matching test')));
   } finally { cleanup(); }
 });
 

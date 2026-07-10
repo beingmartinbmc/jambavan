@@ -11,7 +11,7 @@ import * as path from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 import type { JambavanIndex } from '../index/indexer';
 import { buildSymbolGraph, type GraphNode } from '../knowledge/graph';
-import { buildTestMap } from '../index/test-map';
+import { buildTestMap, isTestFile } from '../index/test-map';
 import { harvestRin } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
 import { projectScope } from './jambavan';
@@ -57,6 +57,8 @@ export interface ReviewPackFailureRef {
 export interface ReviewPackJson {
   base:         string;
   touchedCount: number;
+  analyzedCount: number;
+  truncated:    boolean;
   files:        ReviewPackFile[];
   rinMarkers:   { file: string; line: number; comment: string; hasUpgrade: boolean }[];
   failures:     ReviewPackFailureRef[];
@@ -85,7 +87,15 @@ export function buildReviewPackJson(
     .filter(f => f.path);
 
   if (touched.length === 0) {
-    return { base: resolvedBase, touchedCount: 0, files: [], rinMarkers: [], failures: [] };
+    return {
+      base:          resolvedBase,
+      touchedCount:  0,
+      analyzedCount: 0,
+      truncated:     false,
+      files:         [],
+      rinMarkers:    [],
+      failures:      [],
+    };
   }
 
   const analyzed = touched.slice(0, maxFiles);
@@ -111,6 +121,7 @@ export function buildReviewPackJson(
 
   for (const file of analyzed) {
     const absPath = path.join(root, file.path);
+    const isTest = isTestFile(absPath);
     const fileSymbols = file.status === 'D' ? [] : index.getFileSymbols(absPath);
 
     const symbols: ReviewPackSymbol[] = fileSymbols.map(sym => {
@@ -129,7 +140,7 @@ export function buildReviewPackJson(
 
     const risks: string[] = [];
     if (rinByFile.has(file.path)) risks.push('has open rin debt marker(s)');
-    if (fileSymbols.length > 0 && !symbols.some(s => s.tests.length > 0)) {
+    if (!isTest && fileSymbols.length > 0 && !symbols.some(s => s.tests.length > 0)) {
       risks.push('no symbol in this file has a matching test');
     }
     const ff = allFailures.filter(d => d.body.includes(file.path));
@@ -149,8 +160,10 @@ export function buildReviewPackJson(
     }));
 
   return {
-    base:         resolvedBase,
-    touchedCount: touched.length,
+    base:          resolvedBase,
+    touchedCount:  touched.length,
+    analyzedCount: files.length,
+    truncated:     touched.length > analyzed.length,
     files,
     rinMarkers:   rinMarkers
       .filter(m => touchedPaths.has(m.file.replace(/^\.\//, '')))

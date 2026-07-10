@@ -21,13 +21,15 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install jambavan
-        run: npm install --global jambavan@latest
+      - name: Build jambavan from source
+        run: |
+          npm ci
+          npm run build
 
       - name: Run jambavan review pack
         id: pack
         run: |
-          npx jambavan review-pack \
+          node dist/index.js review-pack \
             --base "origin/${{ github.event.pull_request.base.ref }}" \
             --format json \
             > /tmp/review-pack.json
@@ -39,11 +41,18 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            let raw;
+            try {
+              raw = fs.readFileSync('/tmp/review-pack.json', 'utf8');
+            } catch (err) {
+              core.setFailed(`Review pack output missing at /tmp/review-pack.json — the review-pack step did not produce a file. ${err.message}`);
+              return;
+            }
             let pack;
             try {
-              pack = JSON.parse(fs.readFileSync('/tmp/review-pack.json', 'utf8'));
-            } catch {
-              console.log('No review pack output — index may not have run. Skipping comment.');
+              pack = JSON.parse(raw);
+            } catch (err) {
+              core.setFailed(`Review pack output is not valid JSON: ${err.message}\n--- first 500 chars ---\n${raw.slice(0, 500)}`);
               return;
             }
 

@@ -1,6 +1,6 @@
 {
   "name": "jambavan",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "license": "MIT",
   "description": "Local-first MCP memory and codebase awareness for coding agents: indexed context, persistent memory, failure history, review packs, prompt compression, and a local graph GUI.",
   "main": "dist/index.js",

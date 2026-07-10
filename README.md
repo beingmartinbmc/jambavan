@@ -230,7 +230,7 @@ Cursor config with all workarounds applied:
         "-y",
         "--registry=https://registry.npmjs.org",
         "--before=",
-        "jambavan@0.5.2"
+        "jambavan@0.5.3"
       ],
       "env": { "PATH": "/abs/path/to/node/dir:/usr/bin:/bin" }
     }
@@ -247,7 +247,7 @@ Claude Code `.claude.json` uses the same shape. Put npm policy overrides and the
   "mcpServers": {
     "jambavan": {
       "command": "/abs/path/to/node",
-      "args": ["/abs/path/to/npm/bin/npx-cli.js", "-y", "jambavan@0.5.2"],
+      "args": ["/abs/path/to/npm/bin/npx-cli.js", "-y", "jambavan@0.5.3"],
       "env": {
         "PATH": "/abs/path/to/node/dir:/usr/bin:/bin",
         "npm_config_registry": "https://registry.npmjs.org",

@@ -1,7 +1,7 @@
 {
   "name": "jambavan",
   "description": "Local-first MCP server for coding agents: persistent memory, AST-aware code index, token-budgeted context, failure history, review packs, prompt compression, and a local graph GUI. Tools: code index (jambavan_index, jambavan_context, jambavan_watch, jambavan_diagnostics, jambavan_doctor), inferred code graph (jambavan_graph_report, jambavan_graph_query, jambavan_graph_path), prompt compression (compress_prompt alias for jambavan_sankshipta), durable memory (jambavan_memory_store, jambavan_memory_search, jambavan_memory_recall, jambavan_memory_mine_session, jambavan_memory_invalidate, jambavan_memory_delete, jambavan_memory_status), session continuity (jambavan_failure_store, jambavan_failure_search, jambavan_session_export, jambavan_session_import, jambavan_review_pack), discipline protocols (root_cause alias for jambavan_mool_kaaran, verify_gate alias for jambavan_praman, strategy_plan alias for jambavan_yukti, decompose_task alias for jambavan_vibhaajan), dev workflow (dev_rules alias for jambavan_vibhishana_niti, debt_ledger alias for jambavan_rin_mochan, jambavan_awaken), and guarded file/shell tools (read_file, search, list_files; write_file, patch_file, bash opt-in). It does not call an LLM or upload code; data stays local under .jambavan/ by default.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "author": {
     "name": "beingmartinbmc"
   },

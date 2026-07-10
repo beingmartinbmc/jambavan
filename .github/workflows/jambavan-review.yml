@@ -41,6 +41,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const MARKER = '<!-- jambavan-review -->';
             let raw;
             try {
               raw = fs.readFileSync('/tmp/review-pack.json', 'utf8');
@@ -64,7 +65,6 @@ jobs:
               issue_number: context.issue.number,
             });
 
-            const MARKER = '<!-- jambavan-review -->';
             const existing = comments.find(c => c.body && c.body.includes(MARKER));
 
             if (existing) {

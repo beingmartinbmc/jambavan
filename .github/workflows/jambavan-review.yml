@@ -3,6 +3,18 @@ name: Jambavan PR Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_call:
+    inputs:
+      base_ref:
+        type: string
+        default: main
+      pr_number:
+        type: number
+        default: 0
+      package_version:
+        description: Published jambavan version or latest
+        type: string
+        default: latest
 
 permissions:
   contents: read
@@ -19,30 +31,41 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
-      - name: Build jambavan from source
-        run: |
-          npm ci
-          npm run build
-
-      - name: Run jambavan review pack
+      - name: Run published jambavan review pack
         id: pack
         run: |
-          node dist/index.js review-pack \
-            --base "origin/${{ github.event.pull_request.base.ref }}" \
+          if [[ ! "$PACKAGE_VERSION" =~ ^(latest|[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
+            echo "Invalid package_version: $PACKAGE_VERSION" >&2
+            exit 1
+          fi
+          npx --yes "jambavan@$PACKAGE_VERSION" review-pack \
+            --base "origin/$BASE_REF" \
             --format json \
             --max-files 200 \
             > /tmp/review-pack.json
         env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || inputs.base_ref }}
+          PACKAGE_VERSION: ${{ inputs.package_version || 'latest' }}
           JAMBAVAN_ROOT: ${{ github.workspace }}
 
       - name: Post or update PR comment
+        if: >-
+          github.actor != 'dependabot[bot]' &&
+          (
+            (github.event.pull_request.number > 0 && github.event.pull_request.head.repo.full_name == github.repository) ||
+            (!github.event.pull_request.number && inputs.pr_number > 0)
+          )
         uses: actions/github-script@v7
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || inputs.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
         with:
           script: |
             const fs = require('fs');
             const MARKER = '<!-- jambavan-review -->';
+            const baseRef = process.env.BASE_REF;
+            const prNumber = Number(process.env.PR_NUMBER);
             let raw;
             try {
               raw = fs.readFileSync('/tmp/review-pack.json', 'utf8');
@@ -58,12 +81,12 @@ jobs:
               return;
             }
 
-            const body = buildComment(pack, context.payload.pull_request);
+            const body = buildComment(pack, baseRef);
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo:  context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: prNumber,
             });
 
             const existing = comments.find(c => c.body && c.body.includes(MARKER));
@@ -79,12 +102,12 @@ jobs:
               await github.rest.issues.createComment({
                 owner:       context.repo.owner,
                 repo:        context.repo.repo,
-                issue_number: context.issue.number,
+                issue_number: prNumber,
                 body,
               });
             }
 
-            function buildComment(pack, pr) {
+            function buildComment(pack, baseRef) {
               const touched = pack.touchedCount ?? 0;
               const analyzed = pack.analyzedCount ?? pack.files?.length ?? 0;
               const fileSummary = pack.truncated
@@ -94,7 +117,7 @@ jobs:
                 MARKER,
                 '## 🐻 Jambavan Review Pack',
                 '',
-                `**Base:** \`${pack.base || pr.base.ref}\`  ·  **Touched files:** ${fileSummary}`,
+                `**Base:** \`${pack.base || baseRef}\`  ·  **Touched files:** ${fileSummary}`,
                 '',
               ];
 
@@ -134,7 +157,7 @@ jobs:
               }
 
               if (pack.failures?.length) {
-                lines.push('### Failure Immunity');
+                lines.push('### Failure Memory');
                 for (const f of pack.failures) {
                   lines.push(`- **${f.title}** — ${f.status}`);
                 }
@@ -142,6 +165,6 @@ jobs:
               }
 
               lines.push('---');
-              lines.push(`<sub>Analyzed by [Jambavan](https://github.com/sharma-ankit2/jambavan) · local-first MCP memory for coding agents · no LLM calls · no telemetry</sub>`);
+              lines.push(`<sub>Analyzed by [Jambavan](https://github.com/beingmartinbmc/jambavan) · local-first MCP memory for coding agents · no LLM calls · no telemetry</sub>`);
               return lines.join('\n');
             }

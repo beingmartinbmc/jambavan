@@ -8,14 +8,17 @@
  */
 
 import { execFileSync } from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 import type { JambavanIndex } from '../index/indexer';
 import { buildSymbolGraph, type GraphNode } from '../knowledge/graph';
-import { buildTestMap, formatTestAssociations, isTestFile } from '../index/test-map';
+import { buildTestMap, formatTestAssociations, isTestFile, testAssociationsFor } from '../index/test-map';
 import { harvestRin } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
 import { projectScope } from './jambavan';
+import { changedSymbols, parseChangedRanges, parseNameStatus, type ChangedFile } from './changed-symbols';
+import { MAX_READ_BYTES } from './read-file';
 
 const DEFAULT_MAX_FILES = 20;
 const BASE_CANDIDATES = ['main', 'master', 'origin/main', 'origin/master'];
@@ -30,7 +33,7 @@ function git(root: string, args: string[]): string {
   });
 }
 
-function detectBaseBranch(root: string): string {
+export function detectBaseBranch(root: string): string {
   for (const candidate of BASE_CANDIDATES) {
     try {
       git(root, ['rev-parse', '--verify', '--quiet', candidate]);
@@ -42,21 +45,43 @@ function detectBaseBranch(root: string): string {
   return 'main'; // no candidate resolved; surface the real git error at diff time
 }
 
-interface TouchedFile {
-  status: string;
-  path: string;
-}
+export function getChangedFiles(root: string, base: string, includeWorktree = false): ChangedFile[] {
+  const touched = parseNameStatus(git(root, ['diff', '--find-renames', '--name-status', `${base}...HEAD`]));
+  const ranges = parseChangedRanges(git(root, ['diff', '--find-renames', '--unified=0', `${base}...HEAD`]));
+  const byPath = new Map(touched.map(file => [file.path, file]));
 
-function getTouchedFiles(root: string, base: string): TouchedFile[] {
-  const raw = git(root, ['diff', '--name-status', `${base}...HEAD`]);
-  return raw
-    .split('\n')
-    .filter(Boolean)
-    .map(line => {
-      const [status, ...rest] = line.split('\t');
-      return { status, path: rest.join('\t') };
-    })
-    .filter(f => f.path);
+  if (includeWorktree) {
+    for (const file of parseNameStatus(git(root, ['diff', '--find-renames', '--name-status', 'HEAD']))) {
+      const existing = byPath.get(file.path);
+      if (existing) {
+        if (existing.status !== file.status) existing.status = `${existing.status}+${file.status}`;
+      } else {
+        byPath.set(file.path, file);
+      }
+    }
+    for (const [file, additions] of parseChangedRanges(git(root, ['diff', '--find-renames', '--unified=0', 'HEAD']))) {
+      ranges.set(file, [...(ranges.get(file) ?? []), ...additions]);
+    }
+    for (const file of git(root, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean)) {
+      let lineCount = 0;
+      try {
+        const absolute = path.join(root, file);
+        if (fs.statSync(absolute).size <= MAX_READ_BYTES) {
+          lineCount = fs.readFileSync(absolute, 'utf-8').split('\n').length;
+        }
+      } catch {
+        // Keep the touched-file entry; unreadable/binary files simply have no
+        // source line ranges to intersect with indexed symbols.
+      }
+      byPath.set(file, {
+        status: '??',
+        path: file,
+        ranges: lineCount > 0 ? [{ start: 1, end: lineCount }] : [],
+      });
+    }
+  }
+
+  return [...byPath.values()].map(file => ({ ...file, ranges: ranges.get(file.path) ?? file.ranges }));
 }
 
 export const REVIEW_PACK_TOOL_DEFS = [
@@ -80,6 +105,10 @@ export const REVIEW_PACK_TOOL_DEFS = [
           type: 'number',
           description: `Max touched files to analyze in depth (default: ${DEFAULT_MAX_FILES}).`,
         },
+        include_worktree: {
+          type: 'boolean',
+          description: 'Also include staged, unstaged, and untracked working-tree changes (default: false).',
+        },
       },
       required: [],
     },
@@ -92,10 +121,11 @@ export function buildReviewPackHandlers(config: JambavanConfig, getIndex: () => 
       const root = config.projectRoot;
       const base = typeof input['base'] === 'string' && input['base'] ? input['base'] : detectBaseBranch(root);
       const maxFiles = typeof input['max_files'] === 'number' && input['max_files'] > 0 ? input['max_files'] : DEFAULT_MAX_FILES;
+      const includeWorktree = input['include_worktree'] === true;
 
-      let touched: TouchedFile[];
+      let touched: ChangedFile[];
       try {
-        touched = getTouchedFiles(root, base);
+        touched = getChangedFiles(root, base, includeWorktree);
       } catch (err) {
         const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
         return `Error: could not diff against base "${base}" (${msg}). Pass an explicit \`base\` ref, or ensure this is a git repo with that ref available.`;
@@ -138,7 +168,9 @@ export function buildReviewPackHandlers(config: JambavanConfig, getIndex: () => 
       for (const file of analyzed) {
         const absPath = path.join(root, file.path);
         const isTest = isTestFile(absPath);
-        const fileSymbols = file.status === 'D' ? [] : index.getFileSymbols(absPath);
+        const fileSymbols = file.status === 'D'
+          ? []
+          : changedSymbols(index.getFileSymbols(absPath), file.ranges);
 
         sections.push(`## ${file.status}\t${file.path}`);
 
@@ -160,15 +192,16 @@ export function buildReviewPackHandlers(config: JambavanConfig, getIndex: () => 
               const more = callers.length > 5 ? `, +${callers.length - 5} more` : '';
               sections.push(`  Callers: ${names.join(', ')}${more}`);
             }
-            const testNote = formatTestAssociations(testMap.get(sym.name) ?? []);
+            const testNote = formatTestAssociations(testAssociationsFor(testMap, sym, config));
             if (testNote) sections.push(`  ${testNote.replace(/\n/g, '\n  ')}`);
           }
         }
 
         const risks: string[] = [];
         if (rinByFile.has(file.path)) risks.push('has open rin debt marker(s)');
-        if (!isTest && fileSymbols.length > 0 && !fileSymbols.some(s => (testMap.get(s.name) ?? []).length > 0)) {
-          risks.push('no symbol in this file has a matching test');
+        const untested = fileSymbols.filter(s => testAssociationsFor(testMap, s, config).length === 0);
+        if (!isTest && untested.length > 0) {
+          risks.push(`${untested.length} changed symbol(s) have no matching test`);
         }
         const fileFailures = failures.filter(d => d.body.includes(file.path));
         if (fileFailures.length > 0) risks.push(`${fileFailures.length} past failure record(s) mention this file`);

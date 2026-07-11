@@ -96,12 +96,12 @@ async function main(): Promise<void> {
   ], config);
   assert.match(graphReport(graph), /EXTRACTED edges/);
   assert.ok(graph.edges.some(e => e.type === 'call' && e.confidence === 'EXTRACTED'));
-  // Token-containment inference: gamma's body mentions `alpha` with no explicit ref.
+  // Body-token mentions are not structural graph facts.
   const inferGraph = buildSymbolGraph([
     { name: 'alpha', type: 'function', filePath: path.join(projectRoot, 'a.ts'), startLine: 1, endLine: 1, content: 'function alpha() { return 1; }' },
     { name: 'gamma', type: 'function', filePath: path.join(projectRoot, 'g.ts'), startLine: 1, endLine: 1, content: 'function gamma() { return alpha + 2; }' },
   ], config);
-  assert.ok(inferGraph.edges.some(e => e.type === 'mentions' && e.confidence === 'INFERRED'));
+  assert.equal(inferGraph.edges.filter(e => e.type !== 'contains').length, 0);
   assert.match(graphQuery(graph, 'alpha'), /call\/EXTRACTED/);
   assert.match(graphPath(graph, 'alpha', 'beta'), /via call\/EXTRACTED/);
 

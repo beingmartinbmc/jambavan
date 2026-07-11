@@ -6,7 +6,26 @@ import type { RegisteredTool } from './registry';
 import { resolveInsideRoot } from './path-guard';
 
 const execFileAsync = promisify(execFile);
-const PWD_MARKER = '\n__JAMBAVAN_PWD__';
+const PWD_MARKER = '__JAMBAVAN_PWD__';
+
+export function shellInvocation(command: string, platform = process.platform): { file: string; args: string[] } {
+  if (platform === 'win32') {
+    return {
+      file: 'powershell.exe',
+      args: [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$ErrorActionPreference='Stop'; $env:NO_COLOR='1'; $env:FORCE_COLOR='0'; ${command}; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Write-Output "${PWD_MARKER}$((Get-Location).Path)"`,
+      ],
+    };
+  }
+  return {
+    file: '/bin/sh',
+    args: ['-c', `set -e\nexport NO_COLOR=1 FORCE_COLOR=0\n${command}\nprintf '\\n${PWD_MARKER}%s' "$(pwd -P)"`],
+  };
+}
 
 // bash inherits nothing by default — a minimal env avoids leaking the host's
 // secrets/tokens into arbitrary shell commands. Opt back in with JAMBAVAN_BASH_INHERIT_ENV=1.
@@ -16,7 +35,10 @@ function quietEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 function minimalEnv(): NodeJS.ProcessEnv {
   if (process.env.JAMBAVAN_BASH_INHERIT_ENV === '1') return quietEnv(process.env);
-  const keep = ['PATH', 'HOME', 'SHELL', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'USER'];
+  const keep = [
+    'PATH', 'HOME', 'SHELL', 'LANG', 'LC_ALL', 'TERM', 'TMPDIR', 'USER',
+    'SystemRoot', 'SYSTEMROOT', 'PATHEXT', 'USERPROFILE', 'TEMP', 'TMP', 'COMSPEC',
+  ];
   const env: NodeJS.ProcessEnv = {};
   for (const k of keep) if (process.env[k] !== undefined) env[k] = process.env[k];
   return quietEnv(env);
@@ -67,6 +89,7 @@ export function createBashTool(config: JambavanConfig): RegisteredTool {
         'The process starts in cwd, which is confined to the project root unless JAMBAVAN_ALLOW_OUTSIDE_ROOT=1.',
         'This is not a sandbox: commands can still read/write outside via absolute paths or child processes.',
         'Commands that finish outside the project root are reported as failures.',
+        'Exact unresolved FailureRecords are blocked at the server boundary unless retry_known_failure=true; new failures are recorded automatically.',
         'Avoid interactive or destructive commands.',
       ].join(' '),
       parameters: {
@@ -75,6 +98,10 @@ export function createBashTool(config: JambavanConfig): RegisteredTool {
           command: { type: 'string', description: 'Shell command to run' },
           cwd:     { type: 'string', description: 'Working directory (defaults to project root)' },
           timeout: { type: 'number', description: 'Timeout in milliseconds (default: 30000)' },
+          retry_known_failure: {
+            type: 'boolean',
+            description: 'Deliberately retry an exact unresolved FailureRecord after changing conditions (default: false).',
+          },
         },
         required: ['command'],
       },
@@ -82,7 +109,10 @@ export function createBashTool(config: JambavanConfig): RegisteredTool {
     async handler(input) {
       const command = input['command'] as string;
       const cwd     = resolveInsideRoot(input['cwd'] as string | undefined, config);
-      const timeout = (input['timeout'] as number | undefined) ?? 30_000;
+      const requestedTimeout = Number(input['timeout'] ?? 30_000);
+      const timeout = Number.isFinite(requestedTimeout)
+        ? Math.max(100, Math.min(300_000, Math.floor(requestedTimeout)))
+        : 30_000;
 
       for (const pattern of [...FOOTGUN_PATTERNS, projectWipePattern(config)]) {
         if (pattern.test(command)) {
@@ -95,9 +125,10 @@ export function createBashTool(config: JambavanConfig): RegisteredTool {
       }
 
       try {
+        const invocation = shellInvocation(command);
         const { stdout, stderr } = await execFileAsync(
-          '/bin/sh',
-          ['-c', `set -e\nexport NO_COLOR=1 FORCE_COLOR=0\n${command}\nprintf '${PWD_MARKER}%s' "$(pwd -P)"`],
+          invocation.file,
+          invocation.args,
           {
             cwd,
             timeout,

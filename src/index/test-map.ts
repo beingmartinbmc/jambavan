@@ -24,6 +24,11 @@ export interface TestAssociation {
   confidence: 'import' | 'mention';
 }
 
+interface ImportedSymbol {
+  name: string;
+  specifier: string;
+}
+
 const TEST_FILE_PATTERNS = [
   /[/\\]test[/\\]/,
   /[/\\]__tests__[/\\]/,
@@ -102,31 +107,36 @@ export function buildTestMap(
       continue; // file may have been deleted since indexing
     }
 
-    // Extract import names (ES import { foo, bar } from ... and require destructure)
+    // Keep module specifiers: a same-named symbol in another file is not tested
+    // merely because one of its siblings was imported.
+    const imports: ImportedSymbol[] = [];
     const importNames = new Set<string>();
-    const importRe = /import\s+\{([^}]+)\}/g;
+    const importRe = /import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
     let m: RegExpExecArray | null;
     while ((m = importRe.exec(content)) !== null) {
       for (const name of m[1].split(',')) {
         const clean = name.trim().split(/\s+as\s+/)[0].trim();
-        if (clean) importNames.add(clean);
+        if (clean) {
+          importNames.add(clean);
+          imports.push({ name: clean, specifier: m[2] });
+        }
       }
     }
-    // Also catch default imports: import Foo from '...'
-    const defaultImportRe = /import\s+([A-Z]\w+)\s+from/g;
+    const defaultImportRe = /import\s+([A-Za-z_]\w*)\s+from\s+['"]([^'"]+)['"]/g;
     while ((m = defaultImportRe.exec(content)) !== null) {
       importNames.add(m[1]);
+      imports.push({ name: m[1], specifier: m[2] });
     }
 
     // Associate imported names with source symbols (high confidence)
-    for (const name of importNames) {
+    for (const { name, specifier } of imports) {
       if (!sourceByName.has(name)) continue;
+      const resolved = resolveImportedSource(testPath, specifier, sourceByName.get(name)!, config.projectRoot);
+      if (!resolved) continue;
       if (!result.has(name)) result.set(name, []);
-      for (const sourceFile of sourceByName.get(name)!) {
-        const existing = result.get(name)!;
-        if (!existing.some(a => a.testFile === testRel && a.sourceFile === sourceFile)) {
-          existing.push({ testFile: testRel, symbolName: name, sourceFile, confidence: 'import' });
-        }
+      const existing = result.get(name)!;
+      if (!existing.some(a => a.testFile === testRel && a.sourceFile === resolved)) {
+        existing.push({ testFile: testRel, symbolName: name, sourceFile: resolved, confidence: 'import' });
       }
     }
 
@@ -136,17 +146,44 @@ export function buildTestMap(
       if (name.length < 4) continue;
       if (importNames.has(name)) continue; // already handled with higher confidence
       if (!sourceByName.has(name)) continue;
+      const candidates = sourceByName.get(name)!;
+      if (candidates.length !== 1) continue; // ambiguous mentions are not coverage evidence
       if (!result.has(name)) result.set(name, []);
       const existing = result.get(name)!;
-      for (const sourceFile of sourceByName.get(name)!) {
-        if (!existing.some(a => a.testFile === testRel && a.sourceFile === sourceFile)) {
-          existing.push({ testFile: testRel, symbolName: name, sourceFile, confidence: 'mention' });
-        }
+      const sourceFile = candidates[0];
+      if (!existing.some(a => a.testFile === testRel && a.sourceFile === sourceFile)) {
+        existing.push({ testFile: testRel, symbolName: name, sourceFile, confidence: 'mention' });
       }
     }
   }
 
   return result;
+}
+
+function resolveImportedSource(
+  testPath: string,
+  specifier: string,
+  candidates: string[],
+  projectRoot: string,
+): string | undefined {
+  if (!specifier.startsWith('.')) return candidates.length === 1 ? candidates[0] : undefined;
+  const target = path.resolve(path.dirname(testPath), specifier);
+  return candidates.find(candidate => {
+    const absolute = path.resolve(projectRoot, candidate);
+    const withoutExtension = absolute.replace(/\.[^.\\/]+$/, '');
+    return absolute === target
+      || withoutExtension === target
+      || (path.basename(withoutExtension) === 'index' && path.dirname(withoutExtension) === target);
+  });
+}
+
+export function testAssociationsFor(
+  testMap: Map<string, TestAssociation[]>,
+  symbol: Pick<Symbol, 'name' | 'filePath'>,
+  config: JambavanConfig,
+): TestAssociation[] {
+  const sourceFile = path.relative(config.projectRoot, symbol.filePath).replace(/\\/g, '/');
+  return (testMap.get(symbol.name) ?? []).filter(association => association.sourceFile === sourceFile);
 }
 
 /**

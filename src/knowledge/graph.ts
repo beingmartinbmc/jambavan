@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 import type { Symbol, SymbolReference } from '../index/ast-parser';
-import type { ReExportRow } from '../index/indexer';
+import type { JambavanIndex, ReExportRow } from '../index/indexer';
 import { countTokens } from '../context/token-counter';
 import { truncateToTokenBudget } from '../context/token-counter';
 
@@ -17,7 +17,7 @@ export interface GraphNode {
 export interface GraphEdge {
   from: string;
   to: string;
-  type: 'contains' | 'mentions' | 'same_file' | SymbolReference['type'];
+  type: 'contains' | 'same_file' | SymbolReference['type'];
   confidence: 'EXTRACTED' | 'INFERRED';
   /** Human-readable explanation of why this edge exists — shown in graph_query/graph_path output. */
   reason: string;
@@ -28,7 +28,6 @@ export interface KnowledgeGraph {
   edges: GraphEdge[];
 }
 
-const MAX_INFERRED_MENTION_TARGETS_PER_NAME = 25;
 const MAX_REEXPORT_DEPTH = 5;
 
 function rel(filePath: string, config: JambavanConfig): string {
@@ -368,7 +367,8 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig, reEx
         }
       }
 
-      // Fallback: prefer same-file target, then fan out to all
+      // Fallback: prefer same-file target, then retain ambiguous candidates as
+      // inferred navigation hints rather than claiming resolver-backed truth.
       const sameFile = targets.filter(t => t !== from && nodeFile.get(t) === fromFile);
       if (sameFile.length > 0) {
         for (const to of sameFile) {
@@ -378,11 +378,11 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig, reEx
           });
         }
       } else {
-        // Fall back: link to all (original behavior)
+        // Fall back: link to all, but downgrade confidence.
         for (const to of targets) {
           if (to !== from) {
             edges.push({
-              from, to, type: ref.type, confidence: 'EXTRACTED',
+              from, to, type: ref.type, confidence: 'INFERRED',
               reason: `${ref.type} site — ambiguous fan-out, no import info or same-file match among ${targets.length} candidates named '${ref.name}'`,
             });
           }
@@ -391,36 +391,104 @@ export function buildSymbolGraph(symbols: Symbol[], config: JambavanConfig, reEx
     }
   }
 
-  // Tokenize each body once and look names up, instead of compiling and
-  // running a regex for every (symbol × distinct-name) pair. Word-boundary
-  // regex on an identifier == that identifier appearing as a token, so this
-  // is behavior-preserving but O(total tokens) instead of O(N²·regex).
-  for (const s of symbols) {
-    const from = symbolId(s, config);
-    const refNames = new Set((s.references ?? []).map(r => r.name));
-    for (const name of new Set(s.content.match(/[A-Za-z_]\w*/g) ?? [])) {
-      if (name === s.name || name.length < 3 || refNames.has(name)) continue;
-      const targets = symbolsByName.get(name) ?? [];
-      if (targets.length > MAX_INFERRED_MENTION_TARGETS_PER_NAME) continue;
-      for (const to of targets) {
-        if (to !== from) {
-          edges.push({
-            from, to, type: 'mentions', confidence: 'INFERRED',
-            reason: `name mention — '${name}' appears in ${s.name}'s body, ${targets.length} of max ${MAX_INFERRED_MENTION_TARGETS_PER_NAME} candidates`,
-          });
-        }
-      }
-    }
-  }
-
-  // rin: inferred fallback is capped symbol-name mentions; replace remaining non-AST edges when language resolvers grow.
   return { nodes: [...nodes.values()], edges: dedupeEdges(edges) };
 }
 
-export function graphReport(graph: KnowledgeGraph, max = 10): string {
+function symbolKey(symbol: Symbol): string {
+  return `${symbol.filePath}\0${symbol.name}\0${symbol.startLine}`;
+}
+
+/**
+ * Return a small set of resolver-backed callers/callees around lexical seeds.
+ * Search only builds the candidate pool; the graph's EXTRACTED call edges decide
+ * which candidates are structural neighbors.
+ */
+export function extractedStructuralNeighbors(
+  index: JambavanIndex,
+  config: JambavanConfig,
+  seeds: Symbol[],
+  limit = 6,
+): Symbol[] {
+  if (seeds.length === 0 || limit <= 0) return [];
+
+  const pool = new Map<string, Symbol>();
+  for (const seed of seeds) {
+    pool.set(symbolKey(seed), seed);
+    for (const result of index.search(seed.name, 20)) pool.set(symbolKey(result.symbol), result.symbol);
+    for (const ref of seed.references ?? []) {
+      if (ref.type !== 'call') continue;
+      for (const result of index.search(ref.name, 10)) pool.set(symbolKey(result.symbol), result.symbol);
+    }
+  }
+
+  const symbols = [...pool.values()];
+  const graph = buildSymbolGraph(symbols, config, index.getAllReExports());
+  const seedIds = new Set(seeds.map(seed => symbolId(seed, config)));
+  const neighborIds = new Set<string>();
+  for (const edge of graph.edges) {
+    if (edge.type !== 'call' || edge.confidence !== 'EXTRACTED') continue;
+    if (seedIds.has(edge.from) && !seedIds.has(edge.to)) neighborIds.add(edge.to);
+    if (seedIds.has(edge.to) && !seedIds.has(edge.from)) neighborIds.add(edge.from);
+  }
+
+  const byId = new Map(symbols.map(symbol => [symbolId(symbol, config), symbol]));
+  return [...neighborIds].map(id => byId.get(id)).filter((symbol): symbol is Symbol => Boolean(symbol)).slice(0, limit);
+}
+
+export function buildGraphNeighborhood(
+  index: JambavanIndex,
+  config: JambavanConfig,
+  queries: string[],
+  symbolLimit = 5000,
+): { graph: KnowledgeGraph; symbolCount: number; truncated: boolean } {
+  const limit = Math.max(100, Math.min(20_000, symbolLimit));
+  const selected = new Map<string, Symbol>();
+  const pending = queries.filter(Boolean);
+  const searched = new Set<string>();
+
+  while (pending.length > 0 && selected.size < limit) {
+    const query = pending.shift()!;
+    if (searched.has(query)) continue;
+    searched.add(query);
+    const remaining = limit - selected.size;
+    for (const result of index.search(query, Math.min(200, remaining))) {
+      const symbol = result.symbol;
+      const key = `${symbol.filePath}\0${symbol.name}\0${symbol.startLine}`;
+      if (selected.has(key)) continue;
+      selected.set(key, symbol);
+      if (searched.size <= 25) {
+        pending.push(symbol.name, ...(symbol.references ?? []).map(reference => reference.name));
+      }
+      if (selected.size >= limit) break;
+    }
+  }
+
+  return {
+    graph: buildSymbolGraph([...selected.values()], config, index.getAllReExports()),
+    symbolCount: selected.size,
+    truncated: pending.length > 0,
+  };
+}
+
+function visibleEdges(graph: KnowledgeGraph, includeInferred: boolean): GraphEdge[] {
+  return includeInferred ? graph.edges : graph.edges.filter(edge => edge.confidence === 'EXTRACTED');
+}
+
+function completenessLabel(includeInferred: boolean): string {
+  return includeInferred
+    ? 'Completeness: extracted + inferred edges (ambiguous inferred edges included).'
+    : 'Completeness: extracted edges only (inferred edges excluded by default; set include_inferred=true to opt in).';
+}
+
+function confidenceLabel(): string {
+  return 'Confidence: EXTRACTED edges are structural facts; INFERRED edges are ambiguous same-name candidates.';
+}
+
+export function graphReport(graph: KnowledgeGraph, max = 10, includeInferred = false): string {
+  const edges = visibleEdges(graph, includeInferred);
   const degree = new Map<string, number>();
   for (const node of graph.nodes) degree.set(node.id, 0);
-  for (const edge of graph.edges) {
+  for (const edge of edges) {
     degree.set(edge.from, (degree.get(edge.from) ?? 0) + 1);
     degree.set(edge.to, (degree.get(edge.to) ?? 0) + 1);
   }
@@ -435,27 +503,32 @@ export function graphReport(graph: KnowledgeGraph, max = 10): string {
       return `${i + 1}. ${n.label} (${n.type}, degree ${d})${loc}`;
     });
 
-  const inferred = graph.edges.filter(e => e.confidence === 'INFERRED').length;
+  const inferred = edges.filter(e => e.confidence === 'INFERRED').length;
   return [
     '# Jambavan Knowledge Graph Report',
     '',
     `Nodes: ${graph.nodes.length}`,
-    `Edges: ${graph.edges.length} (${inferred} inferred)`,
+    `Edges: ${edges.length} (${inferred} inferred)`,
+    completenessLabel(includeInferred),
     '',
     '## Hub nodes',
     hubs.length ? hubs.join('\n') : 'No nodes yet. Call jambavan_index first.',
     '',
     '## Confidence',
-    'EXTRACTED edges are structural/call/import facts. INFERRED edges are symbol-name mentions; verify before large refactors.',
+    confidenceLabel() + ' Verify inferred edges before large refactors.',
   ].join('\n');
 }
 
-function adjacency(graph: KnowledgeGraph): Map<string, string[]> {
+function adjacency(
+  graph: KnowledgeGraph,
+  direction: 'inbound' | 'outbound' | 'both' = 'both',
+  includeInferred = false,
+): Map<string, string[]> {
   const adj = new Map<string, string[]>();
   for (const n of graph.nodes) adj.set(n.id, []);
-  for (const e of graph.edges) {
-    adj.get(e.from)?.push(e.to);
-    adj.get(e.to)?.push(e.from);
+  for (const e of visibleEdges(graph, includeInferred)) {
+    if (direction !== 'inbound') adj.get(e.from)?.push(e.to);
+    if (direction !== 'outbound') adj.get(e.to)?.push(e.from);
   }
   return adj;
 }
@@ -474,11 +547,18 @@ function matchNodes(graph: KnowledgeGraph, query: string): GraphNode[] {
     .map(x => x.n);
 }
 
-export function graphQuery(graph: KnowledgeGraph, query: string, budget = 2000): string {
+export function graphQuery(
+  graph: KnowledgeGraph,
+  query: string,
+  budget = 2000,
+  direction: 'inbound' | 'outbound' | 'both' = 'both',
+  includeInferred = false,
+): string {
   const starts = matchNodes(graph, query).slice(0, 5);
   if (starts.length === 0) return `No graph nodes found for: "${query}"`;
 
-  const adj = adjacency(graph);
+  const edges = visibleEdges(graph, includeInferred);
+  const adj = adjacency(graph, direction, includeInferred);
   const selected = new Set(starts.map(n => n.id));
   const queue = starts.map(n => n.id);
 
@@ -493,27 +573,30 @@ export function graphQuery(graph: KnowledgeGraph, query: string, budget = 2000):
   }
 
   const byId = new Map(graph.nodes.map(n => [n.id, n]));
-  const edges = graph.edges.filter(e => selected.has(e.from) && selected.has(e.to));
+  const selectedEdges = edges.filter(e => selected.has(e.from) && selected.has(e.to));
   const text = [
-    `# Jambavan Graph Query: ${query}`,
+    `# Jambavan Graph Query: ${query} (${direction})`,
+    completenessLabel(includeInferred),
+    confidenceLabel(),
     '',
     '## Nodes',
     [...selected].map(id => nodeLine(byId.get(id)!)).join('\n'),
     '',
     '## Edges',
-    edges.length ? edges.map(e => edgeLine(e, byId)).join('\n') : 'No connecting edges in budget.',
+    selectedEdges.length ? selectedEdges.map(e => edgeLine(e, byId)).join('\n') : 'No connecting edges in budget.',
   ].join('\n');
 
   return countTokens(text) > budget ? truncateToTokenBudget(text, budget) : text;
 }
 
-export function graphPath(graph: KnowledgeGraph, fromQuery: string, toQuery: string): string {
+export function graphPath(graph: KnowledgeGraph, fromQuery: string, toQuery: string, includeInferred = false): string {
   const from = matchNodes(graph, fromQuery)[0];
   const to = matchNodes(graph, toQuery)[0];
   if (!from) return `No graph node found for from: "${fromQuery}"`;
   if (!to) return `No graph node found for to: "${toQuery}"`;
 
-  const adj = adjacency(graph);
+  const edges = visibleEdges(graph, includeInferred);
+  const adj = adjacency(graph, 'both', includeInferred);
   const prev = new Map<string, string | null>([[from.id, null]]);
   const queue = [from.id];
 
@@ -533,11 +616,16 @@ export function graphPath(graph: KnowledgeGraph, fromQuery: string, toQuery: str
   ids.reverse();
 
   const byId = new Map(graph.nodes.map(n => [n.id, n]));
-  const lines: string[] = [`# Jambavan Graph Path: ${from.label} → ${to.label}`, ''];
+  const lines: string[] = [
+    `# Jambavan Graph Path: ${from.label} → ${to.label}`,
+    completenessLabel(includeInferred),
+    confidenceLabel(),
+    '',
+  ];
   for (let i = 0; i < ids.length; i++) {
     lines.push(`${i + 1}. ${nodeLine(byId.get(ids[i])!)}`);
     if (i < ids.length - 1) {
-      const edge = graph.edges.find(e =>
+      const edge = edges.find(e =>
         (e.from === ids[i] && e.to === ids[i + 1]) || (e.to === ids[i] && e.from === ids[i + 1])
       );
       if (edge) lines.push(`   via ${edge.type}/${edge.confidence} — ${edge.reason}`);

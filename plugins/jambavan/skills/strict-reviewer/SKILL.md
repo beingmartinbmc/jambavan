@@ -9,14 +9,14 @@ Reviewing is not skimming for typos. Find what a lazy pass would miss: the wrong
 
 ## Step 1 — Get the real diff, not a guess
 
-If `jambavan_review_pack` is available, call it (against the PR's base branch). It gives you touched files, the symbols changed in each, their callers via the code graph, associated tests, past failure records mentioning the same files, and risk flags (open `// rin:` debt, no matching test) — the same data a careful human reviewer would gather by hand.
+If `jambavan_review_pack` is available, call it against the PR's base branch. It gives you touched files, indexed symbols changed in each, bounded extracted caller candidates, associated tests, past failure records mentioning the same files, and risk flags (open `// rin:` debt, no matching test). Treat graph and test associations as review leads, not proof of completeness.
 
 Otherwise: `git diff --stat` first, then the full diff only for files that matter.
 
 ## Step 2 — Root cause, not symptom
 
 - Is this a fix for the actual bug, or a patch on the path the ticket happened to name?
-- If a shared function was touched, were ALL callers checked? A guard added to one call site while a sibling caller stays broken is a review-blocking finding, not a nit.
+- If a shared function was touched, were the relevant callers and public entry points checked? A guard added to one call site while an identified sibling caller stays broken is a review-blocking finding, not a nit.
 - Does the change explain *why*, not just *what*? A diff that only patches the symptom should be flagged even if it "works."
 
 ## Step 3 — Scope discipline

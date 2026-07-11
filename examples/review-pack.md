@@ -65,3 +65,23 @@ The JSON shape is intended for automation:
 ```
 
 `rinMarkers` only includes rin debt in touched files. The bundled [Jambavan PR Review workflow](../.github/workflows/jambavan-review.yml) runs the JSON form on pull requests and updates one idempotent PR comment marked with `<!-- jambavan-review -->`.
+
+Downstream repositories can call that workflow without checking out or building Jambavan from source:
+
+```yaml
+name: Jambavan review
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    uses: beingmartinbmc/jambavan/.github/workflows/jambavan-review.yml@main
+    with:
+      package_version: 0.6.0
+```
+
+The called workflow runs the requested published package version (`latest` by default) with only repository-read and PR-comment permissions. Pin both `package_version` and the workflow reference to a release tag or commit SHA for reproducible or security-sensitive use. GitHub gives fork pull requests a read-only token, so their review pack can run but cannot post the comment.

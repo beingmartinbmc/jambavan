@@ -9,69 +9,65 @@
   <a href="https://github.com/beingmartinbmc/jambavan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/beingmartinbmc/jambavan/ci.yml?branch=main" alt="CI status"></a>
   <a href="https://bundlephobia.com/package/jambavan"><img src="https://img.shields.io/bundlephobia/minzip/jambavan" alt="bundle size"></a>
   <a href="https://www.npmjs.com/package/jambavan"><img src="https://img.shields.io/npm/dm/jambavan.svg" alt="downloads"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/jambavan.svg" alt="license"></a>
+  <a href="https://github.com/beingmartinbmc/jambavan/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/jambavan.svg" alt="license"></a>
 </p>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/assets/jambavan.png" alt="Ramayana-inspired Jambavan and Hanuman hero image showing local memory, codebase awareness, review packs, compact context, and privacy for MCP coding agents" width="920">
 </p>
 
-## The Story
+Jambavan is a local-first [Model Context Protocol](https://modelcontextprotocol.io) server. It gives Claude Code, Cursor, Codex, Continue, and other MCP hosts:
 
-In the Ramayana, Hanuman already had immense strength, but he had forgotten it. At the edge of the ocean, when the impossible leap to Lanka had to be made, Jambavan did not give Hanuman a new power. He reminded him of the power he already had.
+- ranked code-symbol context with bounded extracted callers/callees
+- durable project memories and portable session handoffs
+- failure records plus a repeat-failure guard for the opt-in shell tool
+- branch review context with explicit limits
 
-That is the use case for this project.
+It makes no LLM calls, sends no telemetry, and uploads no code. It does write its index, cache, memories, and failure records to local `.jambavan/` state. Source-mutating and shell MCP tools are off by default.
 
-Modern coding agents can reason, edit, test, review, and debug. What they forget is the ground beneath them: what this repo contains, which symbols call which code, what the last session decided, which fixes already failed, and what a reviewer needs to know before trusting a change. Jambavan is the local-first MCP layer that reminds the agent. It awakens repo memory and codebase awareness before the next leap.
-
-Use Jambavan when your agent:
-
-- rereads entire files because it lacks a durable code index
-- forgets decisions between sessions or between tools
-- retries the same failed command or dead-end patch
-- starts PR review from a raw file list instead of touched symbols, callers, tests, and risk
-- needs compact, local context without uploading code or calling another LLM
-
-## What It Is
-
-Jambavan is a local-first [Model Context Protocol](https://modelcontextprotocol.io) server for Claude Code, Cursor, Codex, Continue, and any MCP client. It gives coding agents a state layer:
-
-- **Codebase awareness** - AST-aware index, ranked context, callers, tests, recent diff, and a lightweight code graph.
-- **Durable memory** - human-readable project memories under `.jambavan/memory/`.
-- **Failure immunity** - searchable records of failed commands, root causes, and what not to retry.
-- **Review packs** - branch-aware review context: touched files, symbols, callers, tests, `rin` debt, and past failures.
-- **Prompt compression** - deterministic prose shortening that preserves code, paths, versions, and facts.
-- **Local GUI** - browser graph view for symbols, relationships, debt, and failure hotspots.
-
-No LLM calls. No telemetry. No code upload. Data stays local unless you explicitly move it.
-
-## 30-Second Demo
+## Quick start
 
 ```bash
 claude mcp add jambavan -- npx -y jambavan
 npx jambavan doctor
-# In your MCP host: jambavan_awaken -> jambavan_index -> jambavan_context "where is auth handled?"
 ```
 
-The model now has local repo context, previous decisions, and searchable failure history before it edits.
+Then ask the MCP host to call:
+
+```text
+jambavan_awaken {}
+jambavan_doctor {}
+jambavan_index {}
+jambavan_watch { "action": "start" }
+jambavan_context { "query": "where is auth handled?" }
+```
 
 <p align="center">
-  <img src="./assets/30-second-demo.gif" alt="30-second Jambavan demo showing registration, doctor, indexing, context retrieval, and failure recall" width="820">
+  <img src="https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/assets/30-second-demo.gif" alt="Illustrative under-30-second Jambavan storyboard showing connection, indexing, context retrieval, repeat-failure guard, impact analysis, and review pack" width="820">
+  <br>
+  <sub>Illustrative storyboard; exact output depends on the repository, host, and enabled tools.</sub>
 </p>
+
+## Why the name
+
+In the Ramayana, before Hanuman's leap across the ocean to Lanka, Jambavan reminds him of the strength he already possesses. This project borrows that reminder metaphor narrowly: it restores access to project knowledge that was already indexed or stored. It does not increase a model's intelligence or grant new reasoning ability.
+
+## What It Is
+
+Jambavan gives a host model a local project state layer:
+
+- **Codebase awareness** - AST-aware symbols, FTS5/BM25-ranked context with a LIKE fallback, optional tests/recent diff, and a lightweight code graph.
+- **Durable memory** - human-readable project memories under `.jambavan/memory/`.
+- **Failure memory** - searchable failure records; the opt-in `bash` tool records redacted failures and can guard an exact unresolved repeat.
+- **Review packs** - branch-aware review context: touched files, symbols, callers, tests, `rin` debt, and past failures.
+- **Prompt compression** - deterministic prose shortening that protects fenced/inline code, URLs, paths, versions, and environment-variable tokens.
+- **Local GUI** - browser graph view for symbols, relationships, debt, and failure hotspots.
 
 <p align="center">
-  <img src="./assets/usage-screenshot.svg" alt="Terminal screenshot showing Jambavan install, doctor, index, context, and badges usage" width="820">
+  <img src="https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/assets/usage-screenshot.svg" alt="Terminal screenshot showing Jambavan install, doctor, index, context, and badges usage" width="820">
 </p>
 
-## Before / After
-
-| Without Jambavan | With Jambavan |
-|---|---|
-| Agent rereads whole files and burns tokens. | Agent retrieves ranked symbols, callers, tests, and recent diff. |
-| Decisions vanish between sessions. | Durable markdown memory survives across hosts and models. |
-| Failed fixes get retried. | Failure records say what failed, why, and what not to retry. |
-| PR review starts from raw changed files. | Review pack maps touched files to symbols, callers, tests, debt, and risk. |
-| A new chat starts cold. | `jambavan_awaken` restores protocol, memories, and project context. |
+Without an index or saved memory, manually rediscovering a project requires examining a number of files or symbols proportional to the area searched: O(n). Jambavan persists that work. Index refresh still discovers and hashes candidate files in O(n files), but reparses only files whose content changed.
 
 ## Works With
 
@@ -80,7 +76,7 @@ The model now has local repo context, previous decisions, and searchable failure
 | Claude Code | `claude mcp add jambavan -- npx -y jambavan` |
 | Cursor | `.cursor/mcp.json` |
 | Codex CLI | `codex mcp add jambavan -- npx -y jambavan` |
-| Continue | `~/.continue/mcpServers/jambavan.json` |
+| Continue | `~/.continue/config.yaml` |
 | Any MCP client | command: `npx -y jambavan` |
 
 ## Install
@@ -97,7 +93,7 @@ curl -fsSL https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/instal
 irm https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/install.ps1 | iex
 ```
 
-Needs Node >=20. Safe to re-run. It skips agents you do not have and does not remove other MCP servers from your config. As with any internet shell script, read it before piping it into a shell.
+Needs Node >=20 <27. Safe to re-run. It skips agents you do not have and does not remove other MCP servers from your config. As with any internet shell script, read it before piping it into a shell.
 
 ## Manual Registration
 
@@ -125,10 +121,18 @@ codex mcp add jambavan -- npx -y jambavan
 }
 ```
 
-**Continue** (`~/.continue/mcpServers/jambavan.json`)
+**Continue** (`~/.continue/config.yaml`)
 
-```json
-{ "command": "npx", "args": ["-y", "jambavan"] }
+```yaml
+name: Local config
+version: 1.0.0
+schema: v1
+mcpServers:
+  - name: Jambavan
+    command: npx
+    args:
+      - -y
+      - jambavan
 ```
 
 ## First Run
@@ -136,25 +140,41 @@ codex mcp add jambavan -- npx -y jambavan
 After registering, ask your host model to run:
 
 ```text
-jambavan_awaken
-jambavan_doctor
-jambavan_index
-jambavan_watch start
+jambavan_awaken {}
+jambavan_doctor {}
+jambavan_index {}
+jambavan_watch { "action": "start" }
+jambavan_context { "query": "<task-specific identifier or question>" }
 ```
 
 `jambavan_doctor` checks project-root detection, parser backends, gates, memory paths, CI hints, and index/watcher status. If it reports a root such as `$HOME`, set `JAMBAVAN_ROOT` to one repo, reconnect, and run doctor again.
+
+## Activate, Update, And Uninstall
+
+Restart the host after registration or configuration changes, then run `jambavan_awaken` and `jambavan_doctor` to confirm the server is active. Continue exposes MCP tools only in Agent mode.
+
+Check the installed CLI version and the current published package version:
+
+```bash
+npx jambavan --version
+npm view jambavan version
+```
+
+To pin or update deliberately, change the MCP argument from `jambavan` to `jambavan@<version>` or `jambavan@latest`, then restart the host.
+
+To uninstall, run `claude mcp remove jambavan` or `codex mcp remove jambavan`; for Cursor, delete the `jambavan` key from `mcpServers`; for Continue, remove its `mcpServers` entry (or the standalone Jambavan file created by the installer). This leaves local `.jambavan/` indexes and memories intact. Delete that directory separately only if you no longer need its contents.
 
 ## The Powers
 
 | Power | Tools | What it gives the agent |
 |---|---|---|
-| **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_diagnostics`, `jambavan_doctor` | AST-backed symbol index, token-budgeted context, callers, tests, recent diff, root health, and live watching. |
-| **Bridge** | `jambavan_graph_report`, `jambavan_graph_query`, `jambavan_graph_path` | Lightweight code graph built from extracted references, imports, calls, and name mentions. |
+| **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_diagnostics`, `jambavan_doctor` | AST-backed symbol index, token-budgeted context, bounded extracted call neighbors, tests, recent diff, root health, and live watching. |
+| **Bridge** | `jambavan_graph_report`, `jambavan_graph_query`, `jambavan_graph_path`, `jambavan_impact` | Focused code graph navigation plus changed-symbol inbound impact and test analysis. |
 | **Memory** | `jambavan_memory_store`, `jambavan_memory_search`, `jambavan_memory_recall`, `jambavan_memory_mine_session`, `jambavan_memory_invalidate`, `jambavan_memory_delete`, `jambavan_memory_status` | Durable local markdown memory. Decisions survive across sessions and hosts. |
-| **Failure immunity** | `jambavan_failure_store`, `jambavan_failure_search` | Structured failure records so the next session does not retry the same dead end. |
+| **Failure memory** | `jambavan_failure_store`, `jambavan_failure_search` | Structured failure records plus an exact-command repeat guard in the opt-in `bash` tool. |
 | **Session continuity** | `jambavan_session_export`, `jambavan_session_import` | Portable handoff docs for new chats, new tools, or teammates. |
-| **Review pack** | `jambavan_review_pack` | Branch review context: touched symbols, callers, tests, `rin` debt, and past failures. |
-| **Sankshipta** | `jambavan_sankshipta` | Deterministic prompt/prose compression while preserving code and facts. |
+| **Review pack** | `jambavan_review_pack` | Bounded branch review context: touched symbols, extracted caller candidates, tests, `rin` debt, and past failures. |
+| **Sankshipta** | `jambavan_sankshipta` | Deterministic prompt/prose compression with protected lexical spans for code, URLs, paths, versions, and environment variables. |
 | **Vibhishana Niti** | `jambavan_vibhishana_niti`, `jambavan_rin_mochan` | Efficient senior-dev discipline and deliberate shortcut debt ledger. |
 | **Counsel** | `jambavan_mool_kaaran`, `jambavan_praman`, `jambavan_yukti`, `jambavan_vibhaajan` | Root-cause investigation, verification gates, planning, and task decomposition. |
 | **Hands** | `read_file`, `search`, `list_files`; opt-in `write_file`, `patch_file`, `bash` | Guarded project-root file/search/shell tools. Mutating and shell tools are disabled by default. |
@@ -174,9 +194,11 @@ The Ramayana names remain stable, but Jambavan also exposes English aliases for 
 | `debt_ledger` | `jambavan_rin_mochan` |
 | `compress_prompt` | `jambavan_sankshipta` |
 
-## Real Outputs
+## Representative output shapes
 
-`jambavan_context "review pack"` returns focused code spans instead of whole files:
+The examples below illustrate the current fields and layout. They are representative, not results from a claimed benchmark run.
+
+`jambavan_context { "query": "review pack" }` returns focused code spans instead of whole files:
 
 ```text
 # Jambavan Context
@@ -189,7 +211,7 @@ Uses git diff to list touched files, maps symbols from the index, adds callers v
 associated tests via test-map, and risk flags for rin debt / missing tests / failures.
 ```
 
-`jambavan_review_pack` turns a branch into reviewer-ready context:
+`jambavan_review_pack { "base": "main" }` turns a branch into reviewer-oriented context:
 
 ```text
 # Jambavan Review Pack
@@ -207,11 +229,12 @@ CLI form for CI and PR comments:
 
 ```bash
 npx jambavan review-pack --base origin/main --format json --max-files 200
+npx jambavan review-pack --base origin/main --include-worktree
 ```
 
-JSON includes `touchedCount`, `analyzedCount`, `truncated`, `files[]`, `rinMarkers[]`, and `failures[]`. The bundled [`.github/workflows/jambavan-review.yml`](.github/workflows/jambavan-review.yml) renders it into one idempotent PR comment.
+JSON includes `touchedCount`, `analyzedCount`, `truncated`, `files[]`, `rinMarkers[]`, and `failures[]`. The bundled [`.github/workflows/jambavan-review.yml`](https://github.com/beingmartinbmc/jambavan/blob/main/.github/workflows/jambavan-review.yml) renders it into one idempotent PR comment.
 
-`jambavan_failure_search "timeout"` prevents repeat dead ends:
+`jambavan_failure_search { "query": "timeout" }` can surface a prior dead end before another retry:
 
 ```text
 FailureRecord: flaky auth test timeout
@@ -222,30 +245,31 @@ Next check: run the focused auth test with fake timers enabled.
 
 ## Recommended Workflow
 
-1. `jambavan_awaken` - read the protocol and recent project memories.
-2. `jambavan_index` - build the local AST-backed index.
-3. `jambavan_watch start` - keep the index live while editing.
-4. `jambavan_context` - pull ranked, token-budgeted context before touching unfamiliar code.
-5. `root_cause` / `verify_gate` / `strategy_plan` when debugging, claiming completion, or planning multi-step work.
-6. Run the smallest relevant check.
-7. `jambavan_memory_store` or `jambavan_memory_mine_session` - persist decisions.
-8. `jambavan_failure_store` - record dead ends with root cause and do-not-retry advice.
-9. `jambavan_session_export` - hand off to the next session or teammate.
+1. `jambavan_awaken {}` - read the protocol and recent project memories.
+2. `jambavan_doctor {}` - confirm project root, gates, storage, and index/watcher status.
+3. `jambavan_index {}` - build or refresh the local AST-backed index.
+4. `jambavan_watch { "action": "start" }` - keep the index live while editing.
+5. `jambavan_context { "query": "<task-specific query>" }` - pull ranked, token-budgeted context before touching unfamiliar code.
+6. `root_cause` / `verify_gate` / `strategy_plan` when debugging, claiming completion, or planning multi-step work.
+7. Run the smallest relevant check.
+8. `jambavan_memory_store { "title": "...", "body": "...", "scope": "<project scope>" }` or `jambavan_memory_mine_session { "text": "...", "scope": "<project scope>" }` - persist durable context under the scope reported by `jambavan_awaken`.
+9. `jambavan_failure_store` - record dead ends with root cause and do-not-retry advice.
+10. `jambavan_session_export {}` - hand off; import with `jambavan_session_import { "text": "..." }`.
 
 ## Privacy And Safety
 
-**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, and memory under `.jambavan/` by default.
+**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, memory, failure records, and daemon state under `.jambavan/` by default. Those operational writes still occur when source mutation is disabled.
 
-Read-only tools are on by default. Mutating and shell tools are not even advertised unless you opt in:
+Source-mutating and shell MCP tools are not advertised unless you opt in:
 
 | Tool(s) | Enable with |
 |---|---|
 | `write_file`, `patch_file`, `jambavan_sankshipta` | `JAMBAVAN_ALLOW_WRITE=1` |
 | `bash` | `JAMBAVAN_ALLOW_BASH=1` |
 
-File, search, list, and shell working directories are confined to `JAMBAVAN_ROOT` or the detected project root. Set `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` only for trusted local use. Secret-looking files (`.env*`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, cloud credentials, and similar) are refused unless `JAMBAVAN_ALLOW_SECRETS=1`.
+Direct path arguments to file, search, and list tools, plus the `bash` working directory, are confined to `JAMBAVAN_ROOT` or the detected project root. The same path guard refuses known secret-file basenames, extensions, and immediate parent directories unless `JAMBAVAN_ALLOW_SECRETS=1`. This is a direct-path guard, not content scanning, and it does not prevent an enabled shell command from reading files; enable `bash` only in a sandbox you trust. Set `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` only for trusted local use.
 
-`bash` uses a minimal no-color environment and blocks a few obvious footguns such as `rm -rf /`, `git reset --hard`, `git clean -fx`, and blind `curl | sh`. This is not a security boundary. Treat it like a local shell and sandbox the workspace if you need real isolation.
+`bash` uses a minimal no-color environment and blocks a few obvious footguns such as `rm -rf /`, `git reset --hard`, `git clean -fx`, and blind `curl | sh`. It redacts and stores failed-command records locally; once the same unresolved command fails unchanged again, a do-not-retry record can block another exact retry unless `retry_known_failure=true`. These checks are not a security boundary. Treat the tool like a local shell and sandbox the workspace if you need isolation.
 
 ## Troubleshooting
 
@@ -272,7 +296,7 @@ Cursor config with NVM and npm-policy workarounds:
         "-y",
         "--registry=https://registry.npmjs.org",
         "--before=",
-        "jambavan@0.5.4"
+        "jambavan@latest"
       ],
       "env": { "PATH": "/abs/path/to/node/dir:/usr/bin:/bin" }
     }
@@ -287,7 +311,7 @@ Claude Code `.claude.json` uses the same shape. Put npm policy overrides and the
   "mcpServers": {
     "jambavan": {
       "command": "/abs/path/to/node",
-      "args": ["/abs/path/to/npm/bin/npx-cli.js", "-y", "jambavan@0.5.4"],
+      "args": ["/abs/path/to/npm/bin/npx-cli.js", "-y", "jambavan@latest"],
       "env": {
         "PATH": "/abs/path/to/node/dir:/usr/bin:/bin",
         "npm_config_registry": "https://registry.npmjs.org",
@@ -320,11 +344,13 @@ The plugin registers the same `npx -y jambavan` MCP server and bundles skills fo
 
 ## Examples
 
-- [Claude Code setup](examples/claude-code.md)
-- [Cursor setup](examples/cursor.md)
-- [Codex CLI setup](examples/codex.md)
-- [Continue setup](examples/continue.md)
-- [Review pack output](examples/review-pack.md)
+- [Claude Code setup](https://github.com/beingmartinbmc/jambavan/blob/main/examples/claude-code.md)
+- [Cursor setup](https://github.com/beingmartinbmc/jambavan/blob/main/examples/cursor.md)
+- [Codex CLI setup](https://github.com/beingmartinbmc/jambavan/blob/main/examples/codex.md)
+- [Continue setup](https://github.com/beingmartinbmc/jambavan/blob/main/examples/continue.md)
+- [Review pack output](https://github.com/beingmartinbmc/jambavan/blob/main/examples/review-pack.md)
+- [Shareable benchmark proof card](https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-proof-card.md)
+- [Offline outcome evaluation](https://github.com/beingmartinbmc/jambavan/blob/main/examples/outcome-evaluation.md)
 
 ## Direct CLI Commands
 
@@ -342,10 +368,11 @@ Useful one-shot commands:
 ```bash
 npx jambavan doctor
 npx jambavan review-pack --base origin/main --format json --max-files 200
-npx jambavan html-handoff --out /tmp/handoff.html
+npx jambavan html-handoff --out /tmp/handoff.html --share-safe
 npx jambavan daemon start
 npx jambavan gui
 npx jambavan badges
+npx jambavan evaluate --baseline baseline.json --jambavan jambavan.json --format markdown
 ```
 
 ## Badges Command
@@ -356,11 +383,11 @@ npx jambavan badges
 npx jambavan badges
 ```
 
-The lines summarize benchmark context-token savings for the current repo, Rin Ledger debt markers (`// rin:` comments), and Failure Immunity (`FailureRecord` memories in the default project scope). The command makes no network calls. If you want rendered badge images, use a [shields.io static badge](https://shields.io/badges/static-badge) URL explicitly; README renders will then fetch from shields.io's CDN.
+The lines summarize benchmark context-token savings for the current repo, Rin Ledger debt markers (`// rin:` comments), and Failure Memory (`FailureRecord` memories in the default project scope). The command makes no network calls. If you want rendered badge images, use a [shields.io static badge](https://shields.io/badges/static-badge) URL explicitly; README renders will then fetch from shields.io's CDN.
 
 ## Memory Bridge
 
-`jambavan bridge` converts Jambavan memories to or from a portable MemPalace-shaped markdown folder tree. No network call, ever.
+`jambavan bridge` converts Jambavan memories to or from a portable MemPalace-shaped markdown folder tree. The bridge itself makes no network call.
 
 ```bash
 npx jambavan bridge --to mempalace [--out <dir>] [--scope <scope>]
@@ -374,7 +401,7 @@ npx jambavan bridge --from mempalace [--in <dir>]
 `npx jambavan handoff --write-pr-template` injects the same handoff card as `jambavan_session_export` into `.github/pull_request_template.md`, creating the file if needed. Re-running replaces the old block in place.
 
 ```bash
-npx jambavan handoff --write-pr-template [--scope <scope>]
+npx jambavan handoff --write-pr-template [--scope <scope>] [--share-safe]
 npx jambavan handoff --write-pr-template --post
 ```
 
@@ -407,7 +434,7 @@ npx jambavan gui --no-open
 The page has three tabs: code graph, Rin Debt, and Failures. It includes search, pan/zoom, heat markers, and click-through source/caller/callee details. All data comes from local JSON endpoints.
 
 <p align="center">
-  <img src="./assets/gui-screenshot.svg" alt="Local Jambavan GUI showing graph, Rin Debt, and Failures tabs" width="820">
+  <img src="https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/assets/gui-screenshot.svg" alt="Local Jambavan GUI showing graph, Rin Debt, and Failures tabs" width="820">
 </p>
 
 ## Configuration
@@ -415,30 +442,23 @@ The page has three tabs: code graph, Rin Debt, and Failures. It includes search,
 | Env var | Default | Description |
 |---|---|---|
 | `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
+| `JAMBAVAN_SCOPE` | path-derived slug + hash | Clone-independent memory scope; 1-80 lowercase letters, numbers, or hyphens |
 | `JAMBAVAN_MEMORY_HOME` | `<indexDir>/memory` | Where memory docs live |
-| `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max tokens in `jambavan_context` output |
+| `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max approximate `cl100k_base` tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite`, `full`, `ultra`) |
 | `JAMBAVAN_ALLOW_WRITE` | off | Registers `write_file`, `patch_file`, and `jambavan_sankshipta` |
 | `JAMBAVAN_ALLOW_BASH` | off | Registers `bash` |
-| `JAMBAVAN_ALLOW_OUTSIDE_ROOT` | off | Allows tools outside the project root |
-| `JAMBAVAN_ALLOW_SECRETS` | off | Allows file tools to touch secret-looking files |
+| `JAMBAVAN_ALLOW_OUTSIDE_ROOT` | off | Disables direct-path project-root containment |
+| `JAMBAVAN_ALLOW_SECRETS` | off | Allows direct paths that match the secret-file guard |
 | `JAMBAVAN_BASH_INHERIT_ENV` | off | Passes full host env to `bash` |
 | `JAMBAVAN_MAX_OUTPUT_CHARS` | `100000` | Global cap on tool output |
 | `JAMBAVAN_MAX_READ_BYTES` | `5242880` | Max file size `read_file` loads |
 
+`JAMBAVAN_SCOPE` controls the project scope used by awakening, context-memory enrichment, failure memory, and handoffs. Manual `jambavan_memory_store` and `jambavan_memory_mine_session` calls default to `general`; pass the project scope explicitly when those memories should be recalled with the project.
+
 ## Benchmark
 
-`npm run bench` dogfoods the real pipeline: deterministic, local-only, no LLM calls, no embeddings, no external services. It derives queries from the repo's own symbols and measures index speed, context token savings, graph extraction, prompt compression, and MCP tool latency.
-
-Fresh run against this repo before the latest release:
-
-| Dimension | Result |
-|---|---|
-| Cold index | about 150 ms for this repo |
-| Warm re-index | about 5x faster than cold |
-| Context tokens saved | about 40 percent on local benchmark queries |
-| Tool latency | in-process tools are sub-millisecond; shell/disk tools dominate |
-| Package dry run | `jambavan-0.5.4.tgz`, about 450 kB |
+`npm run bench` is a retrieval benchmark. It dogfoods the real pipeline: deterministic, local-only, no LLM calls, no embeddings, no external services. It derives queries from the repo's own symbols and measures index speed, context token savings, graph extraction, prompt compression, and MCP tool latency. It does not measure task correctness or completion. Results depend on the repository, machine, Node version, and cache state; they are measurements, not universal performance claims.
 
 Run it on your repo:
 
@@ -446,6 +466,14 @@ Run it on your repo:
 JAMBAVAN_ROOT=/path/to/your/repo npm run bench
 node dist/benchmark.js --json
 ```
+
+Token counts are `cl100k_base` estimates. They are exact for that tokenizer, not for every host model. To publish aggregate results without leaking paths, symbol names, or tool output, use the [benchmark proof-card template and methodology](https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-proof-card.md).
+
+For outcome evidence, `jambavan evaluate` compares strict, paired JSON records from baseline and Jambavan runs. It reports completion, first-pass success, repeated failures, successful-task duration, and supplied input-token counts without calling an LLM or executing an agent. See the [input schema, metric definitions, and outcome proof card](https://github.com/beingmartinbmc/jambavan/blob/main/examples/outcome-evaluation.md).
+
+## Community
+
+Read [CONTRIBUTING.md](https://github.com/beingmartinbmc/jambavan/blob/main/CONTRIBUTING.md) before proposing a change. Use the issue forms for bugs and focused feature requests, and report vulnerabilities privately through [SECURITY.md](https://github.com/beingmartinbmc/jambavan/blob/main/SECURITY.md).
 
 ## Checks
 
@@ -462,10 +490,10 @@ npm pack --dry-run
 
 ## Social Preview
 
-This repo includes [`.github/social-preview.png`](.github/social-preview.png). Set it as the GitHub repository social preview under **Settings -> Social preview** so shares explain the project before anyone opens the README.
+This repo includes [`.github/social-preview.png`](https://github.com/beingmartinbmc/jambavan/blob/main/.github/social-preview.png). Set it as the GitHub repository social preview under **Settings -> Social preview** so shares explain the project before anyone opens the README.
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for internals.
+See [ARCHITECTURE.md](https://github.com/beingmartinbmc/jambavan/blob/main/ARCHITECTURE.md) for internals.
 
 ---
 
-<p align="center"><sub>If Jambavan reminds your agent what it already knows before the next leap, star the repo so more MCP users find local-first tooling.</sub></p>
+<p align="center"><sub>If local project context helps your agent start with less rediscovery, star the repo so more MCP users find the project.</sub></p>

@@ -27,8 +27,15 @@ export interface IndexStats {
   totalFiles: number;
   indexedFiles: number;
   skippedFiles: number;
+  failedFiles: number;
   totalSymbols: number;
   durationMs: number;
+}
+
+export interface IndexFailure {
+  filePath: string;
+  error: string;
+  failedAt: number;
 }
 
 export interface SymbolSearchResult {
@@ -47,6 +54,7 @@ export class JambavanIndex {
   private cache:  FileCache;
   private parser: ASTParser;
   private db:     Database.Database;
+  private failures = new Map<string, IndexFailure>();
 
   constructor(private config: JambavanConfig) {
     fs.mkdirSync(config.indexDir, { recursive: true });
@@ -148,11 +156,24 @@ export class JambavanIndex {
   async index(): Promise<IndexStats> {
     const start = Date.now();
     const files = await this.discoverFiles();
-    const stale = this.cache.getStaleFiles(files);
+    const stale: string[] = [];
     let totalSymbols = 0;
+    let indexedFiles = 0;
+    let staleCheckFailures = 0;
+
+    for (const filePath of files) {
+      try {
+        if (this.cache.isStale(filePath)) stale.push(filePath);
+        else this.failures.delete(filePath);
+      } catch (err) {
+        staleCheckFailures++;
+        this.recordFailure(filePath, err);
+      }
+    }
 
     for (const filePath of stale) {
       totalSymbols += this.indexFile(filePath);
+      if (!this.failures.has(filePath)) indexedFiles++;
     }
 
     // Purge deleted files
@@ -162,11 +183,15 @@ export class JambavanIndex {
         this.deleteFile(cached.filePath);
       }
     }
+    for (const failedPath of this.failures.keys()) {
+      if (!currentFiles.has(failedPath)) this.failures.delete(failedPath);
+    }
 
     return {
       totalFiles:   files.length,
-      indexedFiles: stale.length,
-      skippedFiles: files.length - stale.length,
+      indexedFiles,
+      skippedFiles: files.length - stale.length - staleCheckFailures,
+      failedFiles:  this.failures.size,
       totalSymbols,
       durationMs:   Date.now() - start,
     };
@@ -179,27 +204,27 @@ export class JambavanIndex {
    * Returns the number of symbols extracted (0 for unchanged or unparseable files).
    */
   indexFile(filePath: string): number {
-    if (!this.cache.isStale(filePath)) return 0;
-    if (!fs.existsSync(filePath))      return 0;
-
-    // Remove stale symbols/re-exports for this file first
-    this.db.prepare('DELETE FROM symbols WHERE file_path = ?').run(filePath);
-    this.db.prepare('DELETE FROM reexports WHERE file_path = ?').run(filePath);
-
-    if (!ASTParser.canParse(filePath)) {
-      this.cache.markIndexed(filePath, 0);
-      return 0;
-    }
-
     try {
+      if (!this.cache.isStale(filePath)) {
+        this.failures.delete(filePath);
+        return 0;
+      }
+      if (!fs.existsSync(filePath)) return 0;
+      if (!ASTParser.canParse(filePath)) {
+        this.cache.markIndexed(filePath, 0);
+        this.failures.delete(filePath);
+        return 0;
+      }
+
       const parsed = this.parser.parseFile(filePath);
-      this.storeSymbols(parsed);
-      this.storeReExports(filePath, parsed.reExports);
+      this.replaceFile(parsed);
       this.cache.markIndexed(filePath, parsed.symbols.length);
+      this.failures.delete(filePath);
       return parsed.symbols.length;
-    } catch {
-      // Unparseable file — mark it to avoid re-trying on every watcher event
-      this.cache.markIndexed(filePath, 0);
+    } catch (err) {
+      // Keep the last valid rows and cache hash. Explicit indexing will retry
+      // because a failed file is never marked as indexed.
+      this.recordFailure(filePath, err);
       return 0;
     }
   }
@@ -211,13 +236,19 @@ export class JambavanIndex {
     this.db.prepare('DELETE FROM symbols WHERE file_path = ?').run(filePath);
     this.db.prepare('DELETE FROM reexports WHERE file_path = ?').run(filePath);
     this.cache.markDeleted(filePath);
+    this.failures.delete(filePath);
   }
 
   // ── Search ──────────────────────────────────────────────────────────────────
 
-  private static nameScore(name: string, firstTerm: string): number {
+  private static readonly STOP_WORDS = new Set([
+    'a', 'an', 'and', 'are', 'for', 'from', 'in', 'is', 'of', 'on', 'or',
+    'the', 'to', 'what', 'where', 'which', 'with',
+  ]);
+
+  private static nameScore(name: string, exactQuery: string, firstTerm: string): number {
     const lower = name.toLowerCase();
-    return lower === firstTerm ? 100 : lower.includes(firstTerm) ? 50 : 0;
+    return lower === exactQuery ? 100 : lower.includes(firstTerm) ? 50 : 0;
   }
 
   private static toResult(row: Symbol & { file_path: string; start_line: number; end_line: number; refs?: string }, nameScore: number): SymbolSearchResult {
@@ -243,18 +274,30 @@ export class JambavanIndex {
    * or on any other FTS5 error, so a tokenizer edge case degrades, not breaks.
    */
   search(query: string, limit = 20): SymbolSearchResult[] {
-    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const exactQuery = query.trim().toLowerCase();
+    const rawTerms = exactQuery
+      .split(/\s+/)
+      .map(term => term.replace(/^[^a-z0-9_$]+|[^a-z0-9_$]+$/g, ''))
+      .filter(Boolean);
+    const meaningfulTerms = rawTerms.filter(term => !JambavanIndex.STOP_WORDS.has(term));
+    const terms = meaningfulTerms.length > 0 ? meaningfulTerms : rawTerms;
     if (terms.length === 0) return [];
 
     try {
-      return this.searchFts(terms, limit);
+      const exact = this.searchFts(terms, limit, exactQuery, 'AND');
+      if (terms.length === 1 || exact.length >= limit) return exact;
+
+      const seen = new Set(exact.map(r => `${r.symbol.filePath}:${r.symbol.startLine}:${r.symbol.name}`));
+      const fallback = this.searchFts(terms, limit, exactQuery, 'OR')
+        .filter(r => !seen.has(`${r.symbol.filePath}:${r.symbol.startLine}:${r.symbol.name}`));
+      return [...exact, ...fallback].slice(0, limit);
     } catch {
-      return this.searchLike(terms, limit);
+      return this.searchLike(terms, limit, exactQuery);
     }
   }
 
-  private searchFts(terms: string[], limit: number): SymbolSearchResult[] {
-    const matchQuery = terms.map(t => JambavanIndex.ftsToken(t)).join(' AND ');
+  private searchFts(terms: string[], limit: number, exactQuery: string, operator: 'AND' | 'OR'): SymbolSearchResult[] {
+    const matchQuery = terms.map(t => JambavanIndex.ftsToken(t)).join(` ${operator} `);
     // Over-fetch from FTS5's bm25 order, then re-rank by exact/prefix name
     // match (matching the old LIKE path's priority) while keeping bm25 order
     // as the stable secondary sort among equal name scores.
@@ -269,24 +312,24 @@ export class JambavanIndex {
     `).all(matchQuery, overFetch) as (Symbol & { file_path: string; start_line: number; end_line: number; refs?: string })[];
 
     return rows
-      .map(row => ({ row, nameScore: JambavanIndex.nameScore(row.name, terms[0]) }))
+      .map(row => ({ row, nameScore: JambavanIndex.nameScore(row.name, exactQuery, terms[0]) }))
       .sort((a, b) => b.nameScore - a.nameScore)
       .slice(0, limit)
       .map(({ row, nameScore }) => JambavanIndex.toResult(row, nameScore));
   }
 
-  private searchLike(terms: string[], limit: number): SymbolSearchResult[] {
+  private searchLike(terms: string[], limit: number, exactQuery: string): SymbolSearchResult[] {
     const rows = this.db.prepare(`
       SELECT *,
         (CASE WHEN LOWER(name) = ?        THEN 100
               WHEN LOWER(name) LIKE ?     THEN 50
               ELSE 0 END) AS name_score
       FROM symbols
-      WHERE ${terms.map(() => '(LOWER(name) LIKE ? OR LOWER(content) LIKE ?)').join(' AND ')}
+      WHERE ${terms.map(() => '(LOWER(name) LIKE ? OR LOWER(content) LIKE ?)').join(' OR ')}
       ORDER BY name_score DESC, LENGTH(content) ASC
       LIMIT ?
     `).all(
-      terms[0],
+      exactQuery,
       `%${terms[0]}%`,
       ...terms.flatMap(t => [`%${t}%`, `%${t}%`]),
       limit,
@@ -335,38 +378,43 @@ export class JambavanIndex {
       }));
   }
 
-  stats(): { files: ReturnType<FileCache['stats']>; symbols: number } {
+  stats(): { files: ReturnType<FileCache['stats']>; symbols: number; failures: IndexFailure[] } {
     const row = this.db
       .prepare('SELECT COUNT(*) as count FROM symbols')
       .get() as { count: number };
-    return { files: this.cache.stats(), symbols: row.count };
+    return { files: this.cache.stats(), symbols: row.count, failures: [...this.failures.values()] };
   }
 
   // ── Internals ───────────────────────────────────────────────────────────────
 
-  private storeSymbols(parsed: ParsedFile): void {
+  private replaceFile(parsed: ParsedFile): void {
     const insert = this.db.prepare(`
       INSERT INTO symbols (file_path, name, type, start_line, end_line, content, refs)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
-    const insertMany = this.db.transaction((syms: Symbol[]) => {
-      for (const s of syms) {
-        insert.run(s.filePath, s.name, s.type, s.startLine, s.endLine, s.content, JSON.stringify(s.references ?? []));
-      }
-    });
-    insertMany(parsed.symbols);
-  }
-
-  private storeReExports(filePath: string, reExports: ParsedFile['reExports']): void {
-    if (reExports.length === 0) return;
-    const insert = this.db.prepare(`
+    const insertReExport = this.db.prepare(`
       INSERT INTO reexports (file_path, specifier, imported, exported)
       VALUES (?, ?, ?, ?)
     `);
-    const insertMany = this.db.transaction((entries: ParsedFile['reExports']) => {
-      for (const e of entries) insert.run(filePath, e.specifier, e.imported, e.exported);
+    const replace = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM symbols WHERE file_path = ?').run(parsed.filePath);
+      this.db.prepare('DELETE FROM reexports WHERE file_path = ?').run(parsed.filePath);
+      for (const s of parsed.symbols) {
+        insert.run(s.filePath, s.name, s.type, s.startLine, s.endLine, s.content, JSON.stringify(s.references ?? []));
+      }
+      for (const e of parsed.reExports) {
+        insertReExport.run(parsed.filePath, e.specifier, e.imported, e.exported);
+      }
     });
-    insertMany(reExports);
+    replace();
+  }
+
+  private recordFailure(filePath: string, err: unknown): void {
+    this.failures.set(filePath, {
+      filePath,
+      error: err instanceof Error ? err.message : String(err),
+      failedAt: Date.now(),
+    });
   }
 
   private async discoverFiles(): Promise<string[]> {

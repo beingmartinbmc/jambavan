@@ -54,7 +54,7 @@ export interface ParsedFile {
 // ── Language map ──────────────────────────────────────────────────────────────
 
 const LANGUAGE_MAP: Record<string, string> = {
-  '.ts': 'typescript', '.tsx': 'typescript',
+  '.ts': 'typescript', '.tsx': 'tsx',
   '.mts': 'typescript', '.cts': 'typescript',
   '.js': 'javascript', '.jsx': 'javascript', '.mjs': 'javascript',
   '.py': 'python',
@@ -80,6 +80,7 @@ function loadGrammar(language: string): TreeSitterLanguage | null {
   // Map language name → npm package name for grammar
   const pkgMap: Record<string, string> = {
     typescript:  'tree-sitter-typescript',
+    tsx:         'tree-sitter-typescript',
     javascript:  'tree-sitter-javascript',
     python:      'tree-sitter-python',
     go:          'tree-sitter-go',
@@ -159,6 +160,19 @@ const DECLARATION_TYPES: Record<string, Set<string>> = {
     'interface_declaration',
     'type_alias_declaration',
     'lexical_declaration',      // const/let declarations
+    'variable_declaration',
+    'method_definition',
+    'public_field_definition',
+    'export_statement',
+  ]),
+  tsx: new Set([
+    'function_declaration',
+    'generator_function_declaration',
+    'class_declaration',
+    'abstract_class_declaration',
+    'interface_declaration',
+    'type_alias_declaration',
+    'lexical_declaration',
     'variable_declaration',
     'method_definition',
     'public_field_definition',
@@ -464,7 +478,9 @@ function extractWithTreeSitter(
   language: string,
   parser: TSParser,
 ): { symbols: Symbol[]; reExports: ReExport[] } {
-  const tree = parser.parse(source);
+  // node-tree-sitter 0.21 defaults to a 32 KiB native input buffer and throws
+  // "Invalid argument" for larger strings unless the caller sizes it explicitly.
+  const tree = parser.parse(source, undefined, { bufferSize: source.length + 1 });
   const lines = source.split('\n');
   const declarations = collectDeclarations(tree.rootNode, language);
   const reExports = collectFileReExports(tree.rootNode);
@@ -512,6 +528,14 @@ function extractWithTreeSitter(
 
 const REGEX_PATTERNS: Record<string, RegExp[]> = {
   typescript: [
+    /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/m,
+    /^(?:export\s+)?class\s+(\w+)/m,
+    /^(?:export\s+)?interface\s+(\w+)/m,
+    /^(?:export\s+)?type\s+(\w+)\s*=/m,
+    /^(?:export\s+)?const\s+(\w+)\s*(?::\s*[\w<>[\],\s]+\s*)?=\s*(?:async\s+)?\(/m,
+    /^(?:export\s+)?const\s+(\w+)\s*(?::\s*[\w<>[\],\s]+\s*)?=\s*(?:async\s+)?function/m,
+  ],
+  tsx: [
     /^(?:export\s+)?(?:async\s+)?function\s+(\w+)/m,
     /^(?:export\s+)?class\s+(\w+)/m,
     /^(?:export\s+)?interface\s+(\w+)/m,

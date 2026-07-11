@@ -2,16 +2,29 @@ import { test } from 'node:test';
 import * as assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { mkTempConfig } from '../test-support/config';
 import { JambavanIndex } from '../src/index/indexer';
 import { MemoryStore } from '../src/memory/store';
 import { projectScope } from '../src/tools/jambavan';
 import { buildReviewPackHandlers } from '../src/tools/review-pack';
 import { buildReviewPackJson } from '../src/tools/review-pack-json';
+import { parseChangedRanges, parseNameStatus } from '../src/tools/changed-symbols';
+import { buildImpactHandlers } from '../src/tools/impact';
 
 function git(root: string, args: string[]): void {
   execFileSync('git', args, { cwd: root });
+}
+
+function runCli(args: string[]) {
+  return spawnSync(process.execPath, [
+    '--require', 'ts-node/register/transpile-only',
+    'src/index.ts',
+    ...args,
+  ], {
+    cwd: path.resolve(__dirname, '..'),
+    encoding: 'utf-8',
+  });
 }
 
 function initRepoWithBranchDiff(root: string): void {
@@ -39,7 +52,35 @@ function initRepoWithBranchDiff(root: string): void {
   git(root, ['commit', '-q', '-m', 'add subtract, no test for it']);
 }
 
-test('jambavan_review_pack: reports touched symbols, tests, and risk flags for an untested new function', async () => {
+test('changed-symbol diff parser preserves rename destination and added-line ranges', () => {
+  const files = parseNameStatus('R100\tsrc/old.ts\tsrc/new.ts\n');
+  const ranges = parseChangedRanges(
+    'diff --git a/src/new.ts b/src/new.ts\n--- a/src/new.ts\n+++ b/src/new.ts\n@@ -2,0 +3,2 @@\n',
+  );
+
+  assert.deepEqual(files[0], {
+    status: 'R100',
+    oldPath: 'src/old.ts',
+    path: 'src/new.ts',
+    ranges: [],
+  });
+  assert.deepEqual(ranges.get('src/new.ts'), [{ start: 3, end: 4 }]);
+});
+
+test('changed-symbol diff parser decodes git-quoted paths', () => {
+  const files = parseNameStatus('M\t"src/space \\303\\251.ts"\n');
+  const ranges = parseChangedRanges(
+    'diff --git "a/src/space \\303\\251.ts" "b/src/space \\303\\251.ts"\n' +
+      '--- "a/src/space \\303\\251.ts"\n' +
+      '+++ "b/src/space \\303\\251.ts"\n' +
+      '@@ -1 +1 @@\n',
+  );
+
+  assert.equal(files[0].path, 'src/space é.ts');
+  assert.deepEqual(ranges.get('src/space é.ts'), [{ start: 1, end: 1 }]);
+});
+
+test('jambavan_review_pack: reports only changed symbols and per-symbol test risk', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     initRepoWithBranchDiff(root);
@@ -52,14 +93,9 @@ test('jambavan_review_pack: reports touched symbols, tests, and risk flags for a
 
     assert.match(result, /Jambavan Review Pack/);
     assert.match(result, /src\/util\.ts/);
-    assert.match(result, /\*\*add\*\*/, 'touched util.ts should list the add symbol');
-    assert.match(result, /\*\*subtract\*\*/, 'touched util.ts should list the new subtract symbol');
-    assert.match(result, /Tests:/, 'add is covered by a test import');
-    assert.doesNotMatch(
-      result,
-      /no symbol in this file has a matching test/,
-      'add IS covered by a test, so the file-level "no matching test" risk should not fire',
-    );
+    assert.doesNotMatch(result, /\*\*add\*\*/, 'unchanged add must not be labeled touched');
+    assert.match(result, /\*\*subtract\*\*/, 'new subtract symbol should be reported');
+    assert.match(result, /1 changed symbol\(s\) have no matching test/);
   } finally { cleanup(); }
 });
 
@@ -86,7 +122,7 @@ test('jambavan_review_pack: flags a file where no symbol has a matching test', a
     const result = handlers.jambavan_review_pack({ base: 'main' });
 
     assert.match(result, /\*\*untested\*\*/);
-    assert.match(result, /no symbol in this file has a matching test/);
+    assert.match(result, /1 changed symbol\(s\) have no matching test/);
   } finally { cleanup(); }
 });
 
@@ -103,6 +139,28 @@ test('jambavan_review_pack: reports "no changes" when branch matches base', asyn
     const handlers = buildReviewPackHandlers(config, () => undefined);
     const result = handlers.jambavan_review_pack({ base: 'main' });
     assert.match(result, /No changes vs `main`/);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: optionally includes untracked working-tree symbols', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'pending.ts'), 'export function pending() { return true; }\n');
+
+    const index = new JambavanIndex(config);
+    await index.index();
+    const result = buildReviewPackHandlers(config, () => index)
+      .jambavan_review_pack({ base: 'main', include_worktree: true });
+
+    assert.match(result, /src\/pending\.ts/);
+    assert.match(result, /\*\*pending\*\*/);
   } finally { cleanup(); }
 });
 
@@ -314,7 +372,7 @@ test('jambavan_review_pack: test files are not flagged for missing matching test
     const pack = buildReviewPackJson(config, index, 'main');
 
     assert.doesNotMatch(result, /no symbol in this file has a matching test/);
-    assert.ok(!pack.files.some(f => f.risks.includes('no symbol in this file has a matching test')));
+    assert.ok(!pack.files.some(f => f.risks.some(r => r.includes('have no matching test'))));
   } finally { cleanup(); }
 });
 
@@ -358,13 +416,13 @@ test('jambavan_review_pack: shows caller list when a touched symbol is called by
     git(root, ['commit', '-q', '-m', 'initial']);
 
     git(root, ['checkout', '-q', '-b', 'feature']);
-    // Modify util.ts (the callee file)
+    // Modify add itself (the callee symbol)
     fs.writeFileSync(
       path.join(root, 'src', 'util.ts'),
-      'export function add(a: number, b: number) { return a + b; }\nexport function sub(a: number, b: number) { return a - b; }\n',
+      'export function add(a: number, b: number) { return Number(a) + Number(b); }\n',
     );
     git(root, ['add', '.']);
-    git(root, ['commit', '-q', '-m', 'add sub']);
+    git(root, ['commit', '-q', '-m', 'change add']);
 
     const index = new JambavanIndex(config);
     await index.index();
@@ -375,4 +433,77 @@ test('jambavan_review_pack: shows caller list when a touched symbol is called by
     // add is called by run in main.ts — Callers section should appear
     assert.match(result, /Callers:/);
   } finally { cleanup(); }
+});
+
+test('jambavan_impact: detects master and traces extracted inbound callers and tests', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'master']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'util.ts'), 'export function add(a: number, b: number) { return a + b; }\n');
+    fs.writeFileSync(path.join(root, 'src', 'main.ts'), 'import { add } from "./util"; export function run() { return add(1, 2); }\n');
+    fs.writeFileSync(path.join(root, 'test', 'util.test.ts'), 'import { add } from "../src/util"; test("add", () => add(1, 2));\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.writeFileSync(path.join(root, 'src', 'util.ts'), 'export function add(a: number, b: number) { return Number(a) + Number(b); }\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'change add']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+    const output = buildImpactHandlers(config, () => index).jambavan_impact({});
+
+    assert.match(output, /Base: `master`/);
+    assert.match(output, /changed symbols: 1/);
+    assert.match(output, /run — src\/main\.ts/);
+    assert.match(output, /test\/util\.test\.ts/);
+  } finally { cleanup(); }
+});
+
+test('jambavan_impact: reports an invalid base without throwing', async () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const index = new JambavanIndex(config);
+    const output = buildImpactHandlers(config, () => index)
+      .jambavan_impact({ base: 'missing-ref' });
+    assert.match(output, /Error: could not analyze changes against base "missing-ref"/);
+    index.close();
+  } finally { cleanup(); }
+});
+
+test('review-pack CLI rejects invalid and unknown options before indexing', () => {
+  const cases: Array<[string[], RegExp]> = [
+    [['review-pack', '--format', 'yaml'], /--format must be markdown or json/],
+    [['review-pack', '--max-files', '0'], /--max-files must be a positive finite number/],
+    [['review-pack', '--max-files', 'Infinity'], /--max-files must be a positive finite number/],
+    [['review-pack', '--base'], /--base requires a value/],
+    [['review-pack', '--unknown'], /Unknown review-pack option: --unknown/],
+  ];
+
+  for (const [args, error] of cases) {
+    const result = runCli(args);
+    assert.equal(result.status, 1, `${args.join(' ')} should fail`);
+    assert.match(result.stderr, error);
+  }
+});
+
+test('CLI help reflects supported hosts, tools, commands, and safety gates', () => {
+  const result = runCli(['--help']);
+  assert.equal(result.status, 0);
+  for (const expected of [
+    'Claude Code, Cursor, Codex, Continue',
+    'jambavan_impact',
+    'jambavan review-pack',
+    'jambavan handoff --write-pr-template',
+    'JAMBAVAN_ALLOW_WRITE=1',
+    'JAMBAVAN_ALLOW_BASH=1',
+    'JAMBAVAN_ALLOW_SECRETS=1',
+  ]) {
+    assert.match(result.stdout, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  }
+  assert.doesNotMatch(result.stdout, /npx jambavan bench/);
 });

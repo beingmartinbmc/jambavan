@@ -28,13 +28,13 @@ import { fileURLToPath } from 'url';
 import pkg from '../../package.json';
 import { loadConfig, applyResolvedRoot } from '../config/jambavan.config';
 import { aliasToolsFor, resolveToolAlias } from './tool-aliases';
-import { doctorReport }                  from '../tools/doctor';
+import { detectHost, doctorIssueReport, doctorReport } from '../tools/doctor';
 import { ToolRegistry, boundedInt, capOutput } from '../tools/registry';
 import { createReadFileTool }            from '../tools/read-file';
 import { createWriteFileTool, createPatchFileTool } from '../tools/write-file';
 import { createBashTool }                from '../tools/bash';
 import { createSearchTool, createListFilesTool } from '../tools/search';
-import { JambavanIndex }                   from '../index/indexer';
+import { JambavanIndex, type SymbolSearchResult } from '../index/indexer';
 import { FileWatcher }                   from '../index/watcher';
 import { ASTParser }                     from '../index/ast-parser';
 import { ContextAssembler }              from '../context/assembler';
@@ -42,19 +42,34 @@ import type { ContextChunk }             from '../context/assembler';
 import { countTokens, truncateToTokenBudget } from '../context/token-counter';
 import { vibhishanaNitiInstructions, harvestRin, formatRinReport } from '../tools/vibhishana-niti';
 import { MEMORY_TOOL_DEFS, buildMemoryHandlers } from '../tools/memory';
-import { FAILURE_MEMORY_TOOL_DEFS, buildFailureHandlers } from '../tools/failure-memory';
+import {
+  FAILURE_MEMORY_TOOL_DEFS,
+  buildFailureHandlers,
+  knownFailureBlock,
+  recordAutomaticBashFailure,
+  resolveBlockingFailure,
+} from '../tools/failure-memory';
 import { SESSION_HANDOFF_TOOL_DEFS, buildSessionHandoffHandlers } from '../tools/session-handoff';
 import { REVIEW_PACK_TOOL_DEFS, buildReviewPackHandlers } from '../tools/review-pack';
+import { IMPACT_TOOL_DEFS, buildImpactHandlers } from '../tools/impact';
 import { getDaemonStatus, formatDaemonStatus } from '../tools/daemon';
 import { sankshiptaFile } from '../tools/sankshipta';
-import { awakenReport, jambavanInstructions } from '../tools/jambavan';
-import { buildSymbolGraph, graphPath, graphQuery, graphReport } from '../knowledge/graph';
+import { awakenReport, jambavanInstructions, projectScope } from '../tools/jambavan';
+import {
+  buildGraphNeighborhood,
+  buildSymbolGraph,
+  extractedStructuralNeighbors,
+  graphPath,
+  graphQuery,
+  graphReport,
+} from '../knowledge/graph';
 import { moolKaaranProtocol } from '../tools/mool-kaaran';
 import { pramanProtocol } from '../tools/praman';
 import { yuktiProtocol } from '../tools/yukti';
 import { vibhaajanProtocol } from '../tools/vibhaajan';
 import { getRecentSymbolChanges, formatRecentChanges } from '../context/diff-enricher';
-import { buildTestMap, formatTestAssociations } from '../index/test-map';
+import { buildTestMap, formatTestAssociations, testAssociationsFor } from '../index/test-map';
+import { MemoryStore } from '../memory/store';
 
 /**
  * Ask the MCP host for its real workspace root via roots/list, if it supports
@@ -69,13 +84,42 @@ async function resolveClientRoots(server: Server, config: ReturnType<typeof load
   if (!server.getClientCapabilities()?.roots) return;
   try {
     const { roots } = await server.listRoots();
-    const first = roots?.[0];
-    if (!first?.uri) return;
-    const newRoot = first.uri.startsWith('file://') ? fileURLToPath(first.uri) : first.uri;
+    const newRoot = selectClientRoot(roots ?? []);
+    if (!newRoot) return;
     applyResolvedRoot(config, newRoot);
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('Jambavan root selection failed:')) throw err;
     // Host declared the roots capability but didn't answer in time — keep the
     // cwd-walkup fallback rather than blocking startup on it.
+  }
+}
+
+export function selectClientRoot(roots: Array<{ uri: string }>): string | undefined {
+  if (roots.length > 1) {
+    throw new Error('Jambavan root selection failed: multiple workspace roots require an explicit JAMBAVAN_ROOT.');
+  }
+  const uri = roots[0]?.uri;
+  if (!uri) return undefined;
+  if (!uri.startsWith('file://')) {
+    throw new Error(`Jambavan root selection failed: unsupported non-file workspace URI "${uri}".`);
+  }
+  return fileURLToPath(uri);
+}
+
+export class RootResolutionGate {
+  private ready: Promise<void> = Promise.resolve();
+  private error: Error | undefined;
+
+  start(resolution: Promise<void>): void {
+    this.error = undefined;
+    this.ready = resolution.catch(err => {
+      this.error = err instanceof Error ? err : new Error(String(err));
+    });
+  }
+
+  async wait(): Promise<void> {
+    await this.ready;
+    if (this.error) throw this.error;
   }
 }
 
@@ -85,11 +129,137 @@ function graphTruncationNote(totalSymbols: number, symbolLimit: number): string 
     : '';
 }
 
+export function hybridContextResults(
+  index: JambavanIndex,
+  config: ReturnType<typeof loadConfig>,
+  query: string,
+  limit: number,
+): { results: SymbolSearchResult[]; structuralCount: number } {
+  const lexical = index.search(query, limit);
+  const seen = new Set(lexical.map(result =>
+    `${result.symbol.filePath}\0${result.symbol.name}\0${result.symbol.startLine}`));
+  const neighbors = extractedStructuralNeighbors(index, config, lexical.map(result => result.symbol), 6)
+    .filter(symbol => !seen.has(`${symbol.filePath}\0${symbol.name}\0${symbol.startLine}`));
+  const structuralScore = Math.max(0, Math.min(...lexical.map(result => result.score), 1) - 0.5);
+  return {
+    results: [
+      ...lexical,
+      ...neighbors.map(symbol => ({ symbol, score: structuralScore })),
+    ],
+    structuralCount: neighbors.length,
+  };
+}
+
+export function projectMemoryContext(
+  config: ReturnType<typeof loadConfig>,
+  query: string,
+  budget: number,
+): string {
+  if (budget <= 0) return '';
+  const matches = new MemoryStore(config.memoryDir).search(query, {
+    scope: projectScope(config),
+    limit: 3,
+  });
+  if (matches.length === 0) return '';
+  const raw = [
+    '## Project memory (automatic project-scope matches)',
+    ...matches.map(({ doc, score }) => [
+      `### ${doc.frontmatter.title} [${doc.frontmatter.type}; score ${score.toFixed(2)}]`,
+      doc.body.trim(),
+    ].join('\n')),
+  ].join('\n\n');
+  return truncateToTokenBudget(raw, budget);
+}
+
+export function buildContextResponse(
+  index: JambavanIndex,
+  config: ReturnType<typeof loadConfig>,
+  input: Record<string, unknown>,
+): string {
+  const query = String(input['query'] ?? '');
+  const limit = boundedInt(input['limit'], { min: 1, max: 200, fallback: 30 });
+  const compressProse = Boolean(input['compress_prose']);
+  const includeDiff = Boolean(input['include_diff']);
+  const includeTests = Boolean(input['include_tests']);
+  const { results, structuralCount } = hybridContextResults(index, config, query, limit);
+  const memoryBlock = projectMemoryContext(config, query, Math.floor(config.contextTokenBudget * 0.2));
+
+  if (results.length === 0 && !memoryBlock) {
+    return `No symbols or project memories found for: "${query}"\nTry a broader query or call jambavan_index to refresh.`;
+  }
+
+  const chunks: ContextChunk[] = results.map(result => ({
+    filePath:  result.symbol.filePath,
+    content:   result.symbol.content,
+    score:     result.score,
+    startLine: result.symbol.startLine,
+    endLine:   result.symbol.endLine,
+    type:      result.symbol.type,
+  }));
+
+  const headerReserve = 100;
+  const memoryTokens = countTokens(memoryBlock);
+  const contentBudget = Math.max(0, config.contextTokenBudget - headerReserve - memoryTokens);
+  const enrichmentRequested = includeDiff || includeTests;
+  const symbolBudget = enrichmentRequested ? Math.floor(contentBudget * 0.8) : contentBudget;
+  const assembler = new ContextAssembler(config);
+  const { contextBlock, usedTokens, includedChunks, droppedChunks } =
+    assembler.assemble(chunks, { compressProse, budgetOverride: symbolBudget });
+  const enrichmentBudget = Math.max(0, contentBudget - usedTokens);
+
+  let diffBlock = '';
+  if (includeDiff && enrichmentBudget > 100) {
+    const diffs = results.slice(0, 5)
+      .map(result => formatRecentChanges(
+        getRecentSymbolChanges(
+          config,
+          result.symbol.filePath,
+          result.symbol.startLine,
+          result.symbol.endLine,
+          2,
+        ),
+        result.symbol.name,
+      ))
+      .filter(Boolean);
+    if (diffs.length) {
+      const diffBudget = includeTests ? Math.floor(enrichmentBudget * 0.5) : enrichmentBudget;
+      diffBlock = truncateToTokenBudget('\n\n' + diffs.join('\n\n'), diffBudget);
+    }
+  }
+
+  let testBlock = '';
+  if (includeTests) {
+    const remainingBudget = enrichmentBudget - countTokens(diffBlock);
+    if (remainingBudget > 50) {
+      const allSymbols = index.getAllSymbols();
+      if (allSymbols.length > 0) {
+        const testMap = buildTestMap(allSymbols, config);
+        const testNotes = results.slice(0, 10)
+          .map(result => formatTestAssociations(testAssociationsFor(testMap, result.symbol, config)))
+          .filter(Boolean);
+        if (testNotes.length) {
+          testBlock = truncateToTokenBudget('\n\n' + testNotes.join('\n'), remainingBudget);
+        }
+      }
+    }
+  }
+
+  const body = [memoryBlock, contextBlock, diffBlock, testBlock].filter(Boolean).join('\n\n');
+  const estimatedTokens = Math.min(config.contextTokenBudget, countTokens(body) + headerReserve);
+  const header = [
+    `# Jambavan Context: "${query}"`,
+    `Symbols: ${includedChunks} included, ${droppedChunks} dropped (budget: ${config.contextTokenBudget} tokens)`,
+    `Structural candidates added before budgeting: ${structuralCount}`,
+    `Approximate tokens used: ${estimatedTokens}`,
+    '',
+  ].join('\n');
+  return truncateToTokenBudget(header + body, config.contextTokenBudget);
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 const config    = loadConfig();
 const registry  = new ToolRegistry();
-const assembler = new ContextAssembler(config);
 
 registry.register(createReadFileTool(config));
 registry.register(createSearchTool(config));
@@ -122,6 +292,7 @@ function ensureIndex(): JambavanIndex {
 }
 
 const reviewPackHandlers = buildReviewPackHandlers(config, () => jambavanIndex);
+const impactHandlers = buildImpactHandlers(config, () => jambavanIndex);
 
 // ── MCP Tool schema helpers ───────────────────────────────────────────────────
 
@@ -173,6 +344,7 @@ const NATIVE_TOOLS: Tool[] = [
       'Returns a ranked, token-budgeted context block of matching functions, classes, and types.',
       'Inject this block into your prompt to give the model precise, token-efficient codebase knowledge.',
       'Much cheaper than reading whole files — only the relevant symbol bodies are returned.',
+      'Automatically includes top project-memory matches and a bounded set of extracted callers/callees under the same token budget.',
       'Options: compress_prose shrinks comments for extra budget; include_diff adds recent git changes; include_tests shows test coverage.',
     ].join(' '),
     inputSchema: {
@@ -184,7 +356,7 @@ const NATIVE_TOOLS: Tool[] = [
         },
         limit: {
           type:        'number',
-          description: 'Max symbols to return before token-budget truncation (default: 30)',
+          description: 'Max lexical symbols before token-budget truncation; up to 6 extracted structural neighbors may be added (default: 30)',
         },
         compress_prose: {
           type:        'boolean',
@@ -276,14 +448,15 @@ const NATIVE_TOOLS: Tool[] = [
     name: 'jambavan_graph_report',
     description: [
       'Build a lightweight knowledge graph from the current code index and return hub nodes plus edge confidence notes.',
-      'Call jambavan_index first. Edges are structural contains plus capped inferred symbol-name mentions.',
-      'Defaults to the first 5000 indexed symbols; higher symbol_limit costs more and may still omit very common inferred mention names.',
+      'Call jambavan_index first. Inferred ambiguous-name edges are excluded unless include_inferred=true.',
+      'Defaults to the first 5000 indexed symbols; higher symbol_limit costs more.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
         max_nodes:    { type: 'number', description: 'Max hub nodes to show (default: 10).' },
         symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000; higher values cost more).' },
+        include_inferred: { type: 'boolean', description: 'Include ambiguous same-name inferred edges (default: false).' },
       },
       required: [],
     },
@@ -292,14 +465,16 @@ const NATIVE_TOOLS: Tool[] = [
     name: 'jambavan_graph_query',
     description: [
       'Query the current knowledge graph: find matching nodes and BFS neighbors within a token budget.',
-      'Call jambavan_index first. Uses extracted call/import edges where available plus inferred mentions.',
+      'Call jambavan_index first. Uses extracted edges by default; set include_inferred=true to include ambiguous same-name candidates.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
         query:        { type: 'string', description: 'Symbol/file text to find in the graph.' },
         budget:       { type: 'number', description: 'Max output tokens (default: 2000).' },
-        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000; higher values cost more).' },
+        symbol_limit: { type: 'number', description: 'Max symbols in the query-focused graph neighborhood (default: 5000).' },
+        direction:    { type: 'string', enum: ['inbound', 'outbound', 'both'], description: 'Traverse callers, callees, or both (default: both).' },
+        include_inferred: { type: 'boolean', description: 'Include ambiguous same-name inferred edges (default: false).' },
       },
       required: ['query'],
     },
@@ -307,15 +482,16 @@ const NATIVE_TOOLS: Tool[] = [
   {
     name: 'jambavan_graph_path',
     description: [
-      'Find the shortest path between two graph nodes/symbols using BFS over extracted and inferred edges.',
-      'Call jambavan_index first.',
+      'Find the shortest path between two graph nodes/symbols using BFS over extracted edges.',
+      'Call jambavan_index first. Set include_inferred=true to opt into ambiguous same-name edges.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
         from:         { type: 'string', description: 'Start symbol/file query.' },
         to:           { type: 'string', description: 'End symbol/file query.' },
-        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000; higher values cost more).' },
+        symbol_limit: { type: 'number', description: 'Max symbols in the query-focused graph neighborhood (default: 5000).' },
+        include_inferred: { type: 'boolean', description: 'Include ambiguous same-name inferred edges (default: false).' },
       },
       required: ['from', 'to'],
     },
@@ -343,7 +519,9 @@ const NATIVE_TOOLS: Tool[] = [
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
-      properties: {},
+      properties: {
+        issue_report: { type: 'boolean', description: 'Return a copy-ready redacted GitHub issue URL/body without posting it.' },
+      },
       required:   [],
     },
   },
@@ -367,6 +545,11 @@ const NATIVE_TOOLS: Tool[] = [
   })) as unknown as Tool[]),
   // Review pack tool
   ...(REVIEW_PACK_TOOL_DEFS.map(def => ({
+    name: def.name,
+    description: def.description,
+    inputSchema: def.inputSchema,
+  })) as unknown as Tool[]),
+  ...(IMPACT_TOOL_DEFS.map(def => ({
     name: def.name,
     description: def.description,
     inputSchema: def.inputSchema,
@@ -453,9 +636,8 @@ export async function startServer(): Promise<void> {
     { capabilities: { tools: {} }, instructions: jambavanInstructions(config) },
   );
 
-  server.oninitialized = () => {
-    void resolveClientRoots(server, config);
-  };
+  const rootResolution = new RootResolutionGate();
+  server.oninitialized = () => rootResolution.start(resolveClientRoots(server, config));
 
   // ── tools/list ─────────────────────────────────────────────────────────────
 
@@ -475,6 +657,14 @@ export async function startServer(): Promise<void> {
   // one guard here is smaller and can't be missed by a future branch.
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    try {
+      await rootResolution.wait();
+    } catch (err) {
+      return {
+        content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+        isError: true,
+      };
+    }
     const result = await handleToolCall(request);
     return {
       ...result,
@@ -511,6 +701,7 @@ export async function startServer(): Promise<void> {
         const text  = [
           `Indexed:          ${stats.indexedFiles} files`,
           `Skipped (unchanged): ${stats.skippedFiles} files`,
+          `Failed:           ${stats.failedFiles} files`,
           `Symbols extracted: ${stats.totalSymbols}`,
           `Duration:          ${stats.durationMs}ms`,
           `Index stored at:   ${config.indexDir}`,
@@ -536,91 +727,7 @@ export async function startServer(): Promise<void> {
         };
       }
 
-      const query = input['query'] as string;
-      const limit = boundedInt(input['limit'], { min: 1, max: 200, fallback: 30 });
-      const compressProse = Boolean(input['compress_prose']);
-      const includeDiff = Boolean(input['include_diff']);
-      const includeTests = Boolean(input['include_tests']);
-      const results = jambavanIndex.search(query, limit);
-
-      if (results.length === 0) {
-        return {
-          content: [{
-            type: 'text',
-            text: `No symbols found for: "${query}"\nTry a broader query or call jambavan_index to refresh.`,
-          }],
-        };
-      }
-
-      const chunks: ContextChunk[] = results.map(r => ({
-        filePath:  r.symbol.filePath,
-        content:   r.symbol.content,
-        score:     r.score,
-        startLine: r.symbol.startLine,
-        endLine:   r.symbol.endLine,
-        type:      r.symbol.type,
-      }));
-
-      // When enrichments are requested, reserve part of the budget for them.
-      // Symbols get 80% of the budget; diff+test share the remaining 20%.
-      const enrichmentRequested = includeDiff || includeTests;
-      const symbolBudgetFraction = enrichmentRequested ? 0.8 : 1.0;
-      const symbolBudget = Math.floor(config.contextTokenBudget * symbolBudgetFraction);
-
-      const { contextBlock, usedTokens, includedChunks, droppedChunks } =
-        assembler.assemble(chunks, { compressProse, budgetOverride: symbolBudget });
-
-      const enrichmentBudget = config.contextTokenBudget - usedTokens;
-
-      // Enrich with git diff info when requested
-      let diffBlock = '';
-      if (includeDiff && enrichmentBudget > 100) {
-        const topResults = results.slice(0, 5); // limit git calls
-        const diffs = topResults
-          .map(r => {
-            const changes = getRecentSymbolChanges(config, r.symbol.filePath, r.symbol.startLine, r.symbol.endLine, 2);
-            return formatRecentChanges(changes, r.symbol.name);
-          })
-          .filter(Boolean);
-        if (diffs.length) {
-          const raw = '\n\n' + diffs.join('\n\n');
-          // Use at most half the remaining enrichment budget for diffs
-          const diffBudget = includeTests ? Math.floor(enrichmentBudget * 0.5) : enrichmentBudget;
-          diffBlock = truncateToTokenBudget(raw, diffBudget);
-        }
-      }
-
-      // Enrich with test associations when requested
-      let testBlock = '';
-      if (includeTests) {
-        const remainingBudget = enrichmentBudget - countTokens(diffBlock);
-        if (remainingBudget > 50) {
-          const allSymbols = jambavanIndex.getAllSymbols?.() ?? [];
-          if (allSymbols.length > 0) {
-            const testMap = buildTestMap(allSymbols, config);
-            const topResults = results.slice(0, 10);
-            const testNotes = topResults
-              .map(r => {
-                const assocs = testMap.get(r.symbol.name) ?? [];
-                return formatTestAssociations(assocs);
-              })
-              .filter(Boolean);
-            if (testNotes.length) {
-              const raw = '\n\n' + testNotes.join('\n');
-              testBlock = truncateToTokenBudget(raw, remainingBudget);
-            }
-          }
-        }
-      }
-
-      const header = [
-        `# Jambavan Context: "${query}"`,
-        `Symbols: ${includedChunks} included, ${droppedChunks} dropped (budget: ${config.contextTokenBudget} tokens)`,
-        `Approximate tokens used: ${usedTokens}`,
-        '',
-      ].join('\n');
-
-      return { content: [{ type: 'text', text: header + contextBlock + diffBlock + testBlock }] };
+      return { content: [{ type: 'text', text: buildContextResponse(jambavanIndex, config, input) }] };
     }
 
     // ── jambavan_watch ────────────────────────────────────────────────────────
@@ -727,11 +834,17 @@ export async function startServer(): Promise<void> {
       if (!jambavanIndex) {
         return { content: [{ type: 'text', text: 'Index not built yet. Call jambavan_index first.' }], isError: true };
       }
-      const max = (input['max_nodes'] as number | undefined) ?? 10;
-      const symbolLimit = (input['symbol_limit'] as number | undefined) ?? 5000;
+      const max = boundedInt(input['max_nodes'], { min: 1, max: 100, fallback: 10 });
+      const symbolLimit = boundedInt(input['symbol_limit'], { min: 100, max: 20_000, fallback: 5000 });
       const graph = buildSymbolGraph(jambavanIndex.getAllSymbols(symbolLimit), config, jambavanIndex.getAllReExports());
       const stats = jambavanIndex.stats();
-      return { content: [{ type: 'text', text: graphReport(graph, max) + graphTruncationNote(stats.symbols, symbolLimit) }] };
+      return {
+        content: [{
+          type: 'text',
+          text: graphReport(graph, max, input['include_inferred'] === true)
+            + graphTruncationNote(stats.symbols, symbolLimit),
+        }],
+      };
     }
 
     // ── jambavan_graph_query / jambavan_graph_path ───────────────────────────────
@@ -739,13 +852,29 @@ export async function startServer(): Promise<void> {
       if (!jambavanIndex) {
         return { content: [{ type: 'text', text: 'Index not built yet. Call jambavan_index first.' }], isError: true };
       }
-      const symbolLimit = (input['symbol_limit'] as number | undefined) ?? 5000;
-      const graph = buildSymbolGraph(jambavanIndex.getAllSymbols(symbolLimit), config, jambavanIndex.getAllReExports());
+      const symbolLimit = boundedInt(input['symbol_limit'], { min: 100, max: 20_000, fallback: 5000 });
+      const queries = name === 'jambavan_graph_query'
+        ? [String(input['query'] ?? '')]
+        : [String(input['from'] ?? ''), String(input['to'] ?? '')];
+      const neighborhood = buildGraphNeighborhood(jambavanIndex, config, queries, symbolLimit);
+      const graph = neighborhood.graph;
+      const direction = ['inbound', 'outbound', 'both'].includes(String(input['direction']))
+        ? String(input['direction']) as 'inbound' | 'outbound' | 'both'
+        : 'both';
+      const includeInferred = input['include_inferred'] === true;
       const text = name === 'jambavan_graph_query'
-        ? graphQuery(graph, String(input['query'] ?? ''), (input['budget'] as number | undefined) ?? 2000)
-        : graphPath(graph, String(input['from'] ?? ''), String(input['to'] ?? ''));
-      const stats = jambavanIndex.stats();
-      return { content: [{ type: 'text', text: text + graphTruncationNote(stats.symbols, symbolLimit) }] };
+        ? graphQuery(
+            graph,
+            String(input['query'] ?? ''),
+            boundedInt(input['budget'], { min: 100, max: 20_000, fallback: 2000 }),
+            direction,
+            includeInferred,
+          )
+        : graphPath(graph, String(input['from'] ?? ''), String(input['to'] ?? ''), includeInferred);
+      const note = neighborhood.truncated
+        ? `\n\nWarning: focused graph expansion stopped at ${neighborhood.symbolCount} symbols. Results may be incomplete.`
+        : `\n\nFocused graph neighborhood: ${neighborhood.symbolCount} symbols.`;
+      return { content: [{ type: 'text', text: text + note }] };
     }
 
     // ── jambavan_diagnostics ───────────────────────────────────────────────────
@@ -770,8 +899,9 @@ export async function startServer(): Promise<void> {
           : []),
         '',
         indexStats
-          ? `Index: ${indexStats.files.totalFiles} files · ${indexStats.symbols} symbols`
+          ? `Index: ${indexStats.files.totalFiles} files · ${indexStats.symbols} symbols · ${indexStats.failures.length} failures`
           : 'Index: not built (call jambavan_index)',
+        ...(indexStats?.failures.map(f => `  ⚠ ${f.filePath}: ${f.error}`) ?? []),
         `Watcher: ${fileWatcher?.getStatus().running ? 'running' : 'stopped'} (in-process) · ${formatDaemonStatus(config)}`,
         `Project root: ${config.projectRoot} (source: ${config.rootSource})`,
       ];
@@ -781,13 +911,23 @@ export async function startServer(): Promise<void> {
 
     // ── jambavan_doctor ────────────────────────────────────────────────────────
     if (name === 'jambavan_doctor') {
-      const text = doctorReport(config, {
+      const context = {
         allowWrite: allowWrite,
         allowBash: allowBash,
-        indexStats: jambavanIndex ? { files: jambavanIndex.stats().files.totalFiles, symbols: jambavanIndex.stats().symbols } : undefined,
+        indexStats: jambavanIndex
+          ? {
+              files: jambavanIndex.stats().files.totalFiles,
+              symbols: jambavanIndex.stats().symbols,
+              failures: jambavanIndex.stats().failures,
+            }
+          : undefined,
         watcherRunning: fileWatcher?.getStatus().running ?? false,
         toolCount: NATIVE_TOOLS.length + registry.definitions().length,
-      });
+        host: detectHost(),
+      };
+      const text = input['issue_report']
+        ? doctorIssueReport(config, context)
+        : doctorReport(config, context);
       return { content: [{ type: 'text', text }] };
     }
 
@@ -834,6 +974,9 @@ export async function startServer(): Promise<void> {
     if (name === 'jambavan_review_pack') {
       return { content: [{ type: 'text', text: reviewPackHandlers.jambavan_review_pack(input) }] };
     }
+    if (name === 'jambavan_impact') {
+      return { content: [{ type: 'text', text: impactHandlers.jambavan_impact(input) }] };
+    }
 
     // ── Counsel tools (discipline protocols) ─────────────────────────────────
     if (name === 'jambavan_mool_kaaran') {
@@ -850,6 +993,24 @@ export async function startServer(): Promise<void> {
     }
 
     // ── Delegated: registry tools ────────────────────────────────────────────
+    const bashRegistered = name === 'bash' && Boolean(registry.get('bash'));
+    if (bashRegistered) {
+      const knownFailure = knownFailureBlock(config, input);
+      if (knownFailure) {
+        return {
+          content: [{
+            type: 'text',
+            text: [
+              `Blocked known unresolved failure for this exact command (${knownFailure.id}).`,
+              `Do not retry: ${knownFailure.advice}`,
+              'Change the conditions first, then set retry_known_failure=true for one deliberate retry.',
+            ].join('\n'),
+          }],
+          isError: true,
+        };
+      }
+    }
+
     const result = await registry.execute(name, input);
 
     if (!result.success) {
@@ -859,17 +1020,30 @@ export async function startServer(): Promise<void> {
         ? `${result.error ?? 'Tool execution failed'}\n${result.output}`
         : (result.error ?? 'Tool execution failed');
 
-      // Failed shell commands are the #1 source of cross-session retry loops —
-      // hand the model a copy-paste-ready call instead of hoping it remembers
-      // jambavan_failure_store exists.
-      const tip = name === 'bash'
-        ? `\n\nTip: jambavan_failure_store({ command: ${JSON.stringify(String(input['command'] ?? ''))}, symptom: ${JSON.stringify(detail.slice(0, 300))} })`
-        : '';
+      let failureNote = '';
+      if (bashRegistered) {
+        try {
+          const recorded = recordAutomaticBashFailure(
+            config,
+            String(input['command'] ?? ''),
+            detail,
+          );
+          failureNote = `\n\nFailureRecord ${recorded.stored ? 'stored' : 'already exists'}: ${recorded.id}`;
+        } catch {
+          failureNote = '\n\nWarning: command failed and its automatic FailureRecord could not be stored.';
+        }
+      }
 
       return {
-        content:  [{ type: 'text', text: detail + tip }],
+        content:  [{ type: 'text', text: detail + failureNote }],
         isError: true,
       };
+    }
+
+    if (bashRegistered) {
+      const resolved = resolveBlockingFailure(config, String(input['command'] ?? ''));
+      const note = resolved ? `\n\nResolved prior FailureRecord after successful run: ${resolved}` : '';
+      return { content: [{ type: 'text', text: result.output + note }] };
     }
 
     return { content: [{ type: 'text', text: result.output }] };

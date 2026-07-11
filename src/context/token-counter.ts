@@ -32,17 +32,22 @@ export function countTokensMany(texts: string[]): number {
  */
 export function truncateToTokenBudget(text: string, maxTokens: number): string {
   const tokens = enc.encode(text);
-  if (tokens.length <= maxTokens) return text;
+  const budget = Number.isFinite(maxTokens) ? Math.max(0, Math.floor(maxTokens)) : 0;
+  if (tokens.length <= budget) return text;
+  if (budget === 0) return '';
 
-  // Keep first 60% and last 40% of budget
-  const keepStart = Math.floor(maxTokens * 0.6);
-  const keepEnd   = maxTokens - keepStart;
+  let retained = budget;
+  while (retained >= 0) {
+    const marker = `\n… [${tokens.length - retained} tokens truncated] …\n`;
+    const keepStart = Math.floor(retained * 0.6);
+    const keepEnd = retained - keepStart;
+    const startText = enc.decode(tokens.slice(0, keepStart)) as unknown as string;
+    const endText = enc.decode(tokens.slice(tokens.length - keepEnd)) as unknown as string;
+    const result = `${startText}${marker}${endText}`;
+    const overBudget = countTokens(result) - budget;
+    if (overBudget <= 0) return result;
+    retained -= Math.max(1, overBudget);
+  }
 
-  const startTokens = tokens.slice(0, keepStart);
-  const endTokens   = tokens.slice(tokens.length - keepEnd);
-
-  const startText = enc.decode(startTokens) as unknown as string;
-  const endText   = enc.decode(endTokens)   as unknown as string;
-
-  return `${startText}\n... [${tokens.length - maxTokens} tokens truncated] ...\n${endText}`;
+  return countTokens('…') <= budget ? '…' : '';
 }

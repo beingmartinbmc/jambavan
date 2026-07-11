@@ -1,7 +1,23 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { createBashTool } from '../src/tools/bash';
+import { createBashTool, shellInvocation } from '../src/tools/bash';
+import {
+  buildFailureHandlers,
+  knownFailureBlock,
+  recordAutomaticBashFailure,
+  resolveBlockingFailure,
+} from '../src/tools/failure-memory';
+import { MemoryStore } from '../src/memory/store';
+import { projectScope } from '../src/tools/jambavan';
 import { mkTempConfig } from '../test-support/config';
+
+test('bash: selects a native PowerShell invocation on Windows', () => {
+  const invocation = shellInvocation('Write-Output hi', 'win32');
+  assert.equal(invocation.file, 'powershell.exe');
+  assert.ok(invocation.args.includes('-NonInteractive'));
+  assert.match(invocation.args.at(-1)!, /\$LASTEXITCODE -ne 0/);
+  assert.match(invocation.args.at(-1)!, /__JAMBAVAN_PWD__/);
+});
 
 test('bash: runs a command and captures stdout', async () => {
   const { config, cleanup } = mkTempConfig();
@@ -9,6 +25,60 @@ test('bash: runs a command and captures stdout', async () => {
     const r = await createBashTool(config).handler({ command: 'echo hi' });
     assert.equal(r.success, true);
     assert.match(r.output, /hi/);
+  } finally { cleanup(); }
+});
+
+test('bash: schema exposes the deliberate known-failure override', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const properties = createBashTool(config).definition.parameters['properties'] as Record<string, unknown>;
+    assert.ok(properties['retry_known_failure']);
+  } finally { cleanup(); }
+});
+
+test('bash boundary: blocks exact unresolved failures unless explicitly overridden', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    buildFailureHandlers(config).jambavan_failure_store({
+      command: 'npm test',
+      symptom: 'known failure',
+      do_not_retry: 'Do not rerun until the fixture is fixed.',
+    });
+
+    assert.match(knownFailureBlock(config, { command: 'npm test' })?.advice ?? '', /fixture is fixed/);
+    assert.equal(knownFailureBlock(config, {
+      command: 'npm test',
+      retry_known_failure: true,
+    }), undefined);
+    assert.equal(knownFailureBlock(config, { command: 'npm run test' }), undefined);
+  } finally { cleanup(); }
+});
+
+test('bash boundary: records once, then blocks only after the same command fails twice', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const command = `API_KEY=super-secret node ${config.projectRoot}/broken.js`;
+    const first = recordAutomaticBashFailure(config, command, `token=secret-value failed in ${config.projectRoot}`);
+    const second = recordAutomaticBashFailure(config, command, 'same command failed again');
+    const records = new MemoryStore(config.memoryDir).list(projectScope(config));
+
+    assert.equal(first.stored, true);
+    assert.equal(second.stored, true);
+    assert.notEqual(second.id, first.id);
+    assert.equal(records.length, 1);
+    assert.match(knownFailureBlock(config, { command })?.advice ?? '', /Do not rerun/);
+    assert.doesNotMatch(records[0].body, /super-secret|secret-value/);
+    assert.match(records[0].body, /\[REDACTED\]/);
+    assert.match(records[0].body, /\[REDACTED_PATH\]/);
+  } finally { cleanup(); }
+});
+
+test('bash boundary: a successful run clears a prior command failure', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    recordAutomaticBashFailure(config, 'npm test', 'failed once');
+    assert.ok(resolveBlockingFailure(config, 'npm test'));
+    assert.equal(knownFailureBlock(config, { command: 'npm test' }), undefined);
   } finally { cleanup(); }
 });
 

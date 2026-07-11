@@ -6,32 +6,18 @@
  * can render its own comment format without parsing markdown.
  */
 
-import { execFileSync } from 'child_process';
 import * as path from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 import type { JambavanIndex } from '../index/indexer';
 import { buildSymbolGraph, type GraphNode } from '../knowledge/graph';
-import { buildTestMap, isTestFile } from '../index/test-map';
+import { buildTestMap, isTestFile, testAssociationsFor } from '../index/test-map';
 import { harvestRin } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
 import { projectScope } from './jambavan';
+import { changedSymbols, type ChangedFile } from './changed-symbols';
+import { detectBaseBranch, getChangedFiles } from './review-pack';
 
 const DEFAULT_MAX_FILES = 30;
-const BASE_CANDIDATES = ['main', 'master', 'origin/main', 'origin/master'];
-
-function git(root: string, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd: root, encoding: 'utf-8', timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'],
-  });
-}
-
-function detectBaseBranch(root: string): string {
-  for (const candidate of BASE_CANDIDATES) {
-    try { git(root, ['rev-parse', '--verify', '--quiet', candidate]); return candidate; }
-    catch { /* try next */ }
-  }
-  return 'main';
-}
 
 export interface ReviewPackSymbol {
   name:     string;
@@ -69,22 +55,18 @@ export function buildReviewPackJson(
   index: JambavanIndex,
   base?: string,
   maxFiles = DEFAULT_MAX_FILES,
+  includeWorktree = false,
 ): ReviewPackJson {
   const root = config.projectRoot;
   const resolvedBase = base ?? detectBaseBranch(root);
 
-  let rawDiff: string;
+  let touched: ChangedFile[];
   try {
-    rawDiff = git(root, ['diff', '--name-status', `${resolvedBase}...HEAD`]);
+    touched = getChangedFiles(root, resolvedBase, includeWorktree);
   } catch (err) {
     const msg = err instanceof Error ? err.message.split('\n')[0] : String(err);
     throw new Error(`Could not diff against base "${resolvedBase}": ${msg}`);
   }
-
-  const touched = rawDiff
-    .split('\n').filter(Boolean)
-    .map(line => { const [status, ...rest] = line.split('\t'); return { status, path: rest.join('\t') }; })
-    .filter(f => f.path);
 
   if (touched.length === 0) {
     return {
@@ -122,7 +104,9 @@ export function buildReviewPackJson(
   for (const file of analyzed) {
     const absPath = path.join(root, file.path);
     const isTest = isTestFile(absPath);
-    const fileSymbols = file.status === 'D' ? [] : index.getFileSymbols(absPath);
+    const fileSymbols = file.status.startsWith('D')
+      ? []
+      : changedSymbols(index.getFileSymbols(absPath), file.ranges);
 
     const symbols: ReviewPackSymbol[] = fileSymbols.map(sym => {
       const node = symbolNodeByKey.get(`${file.path}\0${sym.name}\0${sym.startLine}`);
@@ -134,14 +118,15 @@ export function buildReviewPackJson(
             .slice(0, 8)
             .map(n => n.label)
         : [];
-      const tests = (testMap.get(sym.name) ?? []).map(t => path.relative(root, t.testFile));
+      const tests = testAssociationsFor(testMap, sym, config).map(t => t.testFile);
       return { name: sym.name, type: sym.type, startLine: sym.startLine, callers, tests };
     });
 
     const risks: string[] = [];
     if (rinByFile.has(file.path)) risks.push('has open rin debt marker(s)');
-    if (!isTest && fileSymbols.length > 0 && !symbols.some(s => s.tests.length > 0)) {
-      risks.push('no symbol in this file has a matching test');
+    const untested = symbols.filter(symbol => symbol.tests.length === 0);
+    if (!isTest && untested.length > 0) {
+      risks.push(`${untested.length} changed symbol(s) have no matching test`);
     }
     const ff = allFailures.filter(d => d.body.includes(file.path));
     if (ff.length > 0) risks.push(`${ff.length} past failure record(s) mention this file`);

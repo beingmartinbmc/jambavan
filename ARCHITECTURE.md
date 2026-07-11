@@ -1,7 +1,7 @@
 # जाम्बवान् (Jambavan) — Architecture
 
 > Jambavan is a **Model Context Protocol (MCP) server**.
-> It does not call any LLM. It provides *power* — index-aware tools and
+> It does not call any LLM. It provides index-aware tools and
 > persistent memory — to whichever host model registers it.
 
 ---
@@ -9,7 +9,7 @@
 ## What Jambavan is
 
 ```
- ┌─────────────────────┐        MCP (stdio / SSE)       ┌──────────────────────────────┐
+ ┌─────────────────────┐           MCP (stdio)          ┌──────────────────────────────┐
  │  Host model /        │ ──────────────────────────────▶ │   Jambavan MCP Server          │
  │  agent runtime       │                                 │                              │
  │                      │ ◀────────── tool results ─────  │  ── Code index ──            │
@@ -73,7 +73,7 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 | Tool | Purpose |
 |---|---|
 | `jambavan_index` | Build / refresh AST-aware codebase index (incremental) |
-| `jambavan_context` | Search index, return ranked token-budgeted context block. Optional `compress_prose` (denser comments), `include_diff` (recent git changes per symbol), `include_tests` (associated test files) — enrichments share the same token budget rather than being appended on top |
+| `jambavan_context` | Return lexical symbols plus bounded extracted callers/callees and top project-memory matches. Optional diff/test enrichments; everything shares one token budget |
 | `jambavan_watch` | Start / stop live file watcher (incremental per-file re-index) |
 | `jambavan_diagnostics` | Show tree-sitter vs regex parser backends + index stats |
 | `jambavan_doctor` | One-shot environment health check: root source, parser backends, write/bash gates, token budget, memory dir, `.gitignore`/CI, and index/watcher status |
@@ -83,9 +83,10 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 | Tool | Purpose |
 |---|---|
 | `jambavan_graph_report` | Summarize the lightweight inferred code graph (symbols, edges, hotspots) |
-| `jambavan_graph_query` | Traverse callers/callees/imports/mentions from a symbol (BFS, token-budgeted) |
+| `jambavan_graph_query` | Build a query-focused neighborhood, then traverse callers, callees, or both (BFS, token-budgeted) |
 | `jambavan_graph_path` | Shortest relationship path between two symbols |
-| `jambavan_sankshipta` | Compress prose/prompts to fewer tokens, preserving code & facts |
+| `jambavan_impact` | Map diff-hunk symbols to bounded inbound callers and associated tests, with explicit completeness metadata |
+| `jambavan_sankshipta` | Compress prose/prompts while protecting fenced/inline code, URLs, paths, versions, and environment-variable tokens |
 
 > **Graph scope.** This is a **lightweight inferred graph**, not full resolver-backed
 > program analysis. The AST extracts references (`call` / `import` / `implements`)
@@ -94,11 +95,10 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 > function), a `call`/`implements` reference whose enclosing symbol has a
 > module-level `import` for that name is resolved to the file the import
 > specifier actually points to — everything else still fans out to *all*
-> same-named symbols, since there is no full scope/type resolution. Body-token
-> mentions add capped `INFERRED` edges; very common names are skipped to avoid
-> graph blowups. Edges carry a confidence: `EXTRACTED` (from the
-> AST) or `INFERRED` (name mention). Treat it as a navigation aid, not ground
-> truth — verify before large refactors.
+> same-named symbols as `INFERRED`, since there is no full scope/type resolution.
+> Body-token mentions do not create edges. Reports, queries, and paths use only
+> `EXTRACTED` edges by default; `include_inferred=true` explicitly opts into
+> ambiguous candidates. Treat inferred edges as navigation hints, not ground truth.
 
 ### Functional aliases
 
@@ -118,34 +118,34 @@ The mythological tool names are the canonical API. These English aliases are als
 
 | Tool | Purpose |
 |---|---|
-| `jambavan_memory_store` | Persist a memory as an OKF markdown document |
+| `jambavan_memory_store` | Persist a memory as an OKF markdown document; requires `title` and `body` |
 | `jambavan_memory_search` | BM25 full-text search across stored memories |
 | `jambavan_memory_recall` | Load all memories for a scope — session wake-up |
-| `jambavan_memory_mine_session` | Distill durable facts from a session transcript |
+| `jambavan_memory_mine_session` | Deterministically mine durable items from required `text` |
 | `jambavan_memory_invalidate` | Mark a memory superseded without deleting history |
 | `jambavan_memory_delete` | Remove a memory by ID or wipe an entire scope |
 | `jambavan_memory_status` | Bundle statistics (total count, by scope) |
 
 ### Failure memory & session handoff
 
-Session-continuity tools — the goal is that a fresh session (or a different host model) doesn't repeat a dead end and doesn't have to re-derive context that already existed.
+Session-continuity tools let a fresh session (or a different host model) consult prior dead ends and previously stored context.
 
 | Tool | Purpose |
 |---|---|
 | `jambavan_failure_store` | Record a structured failure (command, symptom, attempted fix, root cause, resolution, status, do-not-retry advice) in the memory store |
 | `jambavan_failure_search` | Search past failure records before retrying a failing command or approach |
 | `jambavan_session_export` | Produce a single portable markdown handoff document: recent memories, `rin:` debt markers, and git status |
-| `jambavan_session_import` | Parse a handoff document back into memories in the target scope; tolerant of light rewording of the memory heading, idempotent on exact re-import |
+| `jambavan_session_import` | Parse required handoff `text` back into memories in the target scope; tolerant of light rewording of the memory heading, idempotent on exact re-import |
 
-Both are built on `MemoryStore` — a failure record is just a memory with `type: 'FailureRecord'` and a title that includes a content hash of `command + symptom`, so two different failures never collide on the same stored title.
+Both are built on `MemoryStore` — a failure record is a memory with `type: 'FailureRecord'` and a title that includes a short content hash of `command + symptom`, which distinguishes ordinary same-command/different-symptom records without claiming collision-proof identity.
 
 ### Review pack
 
 | Tool | Purpose |
 |---|---|
-| `jambavan_review_pack` | Diff the current branch vs a base ref (auto-detects `main`/`master`), then per touched file: list its symbols, callers via `buildSymbolGraph`, associated tests via `buildTestMap`, and risk flags (touched `rin:` debt via `harvestRin`, no matching test, or past `FailureRecord`s mentioning the file) |
+| `jambavan_review_pack` | Diff the current branch vs a base ref, intersect added/changed line ranges with indexed symbols, then report callers, path-resolved tests, debt, and failure risk. Optional `include_worktree` adds staged, unstaged, and untracked changes. |
 
-Pure composition — no new subsystem. Requires `jambavan_index` to have run at least once; without an index it still returns the raw touched-file list. The CLI wrapper `jambavan review-pack --format json` reuses the same primitives and emits `{ base, touchedCount, files, rinMarkers, failures }` for CI/PR comments; `rinMarkers` is filtered to touched files only.
+Pure composition — no new subsystem. Requires `jambavan_index` to have run at least once; without an index it still returns the raw touched-file list. The CLI wrapper `jambavan review-pack --format json` reuses the same primitives and emits `{ base, touchedCount, analyzedCount, truncated, files, rinMarkers, failures }` for CI/PR comments; `rinMarkers` is filtered to touched files only.
 
 ### Awaken
 
@@ -164,14 +164,14 @@ Pure composition — no new subsystem. Requires `jambavan_index` to have run at 
 
 | Tool | Purpose |
 |---|---|
-| `jambavan_mool_kaaran` | Root-cause investigation protocol — observe/compare/hypothesize/fix. Escalates at 3+ failed attempts |
-| `jambavan_praman` | Verification gate — demands fresh evidence before any completion claim (tests/build/fix/requirements/general) |
+| `jambavan_mool_kaaran` | Root-cause investigation protocol — observe/compare/hypothesize/fix. Recommends reassessment at 3+ failed attempts |
+| `jambavan_praman` | Verification gate — asks for fresh evidence appropriate to a completion claim (tests/build/fix/requirements/general) |
 | `jambavan_yukti` | Approach strategy — phased instructions scaled to task size (small/medium/large) |
 | `jambavan_vibhaajan` | Parallel work decomposition — boundary identification, independence verification, contracts, merge sequencing |
 
 ### File system & shell
 
-Read-only tools are always registered. Mutating and shell tools are **opt-in** (see [Safety](#safety)) — when disabled they are not registered, so the host never sees them.
+Source-reading tools are always registered. Source-mutating and shell tools are **opt-in** (see [Safety](#safety)) — when disabled they are not registered, so the host never sees them. Other MCP tools may still write Jambavan's own local state.
 
 | Tool | Default | Purpose |
 |---|---|---|
@@ -181,22 +181,22 @@ Read-only tools are always registered. Mutating and shell tools are **opt-in** (
 | `write_file` | `JAMBAVAN_ALLOW_WRITE=1` | Write or overwrite a file |
 | `patch_file` | `JAMBAVAN_ALLOW_WRITE=1` | Surgical find-and-replace (token-efficient) |
 | `jambavan_sankshipta` | `JAMBAVAN_ALLOW_WRITE=1` | Compress prose in place (writes the file — hence gated) |
-| `bash` | `JAMBAVAN_ALLOW_BASH=1` | Run shell commands (build, test, git, install) |
+| `bash` | `JAMBAVAN_ALLOW_BASH=1` | Run shell commands; block exact unresolved failures unless deliberately overridden, and auto-record redacted failures |
 
 ---
 
 ## CLI subcommands
 
-Local, no-server helpers run as `npx jambavan <subcommand>` — none call an LLM or an external service.
+Local, no-server helpers run as `npx jambavan <subcommand>`. None call an LLM. Commands are local-only except the explicit `handoff --post`, which invokes the caller's authenticated `gh pr comment`.
 
 | Subcommand | Purpose |
 |---|---|
 | `jambavan doctor` | Thin CLI wrapper around `jambavan_doctor` (see above) — root source, parser backends, gates, index stats |
-| `jambavan badges` | Print three local markdown lines for a README: benchmark card (context tokens saved, via `node dist/benchmark.js --json`), Rin Ledger, Failure Immunity count |
+| `jambavan badges` | Print three local markdown lines for a README: benchmark card (context-token estimate, via `node dist/benchmark.js --json`), Rin Ledger, Failure Memory count |
 | `jambavan bridge --to mempalace` / `--from mempalace` | Convert Jambavan memories to/from a MemPalace-shaped `wing/room/drawer.md` folder tree (see `src/tools/memory-bridge.ts`). MemPalace's real store is a Chroma vector index, not files, so this produces/consumes a portable interchange tree for a host model to walk with its own `mempalace_*` tools — Jambavan never calls MemPalace directly |
-| `jambavan handoff --write-pr-template [--post]` | Runs the `jambavan_session_export` handoff card and injects it as an HTML-comment-bounded block into `.github/pull_request_template.md` (see `src/tools/pr-handoff.ts` for the pure inject/replace transform); idempotent re-injection, no duplication. `--post` additionally shells to the caller's own authenticated `gh pr comment` — off by default, never automatic, same trust boundary as the `bash` tool |
-| `jambavan review-pack [--base <ref>] [--format markdown\|json] [--max-files <n>]` | Indexes the project, then writes a branch review pack to stdout. Markdown delegates to `jambavan_review_pack`; JSON uses `src/tools/review-pack-json.ts` for `{ touchedCount, files[], rinMarkers[], failures[] }`, which is what the GitHub Action consumes |
-| `jambavan html-handoff [--out <file>] [--scope <scope>]` | Indexes the project and writes a self-contained HTML handoff report (`src/tools/html-handoff.ts`) with memory timeline, rin debt, indexed-symbol stats, git dirty files/recent commits, collapsible sections, and copy-to-clipboard. No external assets or network calls |
+| `jambavan handoff --write-pr-template [--scope <scope>] [--share-safe] [--post]` | Runs the `jambavan_session_export` handoff card and injects it as an HTML-comment-bounded block into `.github/pull_request_template.md` (see `src/tools/pr-handoff.ts` for the pure inject/replace transform); idempotent re-injection, no duplication. `--share-safe` redacts local paths/secrets and omits git-sensitive data. `--post` additionally shells to the caller's own authenticated `gh pr comment` |
+| `jambavan review-pack [--base <ref>] [--format markdown\|json] [--max-files <n>] [--include-worktree]` | Indexes the project, then writes a branch review pack to stdout. Markdown delegates to `jambavan_review_pack`; JSON uses `src/tools/review-pack-json.ts` for `{ base, touchedCount, analyzedCount, truncated, files[], rinMarkers[], failures[] }`, which is what the GitHub Action consumes |
+| `jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]` | Indexes the project and writes a self-contained HTML handoff report (`src/tools/html-handoff.ts`) with memory timeline, rin debt, indexed-symbol stats, git dirty files/recent commits, collapsible sections, and copy-to-clipboard. `--share-safe` redacts local paths/secrets and omits git-sensitive data. No external assets or network calls |
 | `jambavan daemon start\|stop\|status` | Spawns/stops/inspects a detached background process (`src/daemon-worker.ts`, managed by `src/tools/daemon.ts`) that runs the same `FileWatcher` as `jambavan_watch`, standalone. PID file at `.jambavan/daemon.pid`, log at `.jambavan/daemon.log`, liveness checked via `process.kill(pid, 0)`. `jambavan_watch`/`jambavan_diagnostics`/`jambavan_awaken` all check this PID file first to avoid starting a redundant in-process watcher |
 | `jambavan gui [--port <n>] [--no-open]` | Indexes the project, then serves a dependency-free static page (`src/tools/gui.ts`) over Node's `http` module bound to `127.0.0.1` only — a force-directed graph view (from `buildSymbolGraph`, capped to the 400 highest-degree nodes), rin debt (`harvestRin`), and failure records (`MemoryStore`). `/api/data` serves the graph/sidebar data; `/api/node/:id` serves click-through source snippets, callers, callees, and heat counts. Opens the default browser unless `--no-open` is passed |
 
@@ -263,7 +263,7 @@ src/
 │                             # opt-in gating of write/bash tools
 │
 ├── index/
-│   ├── indexer.ts            # Orchestrates full / incremental indexing
+│   ├── indexer.ts            # SQLite symbol index, FTS5/LIKE search, full/incremental indexing
 │   ├── ast-parser.ts         # Symbol extractor (tree-sitter + regex fallback)
 │   ├── file-cache.ts         # SQLite: file hash → indexed state (incremental)
 │   ├── watcher.ts            # chokidar: watch for changes
@@ -280,7 +280,7 @@ src/
 │
 ├── context/
 │   ├── assembler.ts          # Ranks + packs symbols within token budget
-│   ├── token-counter.ts      # js-tiktoken: exact token counts
+│   ├── token-counter.ts      # js-tiktoken cl100k_base estimates for host-model tokens
 │   └── diff-enricher.ts      # Recent git history per symbol line range (execFileSync, no shell)
 │
 ├── tools/
@@ -325,17 +325,18 @@ test-support/                 # shared test helpers (temp config, env sandbox)
 ## How `jambavan_context` works
 
 ```
-Host model calls jambavan_context(query="auth middleware")
+Host model calls jambavan_context { "query": "auth middleware" }
          │
          ▼
   JambavanIndex.search(query, limit=30)
-  ├─ SQLite LIKE match on symbol names + content (memory search uses BM25)
-  └─ Returns ranked (symbol, score) pairs
+  ├─ SQLite FTS5/BM25 search over symbol names + content
+  ├─ LIKE fallback for tokenizer edge cases or FTS5 errors
+  └─ Re-rank exact/prefix name matches ahead of BM25 order
          │
          ▼
   ContextAssembler.assemble(chunks, { budgetOverride? })
   ├─ Sort by relevance score descending
-  ├─ Greedily pack into token budget (default: 8 000 tokens;
+  ├─ Greedily pack into token budget (default: 8 000 cl100k_base tokens;
   │  reserved down to 80% if include_diff/include_tests requested)
   └─ Format: ### file.ts:10-45 [function]\n```\n...\n```
          │
@@ -346,9 +347,10 @@ Host model calls jambavan_context(query="auth middleware")
          │
          ▼
   MCP text result returned to host model
-  → Host model has precise, cheap, relevant context
-    without reading whole files
+  → Host model receives bounded relevant context without reading whole files
 ```
+
+`js-tiktoken` counts are exact for `cl100k_base`; they are approximate estimates for host models that use a different tokenizer.
 
 ---
 
@@ -357,7 +359,7 @@ Host model calls jambavan_context(query="auth middleware")
 Memories are stored as [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concept documents — markdown files with YAML frontmatter — inside `.jambavan/memory/`. No database, no embeddings, no external services.
 
 ```
-jambavan_memory_store(title="Why we use GraphQL", body="...", scope="my-project")
+jambavan_memory_store { "title": "Why we use GraphQL", "body": "...", "scope": "my-project" }
          │
          ▼
   MemoryStore.store()
@@ -371,7 +373,7 @@ jambavan_memory_store(title="Why we use GraphQL", body="...", scope="my-project"
   .jambavan/memory/my-project/why-we-use-graphql.md
   → Human-readable, git-diffable, portable
 
-jambavan_memory_search(query="graphql rationale")
+jambavan_memory_search { "query": "graphql rationale", "scope": "my-project" }
          │
          ▼
   MemoryStore.search()
@@ -412,19 +414,7 @@ We evaluated REST vs GraphQL in Q1 2026. GraphQL won because ...
 
 ## Why no LLM in Jambavan?
 
-Every existing AI coding tool (Cline, Cursor Agent, Aider, Claude Code)
-bundles its own agent loop. That means:
-
-- You're locked to one model
-- You can't compose tools across agents
-- Token strategies are opaque
-
-Jambavan takes the opposite approach:
-**Your model of choice orchestrates. Jambavan provides the infrastructure.**
-
-Register Jambavan in Claude Code → Claude reasons, Jambavan's index + tools execute.  
-Register Jambavan in Codex → same tools, different model.  
-The index, the context budgeting, the memory, the surgical patch — all reusable.
+Jambavan keeps retrieval, storage, and deterministic transforms separate from the host's model. The registered MCP host decides how to reason and act; Jambavan supplies the same local tools over stdio. This keeps Jambavan's own behavior reproducible and avoids adding another model call or upload path.
 
 ---
 
@@ -433,16 +423,19 @@ The index, the context budgeting, the memory, the surgical patch — all reusabl
 | Env var | Default | Description |
 |---|---|---|
 | `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
+| `JAMBAVAN_SCOPE` | path-derived slug + hash | Clone-independent memory scope; 1-80 lowercase letters, numbers, or hyphens |
 | `JAMBAVAN_MEMORY_HOME` | `<indexDir>/memory` | Where OKF memory docs live; point at a shared palace to reuse memory across projects |
-| `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max tokens in `jambavan_context` output |
+| `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max approximate `cl100k_base` tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite` / `full` / `ultra`) |
 | `JAMBAVAN_ALLOW_WRITE` | off | `1` registers `write_file` + `patch_file` + `jambavan_sankshipta` |
 | `JAMBAVAN_ALLOW_BASH` | off | `1` registers `bash` |
-| `JAMBAVAN_ALLOW_OUTSIDE_ROOT` | off | `1` lets tools escape the project root |
-| `JAMBAVAN_ALLOW_SECRETS` | off | `1` lets file tools touch secret-looking files |
+| `JAMBAVAN_ALLOW_OUTSIDE_ROOT` | off | `1` disables direct-path project-root containment |
+| `JAMBAVAN_ALLOW_SECRETS` | off | `1` allows direct paths that match the secret-file guard |
 | `JAMBAVAN_BASH_INHERIT_ENV` | off | `1` passes the full host env to `bash` |
 | `JAMBAVAN_MAX_OUTPUT_CHARS` | `100000` | Global cap on any tool's returned output |
 | `JAMBAVAN_MAX_READ_BYTES` | `5242880` | Max file size `read_file` will load |
+
+`JAMBAVAN_SCOPE` is used by project-scoped awakening, context-memory enrichment, failures, and handoffs. Manual memory store/mining calls default to `general` unless their `scope` argument is supplied.
 
 ---
 
@@ -454,11 +447,11 @@ Jambavan bakes token-efficient computer use into its startup protocol and Vibhis
 
 ## Safety model
 
-Jambavan is driven by an autonomous host model, so capability is granted, not assumed:
+Jambavan is driven by a host model, so source mutation and shell execution are granted explicitly:
 
-- **Read-only by default.** Only `read_file`, `search`, and `list_files` register unless `JAMBAVAN_ALLOW_WRITE=1` (adds `write_file`, `patch_file`, and `jambavan_sankshipta` — which rewrites files in place) or `JAMBAVAN_ALLOW_BASH=1` (adds `bash`). Disabled tools are never advertised to the host.
-- **Path containment.** All file/shell paths resolve inside `JAMBAVAN_ROOT`; symlinks are checked via `realpath`. `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` disables this for trusted local use.
-- **Secret-file guard.** `.env*`, `*.pem`, `*.key`, `id_rsa`, `.npmrc`, and similar are refused by all file tools unless `JAMBAVAN_ALLOW_SECRETS=1`.
+- **Source mutation and shell are off by default.** `read_file`, `search`, and `list_files` register without opt-in. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_sankshipta`; `JAMBAVAN_ALLOW_BASH=1` adds `bash`. Indexing, memory, failure tracking, handoff generation, and daemon operation still write local `.jambavan/` state.
+- **Path containment.** Direct file/search/list path arguments and the shell working directory resolve inside `JAMBAVAN_ROOT`; symlinks are checked via `realpath`. An enabled shell command is not path-sandboxed. `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` disables direct-path containment for trusted local use.
+- **Direct secret-path guard.** Known secret basenames/extensions and immediate parent directories are refused for direct file/search/list paths and shell working directories unless `JAMBAVAN_ALLOW_SECRETS=1`. This is not content scanning and does not stop an enabled shell command from opening a secret file.
 - **`bash` isolation.** Runs with a minimal no-color env (no inherited host secrets unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and a best-effort footgun blocklist for obvious root/home/project wipes, destructive git resets/cleans, fork bombs, and blind remote shell pipes. The blocklist is **not** a security boundary — run inside a container/microVM for real isolation.
 - **Output caps.** Every tool result is truncated at `JAMBAVAN_MAX_OUTPUT_CHARS`; `read_file` refuses files over `JAMBAVAN_MAX_READ_BYTES` before loading them. Host-supplied numeric params (line ranges, `max_results`, `limit`) are clamped to safe ranges.
 
@@ -485,7 +478,8 @@ First run (jambavan_index):
   Time: O(n files)
 
 Every subsequent call (jambavan_index):
-  Hash each file → compare to cache → skip unchanged
+  Discover and hash candidate files → compare to cache → skip unchanged
   Re-parse only stale/new files
-  Time: O(changed files) ≈ O(1) for a normal dev session
+  Discovery/hash: O(n files)
+  Parsing: O(changed files)
 ```

@@ -98,7 +98,15 @@ test('truncateToTokenBudget: truncates and inserts a marker when text exceeds bu
   const long = Array.from({ length: 50 }, (_, i) => `word${i}`).join(' ');
   const result = truncateToTokenBudget(long, 10);
   assert.match(result, /tokens truncated/);
+  assert.ok(countTokens(result) <= 10, 'marker and retained text must fit the budget');
   assert.ok(result.length < long.length, 'truncated result must be shorter');
+});
+
+test('truncateToTokenBudget: never exceeds tiny or invalid budgets', () => {
+  const long = 'one two three four five';
+  for (const budget of [0, 1, 2, Number.NaN]) {
+    assert.ok(countTokens(truncateToTokenBudget(long, budget)) <= (Number.isFinite(budget) ? budget : 0));
+  }
 });
 
 test('countTokensMany: sums token counts across an array of strings', () => {

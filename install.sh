@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Jambavan installer — macOS / Linux / WSL / Git Bash.
-# One command. Finds every coding agent on your machine. Registers Jambavan
-# as an MCP server for each one it finds. Safe to re-run.
+# One command. Finds supported coding agents and registers Jambavan where the
+# host config can be updated safely; otherwise prints exact manual steps.
 #
 #   curl -fsSL https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/install.sh | bash
 set -euo pipefail
@@ -15,19 +15,22 @@ printf "${BOLD}Jambavan install${RESET}\n\n"
 
 # --- Node version check -------------------------------------------------------
 if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js >= 20 is required. Install it from https://nodejs.org and re-run." >&2
+  echo "Node.js >= 20 and < 27 is required. Install it from https://nodejs.org and re-run." >&2
   exit 1
 fi
 node_major=$(node -p "process.versions.node.split('.')[0]")
-if [ "$node_major" -lt 20 ]; then
-  echo "Node.js >= 20 is required (found $(node -v)). Install a newer version and re-run." >&2
+if [ "$node_major" -lt 20 ] || [ "$node_major" -ge 27 ]; then
+  echo "Node.js >= 20 and < 27 is required (found $(node -v)). Install a supported version and re-run." >&2
   exit 1
 fi
 ok "Node $(node -v)"
 
 # Pre-fetch the npx cache so the first real tool call an agent makes isn't
 # the one paying for the download.
-npx -y jambavan --help >/dev/null 2>&1 || true
+if ! npx -y jambavan --help >/dev/null 2>&1; then
+  echo "Package preflight failed: npx could not install or run jambavan." >&2
+  exit 1
+fi
 
 # --- Opt-in tools prompt ------------------------------------------------------
 # Detect non-interactive (piped) run: stdin is not a tty.
@@ -101,7 +104,22 @@ if [ -d "$HOME/.cursor" ]; then
     const aw = process.argv[2] === "1";
     const ab = process.argv[3] === "1";
     let cfg = {};
-    try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+    if (fs.existsSync(file)) {
+      try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); }
+      catch (error) {
+        console.error(`Malformed JSON in ${file}: ${error.message}`);
+        process.exit(2);
+      }
+    }
+    if (!cfg || Array.isArray(cfg) || typeof cfg !== "object") {
+      console.error(`Invalid MCP config in ${file}: expected a JSON object`);
+      process.exit(2);
+    }
+    if (cfg.mcpServers !== undefined &&
+        (!cfg.mcpServers || Array.isArray(cfg.mcpServers) || typeof cfg.mcpServers !== "object")) {
+      console.error(`Invalid MCP config in ${file}: mcpServers must be an object`);
+      process.exit(2);
+    }
     cfg.mcpServers = cfg.mcpServers || {};
     if (cfg.mcpServers.jambavan) { console.log("exists"); process.exit(0); }
     const entry = { command: "npx", args: ["-y", "jambavan"] };
@@ -112,38 +130,58 @@ if [ -d "$HOME/.cursor" ]; then
     }
     cfg.mcpServers.jambavan = entry;
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + "\n");
+    if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak`);
+    const temp = `${file}.tmp-${process.pid}`;
+    fs.writeFileSync(temp, JSON.stringify(cfg, null, 2) + "\n");
+    fs.renameSync(temp, file);
     console.log("added");
-  ' "$HOME/.cursor/mcp.json" "$allow_write" "$allow_bash" 2>/dev/null) || result="error"
+  ' "$HOME/.cursor/mcp.json" "$allow_write" "$allow_bash") || result="error"
   case "$result" in
     added)  ok "Cursor — registered in ~/.cursor/mcp.json" ;;
     exists) skip "Cursor — already registered" ;;
-    *)      warn "Cursor — found but could not update ~/.cursor/mcp.json" ;;
+    *)      echo "Cursor config was not changed. Fix ~/.cursor/mcp.json and re-run." >&2; exit 1 ;;
   esac
 else
   skip "Cursor — not found"
 fi
 
-# --- Continue (single-server JSON drop-in) ------------------------------------
+# --- Continue (documented config.yaml) ----------------------------------------
 if [ -d "$HOME/.continue" ]; then
   found=1
-  target="$HOME/.continue/mcpServers/jambavan.json"
+  target="$HOME/.continue/config.yaml"
   if [ -f "$target" ]; then
-    skip "Continue — already registered"
+    warn "Continue — $target already exists; add this entry manually:"
+    printf '%s\n' \
+      "mcpServers:" \
+      "  - name: Jambavan" \
+      "    command: npx" \
+      "    args:" \
+      "      - -y" \
+      "      - jambavan"
+    [ "$allow_write" -eq 1 ] && printf '%s\n' "    env:" "      JAMBAVAN_ALLOW_WRITE: \"1\""
+    if [ "$allow_bash" -eq 1 ]; then
+      [ "$allow_write" -eq 0 ] && printf '%s\n' "    env:"
+      printf '%s\n' "      JAMBAVAN_ALLOW_BASH: \"1\""
+    fi
   else
-    mkdir -p "$HOME/.continue/mcpServers"
-    node -e '
-      const aw = process.argv[1] === "1";
-      const ab = process.argv[2] === "1";
-      const entry = { command: "npx", args: ["-y", "jambavan"] };
-      if (aw || ab) {
-        entry.env = {};
-        if (aw) entry.env.JAMBAVAN_ALLOW_WRITE = "1";
-        if (ab) entry.env.JAMBAVAN_ALLOW_BASH  = "1";
-      }
-      process.stdout.write(JSON.stringify(entry, null, 2) + "\n");
-    ' "$allow_write" "$allow_bash" > "$target"
-    ok "Continue — registered in ~/.continue/mcpServers/jambavan.json"
+    temp="${target}.tmp-$$"
+    printf '%s\n' \
+      "name: Local config" \
+      "version: 1.0.0" \
+      "schema: v1" \
+      "mcpServers:" \
+      "  - name: Jambavan" \
+      "    command: npx" \
+      "    args:" \
+      "      - -y" \
+      "      - jambavan" > "$temp"
+    [ "$allow_write" -eq 1 ] && printf '%s\n' "    env:" "      JAMBAVAN_ALLOW_WRITE: \"1\"" >> "$temp"
+    if [ "$allow_bash" -eq 1 ]; then
+      [ "$allow_write" -eq 0 ] && printf '%s\n' "    env:" >> "$temp"
+      printf '%s\n' "      JAMBAVAN_ALLOW_BASH: \"1\"" >> "$temp"
+    fi
+    mv "$temp" "$target"
+    ok "Continue — registered in ~/.continue/config.yaml"
   fi
 else
   skip "Continue — not found"
@@ -154,5 +192,10 @@ if [ "$found" -eq 0 ]; then
   warn "No supported agent found on this machine (looked for Claude Code, Codex CLI, Cursor, Continue)."
   echo "Install one, then re-run this script."
 else
-  echo "Done. Restart your agent(s) to pick up the new MCP server."
+  echo "Activate: restart your agent(s), then call jambavan_awaken once."
+  echo "Uninstall:"
+  echo "  Claude Code: claude mcp remove jambavan"
+  echo "  Codex CLI:   codex mcp remove jambavan"
+  echo "  Cursor:      remove mcpServers.jambavan from ~/.cursor/mcp.json, then restart Cursor"
+  echo "  Continue:    remove the Jambavan entry from ~/.continue/config.yaml, then restart Continue"
 fi

@@ -62,8 +62,8 @@ export class FileCache {
     if (!row) return true;
 
     // Fast path: unchanged size + mtime means unchanged content — skip the read+hash.
-    // rin: mtime can miss same-second edits that preserve size; drop this branch if
-    // sub-second re-saves must be caught (the watcher already re-indexes on save).
+    // rin: size+mtime can miss same-timestamp same-size edits; always hash if that becomes observable.
+    // The watcher already re-indexes on save.
     if (row.size === stat.size && row.mtime_ms === Math.floor(stat.mtimeMs)) return false;
 
     return row.content_hash !== FileCache.hashFile(filePath);
@@ -103,13 +103,6 @@ export class FileCache {
       indexedAt:   row.indexed_at,
       symbolCount: row.symbol_count,
     }));
-  }
-
-  /** Return files that have changed since last index.
-   * rin: sequential metadata check; near-free per file, batch if >50k files ever stalls startup.
-   */
-  getStaleFiles(filePaths: string[]): string[] {
-    return filePaths.filter(f => this.isStale(f));
   }
 
   stats(): { totalFiles: number; lastIndexed: number } {

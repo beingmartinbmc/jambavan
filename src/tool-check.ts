@@ -131,6 +131,7 @@ async function main(): Promise<void> {
 
   // ── Review pack tool ──
   await call('jambavan_review_pack', { base: 'main' });
+  await call('jambavan_impact', { base: 'main', max_depth: 2 });
 
   // ── Counsel tools (discipline protocols) ──
   await call('jambavan_mool_kaaran', { symptom: 'TypeError: Cannot read property of undefined', context: 'greet function', attempts_so_far: 0 });
@@ -166,7 +167,7 @@ async function main(): Promise<void> {
 
   await client.close();
   fs.rmSync(proj, { recursive: true, force: true });
-  if (rows.some(r => !r.ok)) process.exitCode = 1;
+  if (rows.some(r => !r.ok) || missing.length > 0) process.exitCode = 1;
 }
 
 main().catch(err => { console.error(err); process.exit(1); });

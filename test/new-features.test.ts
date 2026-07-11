@@ -2,13 +2,16 @@ import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as path from 'path';
-import { mkTempConfig } from '../test-support/config';
+import { mkTempConfig, withEnv } from '../test-support/config';
 import { buildFailureHandlers } from '../src/tools/failure-memory';
 import { buildSessionHandoffHandlers } from '../src/tools/session-handoff';
-import { buildTestMap, isTestFile, formatTestAssociations } from '../src/index/test-map';
+import { buildHtmlHandoff } from '../src/tools/html-handoff';
+import { buildTestMap, isTestFile, formatTestAssociations, testAssociationsFor } from '../src/index/test-map';
 import { projectScope } from '../src/tools/jambavan';
 import { buildSymbolGraph } from '../src/knowledge/graph';
-import type { JambavanConfig } from '../src/config/jambavan.config';
+import { loadConfig, type JambavanConfig } from '../src/config/jambavan.config';
+import { MemoryStore } from '../src/memory/store';
+import type { JambavanIndex } from '../src/index/indexer';
 import type { Symbol } from '../src/index/ast-parser';
 
 // ── projectScope ─────────────────────────────────────────────────────────────
@@ -25,6 +28,18 @@ test('projectScope: two repos with same basename get different scopes', () => {
 test('projectScope: same path always produces the same scope (deterministic)', () => {
   const config: JambavanConfig = { projectRoot: '/home/user/work/api', indexDir: '', memoryDir: '', contextTokenBudget: 8000, ignore: [], rootSource: 'env' };
   assert.equal(projectScope(config), projectScope(config));
+});
+
+test('projectScope: JAMBAVAN_SCOPE provides a validated clone-independent override', async () => {
+  const { root, cleanup } = mkTempConfig();
+  try {
+    await withEnv({ JAMBAVAN_ROOT: root, JAMBAVAN_SCOPE: 'shared-team-scope' }, () => {
+      assert.equal(projectScope(loadConfig()), 'shared-team-scope');
+    });
+    await withEnv({ JAMBAVAN_ROOT: root, JAMBAVAN_SCOPE: '../private' }, () => {
+      assert.throws(() => loadConfig(), /Invalid JAMBAVAN_SCOPE/);
+    });
+  } finally { cleanup(); }
 });
 
 // ── Failure Memory ───────────────────────────────────────────────────────────
@@ -132,6 +147,44 @@ test('jambavan_session_export: produces markdown with expected sections', () => 
     assert.match(result, /## Failures/);
     assert.match(result, /## Other Memories/);
     assert.match(result, /## Next Command/);
+  } finally { cleanup(); }
+});
+
+test('share-safe Markdown and HTML handoffs redact private data while local mode stays full', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const secret = 'ghp_123456789012345678901234567890123456';
+    new MemoryStore(config.memoryDir).store({
+      title: 'Local setup',
+      body: `Root: ${config.projectRoot}\ntoken=${secret}`,
+      scope: projectScope(config),
+    });
+
+    const handlers = buildSessionHandoffHandlers(config);
+    const local = handlers.jambavan_session_export({ include_git: false, include_rin: false });
+    assert.ok(local.includes(config.projectRoot));
+    assert.ok(local.includes(secret));
+
+    const safe = handlers.jambavan_session_export({ share_safe: true, include_rin: false });
+    assert.match(safe, /Review before sharing/);
+    assert.match(safe, /\[REDACTED/);
+    assert.ok(!safe.includes(config.projectRoot));
+    assert.ok(!safe.includes(secret));
+    assert.doesNotMatch(safe, /## Git Status/);
+    assert.doesNotMatch(safe, /clean working tree/);
+
+    const fakeIndex = { stats: () => ({ symbols: 7 }) } as unknown as JambavanIndex;
+    const localHtml = buildHtmlHandoff(config, fakeIndex);
+    assert.ok(localHtml.includes(config.projectRoot));
+    assert.ok(localHtml.includes(secret));
+    assert.match(localHtml, />Git Status</);
+
+    const html = buildHtmlHandoff(config, fakeIndex, { shareSafe: true });
+    assert.match(html, /Review before sharing/);
+    assert.match(html, /https:\/\/github\.com\/beingmartinbmc\/jambavan/);
+    assert.ok(!html.includes(config.projectRoot));
+    assert.ok(!html.includes(secret));
+    assert.doesNotMatch(html, />Git Status</);
   } finally { cleanup(); }
 });
 
@@ -307,6 +360,25 @@ test('buildTestMap: discovers symbol-less test files via filesystem scan', () =>
     assert.equal(assocs.length, 1);
     assert.equal(assocs[0].confidence, 'import');
     assert.match(assocs[0].testFile, /utils\.spec\.ts/);
+  } finally { cleanup(); }
+});
+
+test('buildTestMap: import path disambiguates same-named source symbols', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const testDir = path.join(root, 'test');
+    fs.mkdirSync(testDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(testDir, 'chosen.test.ts'),
+      'import { handler } from "../src/chosen";\ntest("chosen", () => handler());\n',
+    );
+    const chosen = sym('handler', path.join(root, 'src/chosen.ts'), 'export function handler() {}');
+    const other = sym('handler', path.join(root, 'src/other.ts'), 'export function handler() {}');
+
+    const map = buildTestMap([chosen, other], config);
+
+    assert.equal(testAssociationsFor(map, chosen, config).length, 1);
+    assert.equal(testAssociationsFor(map, other, config).length, 0);
   } finally { cleanup(); }
 });
 

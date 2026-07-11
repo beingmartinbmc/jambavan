@@ -4,12 +4,46 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { mkTempConfig, withEnv } from '../test-support/config';
 import { applyResolvedRoot } from '../src/config/jambavan.config';
-import { doctorReport } from '../src/tools/doctor';
+import { doctorIssueReport, doctorReport } from '../src/tools/doctor';
 import { buildMemoryHandlers } from '../src/tools/memory';
 import { buildFailureHandlers } from '../src/tools/failure-memory';
 import { buildSessionHandoffHandlers } from '../src/tools/session-handoff';
+import { RootResolutionGate, selectClientRoot } from '../src/mcp/server';
 
 // ── applyResolvedRoot ────────────────────────────────────────────────────────
+
+test('RootResolutionGate: stateful work waits for client root resolution', async () => {
+  const gate = new RootResolutionGate();
+  let settle!: () => void;
+  gate.start(new Promise<void>(resolve => { settle = resolve; }));
+
+  let statefulCallRan = false;
+  const statefulCall = gate.wait().then(() => { statefulCallRan = true; });
+  await Promise.resolve();
+  assert.equal(statefulCallRan, false);
+
+  settle();
+  await statefulCall;
+  assert.equal(statefulCallRan, true);
+});
+
+test('RootResolutionGate: captures resolution failures until the tool call can report them', async () => {
+  const gate = new RootResolutionGate();
+  gate.start(Promise.reject(new Error('choose one root')));
+  await assert.rejects(gate.wait(), /choose one root/);
+});
+
+test('selectClientRoot: rejects ambiguous or non-file workspaces', () => {
+  assert.throws(
+    () => selectClientRoot([{ uri: 'file:///one' }, { uri: 'file:///two' }]),
+    /multiple workspace roots require an explicit JAMBAVAN_ROOT/,
+  );
+  assert.throws(
+    () => selectClientRoot([{ uri: 'vscode-remote://ssh/project' }]),
+    /unsupported non-file workspace URI/,
+  );
+  assert.match(selectClientRoot([{ uri: 'file:///tmp/project' }])!, /tmp[\\/]project$/);
+});
 
 test('applyResolvedRoot: updates projectRoot/indexDir/memoryDir and marks source client-roots', async () => {
   await withEnv({ JAMBAVAN_ROOT: undefined, JAMBAVAN_MEMORY_HOME: undefined }, () => {
@@ -120,4 +154,40 @@ test('doctorReport: reports index stats when provided, "not built" otherwise', (
 
   const withIndex = doctorReport(config, { allowWrite: false, allowBash: false, indexStats: { files: 3, symbols: 12 } });
   assert.match(withIndex, /3 files, 12 symbols/);
+
+  const withFailure = doctorReport(config, {
+    allowWrite: false,
+    allowBash: false,
+    indexStats: { files: 3, symbols: 12, failures: [{ filePath: '/tmp/broken.ts', error: 'parse failed' }] },
+  });
+  assert.match(withFailure, /1 failures/);
+  assert.match(withFailure, /broken\.ts: parse failed/);
+});
+
+test('doctorIssueReport: emits a copy-ready redacted issue URL and actionable body', () => {
+  const { config } = mkTempConfig();
+  const secret = 'ghp_123456789012345678901234567890123456';
+  const report = doctorIssueReport(config, {
+    allowWrite: false,
+    allowBash: false,
+    host: 'Cursor',
+    watcherRunning: false,
+    indexStats: {
+      files: 3,
+      symbols: 12,
+      failures: [{ filePath: path.join(config.projectRoot, 'private.ts'), error: `token=${secret}` }],
+    },
+  });
+
+  assert.match(report, /https:\/\/github\.com\/beingmartinbmc\/jambavan\/issues\/new/);
+  assert.match(report, /## Environment/);
+  assert.match(report, /OS:/);
+  assert.match(report, /Host: Cursor/);
+  assert.match(report, new RegExp(`Node: ${process.version.replaceAll('.', '\\.')}`));
+  assert.match(report, /Root source: env/);
+  assert.match(report, /Parser health/);
+  assert.match(report, /Suggested action/);
+  assert.match(report, /No issue was posted/);
+  assert.ok(!report.includes(config.projectRoot));
+  assert.ok(!report.includes(secret));
 });

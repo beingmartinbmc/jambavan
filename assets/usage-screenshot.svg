@@ -40,7 +40,7 @@
       <text x="124" y="564" fill="#94a3b8">Context: ranked snippets, callers, tests, and recent diff under budget</text>
 
       <text x="124" y="618" fill="#60a5fa">$ npx jambavan badges</text>
-      <text x="124" y="654" fill="#f8fafc">Benchmark saved context tokens | Rin Ledger clean | Failure Immunity 0</text>
+      <text x="124" y="654" fill="#f8fafc">Benchmark saved context tokens | Rin Ledger clean | Failure Memory 0</text>
     </g>
   </g>
 </svg>

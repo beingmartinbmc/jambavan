@@ -18,7 +18,7 @@ import type { JambavanConfig } from '../config/jambavan.config';
 import type { JambavanIndex }  from '../index/indexer';
 import { MemoryStore, type MemoryDoc } from '../memory/store';
 import { harvestRin } from './vibhishana-niti';
-import { projectScope } from './jambavan';
+import { projectScope, redactForSharing } from './jambavan';
 
 function git(root: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -30,14 +30,14 @@ function esc(s: string): string {
   return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c as '&'] ?? c));
 }
 
-function renderMemorySection(docs: MemoryDoc[], title: string): string {
+function renderMemorySection(docs: MemoryDoc[], title: string, redact: (value: string) => string): string {
   if (docs.length === 0) return `<details open><summary class="sec">${esc(title)} <span class="count">0</span></summary><p class="muted">None recorded.</p></details>`;
   const items = docs.map(d => {
-    const type = d.frontmatter.type && d.frontmatter.type !== 'Memory' ? `<span class="badge type">${esc(d.frontmatter.type)}</span>` : '';
-    const tags = d.frontmatter.tags.map(t => `<span class="badge tag">${esc(t)}</span>`).join(' ');
+    const type = d.frontmatter.type && d.frontmatter.type !== 'Memory' ? `<span class="badge type">${esc(redact(d.frontmatter.type))}</span>` : '';
+    const tags = d.frontmatter.tags.map(t => `<span class="badge tag">${esc(redact(t))}</span>`).join(' ');
     return `<details class="memory-item">
-      <summary><b>${esc(d.frontmatter.title)}</b> ${type} <span class="muted">${d.frontmatter.timestamp.slice(0,10)}</span> ${tags}</summary>
-      <pre class="body">${esc(d.body.trim())}</pre>
+      <summary><b>${esc(redact(d.frontmatter.title))}</b> ${type} <span class="muted">${d.frontmatter.timestamp.slice(0,10)}</span> ${tags}</summary>
+      <pre class="body">${esc(redact(d.body.trim()))}</pre>
     </details>`;
   }).join('\n');
   return `<details open><summary class="sec">${esc(title)} <span class="count">${docs.length}</span></summary>${items}</details>`;
@@ -46,9 +46,10 @@ function renderMemorySection(docs: MemoryDoc[], title: string): string {
 export function buildHtmlHandoff(
   config:  JambavanConfig,
   index:   JambavanIndex,
-  opts:    { scope?: string } = {},
+  opts:    { scope?: string; shareSafe?: boolean } = {},
 ): string {
   const scope    = opts.scope ?? projectScope(config);
+  const redact   = (value: string) => opts.shareSafe ? redactForSharing(value, config) : value;
   const store    = new MemoryStore(config.memoryDir);
   const allDocs  = store.list(scope).sort((a, b) => b.frontmatter.timestamp.localeCompare(a.frontmatter.timestamp));
 
@@ -64,7 +65,7 @@ export function buildHtmlHandoff(
 
   // Git
   let gitHtml = '<p class="muted">Git not available or not a git repository.</p>';
-  try {
+  if (!opts.shareSafe) try {
     const root   = config.projectRoot;
     const branch = git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).trim();
     const dirty  = git(root, ['status', '--porcelain']).split('\n').filter(Boolean);
@@ -83,7 +84,7 @@ export function buildHtmlHandoff(
     ? '<p class="muted">No rin markers — clean ledger.</p>'
     : markers.map(m => {
         const cls = m.hasUpgrade ? '' : ' class="no-trigger"';
-        return `<div${cls}><code>${esc(m.file)}:${m.line}</code> — ${esc(m.comment)}${m.hasUpgrade ? '' : ' <span class="badge warn">no trigger</span>'}</div>`;
+        return `<div${cls}><code>${esc(redact(m.file))}:${m.line}</code> — ${esc(redact(m.comment))}${m.hasUpgrade ? '' : ' <span class="badge warn">no trigger</span>'}</div>`;
       }).join('');
 
   const generatedAt = new Date().toISOString();
@@ -120,6 +121,7 @@ pre.body{background:#161b22;padding:12px 14px;margin:0;font-size:12px;white-spac
 code{background:#21262d;border-radius:4px;padding:1px 5px;font-size:12px}
 .git-stat{margin:8px 0;font-size:13px}
 .no-trigger{color:#f0a500}
+.share-warning{background:#4d3b00;border:1px solid #9e6a03;color:#f0c674;padding:10px 14px;border-radius:8px;margin:16px 0}
 #copy-btn{float:right;background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:12px;margin-top:20px}
 #copy-btn:hover{background:#30363d}
 a{color:#58a6ff}
@@ -128,9 +130,10 @@ a{color:#58a6ff}
 <body>
 <button id="copy-btn" onclick="navigator.clipboard.writeText(document.body.innerText).then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy text',2000})">Copy text</button>
 <h1>🐻 Jambavan Handoff</h1>
+${opts.shareSafe ? '<div class="share-warning"><b>Review before sharing.</b> Automated redaction is best-effort; inspect this handoff for private data.</div>' : ''}
 <div class="meta">
-  Project: <code>${esc(config.projectRoot)}</code> &nbsp;·&nbsp;
-  Scope: <code>${esc(scope)}</code> &nbsp;·&nbsp;
+  Project: <code>${esc(opts.shareSafe ? path.basename(config.projectRoot) : config.projectRoot)}</code> &nbsp;·&nbsp;
+  Scope: <code>${esc(redact(scope))}</code> &nbsp;·&nbsp;
   Generated: ${generatedAt.slice(0,19).replace('T',' ')} UTC
 </div>
 
@@ -140,20 +143,20 @@ a{color:#58a6ff}
   <div class="stat-card"><div class="n">${idxStats.symbols}</div><div class="l">Indexed symbols</div></div>
 </div>
 
-${renderMemorySection(decisions, 'Decisions')}
-${renderMemorySection(failures,  'Failure Records')}
-${renderMemorySection(other,     'Other Memories')}
+${renderMemorySection(decisions, 'Decisions', redact)}
+${renderMemorySection(failures,  'Failure Records', redact)}
+${renderMemorySection(other,     'Other Memories', redact)}
 
 <details><summary class="sec">Rin Debt <span class="count">${markers.length}</span></summary>
 <div style="padding:10px 14px;font-size:12px;line-height:2">${rinHtml}</div>
 </details>
 
-<details><summary class="sec">Git Status</summary>
+${opts.shareSafe ? '' : `<details><summary class="sec">Git Status</summary>
 <div style="padding:10px 14px">${gitHtml}</div>
-</details>
+</details>`}
 
 <p class="muted" style="margin-top:24px;font-size:11px">
-  Generated by <a href="https://github.com/sharma-ankit2/jambavan" target="_blank">Jambavan</a> —
+  Generated by <a href="https://github.com/beingmartinbmc/jambavan" target="_blank">Jambavan</a> —
   local-first MCP memory for coding agents · no LLM calls · no telemetry
 </p>
 </body>

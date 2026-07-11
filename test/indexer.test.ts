@@ -27,7 +27,7 @@ test('JambavanIndex.search: exact name match ranks above prefix and content-only
   } finally { idx.close(); cleanup(); }
 });
 
-test('JambavanIndex.search: multi-term query requires all terms (AND semantics)', async () => {
+test('JambavanIndex.search: natural-language stop words are ignored and sparse terms fall back to OR', async () => {
   const { config, root, cleanup } = mkTempConfig();
   const idx = new JambavanIndex(config);
   try {
@@ -35,11 +35,11 @@ test('JambavanIndex.search: multi-term query requires all terms (AND semantics)'
     writeSrc(root, 'other.ts', 'export function otherThing() { /* unrelated */ }');
     await idx.index();
 
-    const both = idx.search('auth middleware', 10);
+    const both = idx.search('where is the auth middleware?', 10);
     assert.ok(both.some(r => r.symbol.name === 'checkAuth'));
 
-    const none = idx.search('auth nonexistentterm12345', 10);
-    assert.equal(none.length, 0);
+    const sparse = idx.search('auth nonexistentterm12345', 10);
+    assert.ok(sparse.some(r => r.symbol.name === 'checkAuth'));
   } finally { idx.close(); cleanup(); }
 });
 
@@ -78,6 +78,66 @@ test('JambavanIndex.search: deleted files are removed from both symbols and the 
     fs.unlinkSync(filePath);
     await idx.index();
     assert.equal(idx.search('vanishingSymbol', 10).length, 0);
+  } finally { idx.close(); cleanup(); }
+});
+
+test('JambavanIndex: a parse failure preserves the valid index and explicit indexing retries it', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  const idx = new JambavanIndex(config);
+  try {
+    writeSrc(root, 'retry.ts', 'export function validBeforeFailure() { return 1; }');
+    await idx.index();
+    writeSrc(root, 'retry.ts', 'export function validAfterRetry() { return 2; }\n');
+
+    const internals = idx as unknown as { parser: { parseFile(filePath: string): unknown } };
+    const parseFile = internals.parser.parseFile.bind(internals.parser);
+    internals.parser.parseFile = () => { throw new Error('synthetic parse failure'); };
+
+    const failed = await idx.index();
+    assert.equal(failed.failedFiles, 1);
+    assert.ok(idx.search('validBeforeFailure', 10).length > 0);
+    assert.equal(idx.search('validAfterRetry', 10).length, 0);
+    assert.match(idx.stats().failures[0]?.error ?? '', /synthetic parse failure/);
+
+    internals.parser.parseFile = parseFile;
+    const retried = await idx.index();
+    assert.equal(retried.failedFiles, 0);
+    assert.equal(idx.search('validBeforeFailure', 10).length, 0);
+    assert.ok(idx.search('validAfterRetry', 10).length > 0);
+  } finally { idx.close(); cleanup(); }
+});
+
+test('JambavanIndex: a failed replacement rolls back partial symbol writes', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  const idx = new JambavanIndex(config);
+  try {
+    const file = path.join(root, 'transaction.ts');
+    writeSrc(root, 'transaction.ts', 'export function stableSymbol() { return 1; }');
+    await idx.index();
+    writeSrc(root, 'transaction.ts', 'export function replacementSymbol() { return 2; }\n');
+
+    const internals = idx as unknown as {
+      parser: { parseFile(filePath: string): {
+        filePath: string;
+        language: string;
+        reExports: never[];
+        symbols: Array<Record<string, unknown>>;
+      } };
+    };
+    internals.parser.parseFile = () => ({
+      filePath: file,
+      language: 'typescript',
+      reExports: [],
+      symbols: [
+        { filePath: file, name: 'partialWrite', type: 'function', startLine: 1, endLine: 1, content: 'ok' },
+        { filePath: file, name: 'invalidWrite', type: 'function', startLine: 1, endLine: 1, content: null },
+      ],
+    });
+
+    const failed = await idx.index();
+    assert.equal(failed.failedFiles, 1);
+    assert.ok(idx.search('stableSymbol', 10).length > 0);
+    assert.equal(idx.search('partialWrite', 10).length, 0);
   } finally { idx.close(); cleanup(); }
 });
 

@@ -15,4 +15,14 @@ Add Jambavan to your global `~/.cursor/mcp.json` or project `.cursor/mcp.json`:
 
 If Cursor was launched from the GUI and cannot find `node`/`npx`, use absolute paths and an explicit `PATH` as shown in the main README troubleshooting section.
 
-Start each repo session with `jambavan_doctor`, then `jambavan_awaken`, `jambavan_index`, and `jambavan_watch start`.
+Restart Cursor, confirm Jambavan is connected in MCP settings, then start each repo session with:
+
+```text
+jambavan_awaken {}
+jambavan_doctor {}
+jambavan_index {}
+jambavan_watch { "action": "start" }
+jambavan_context { "query": "<task-specific query>" }
+```
+
+Check the published version with `npm view jambavan version`; use `jambavan@<version>` as the final argument to pin it. To uninstall, remove the `jambavan` key from `mcpServers` and restart Cursor.

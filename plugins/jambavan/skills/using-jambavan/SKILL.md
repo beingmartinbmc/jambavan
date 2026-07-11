@@ -13,31 +13,32 @@ Jambavan is an MCP server that provides AST-aware code indexing, token-budgeted 
 
 ## Session Protocol
 
-Every session follows this sequence:
+Use this sequence for a new project session:
 
-1. **`jambavan_awaken`** — loads the protocol and recent project memories.
-2. **`jambavan_index`** — builds or refreshes the AST-aware code index (incremental — only changed files re-parse).
-3. **`jambavan_watch start`** — keeps the index live while you edit (skip for one-shot tasks).
-4. **`jambavan_context`** — pull ranked, token-budgeted context *before* reading unfamiliar code.
+1. **`jambavan_awaken {}`** — loads the protocol and recent project memories.
+2. **`jambavan_doctor {}`** — confirms the project root, gates, storage, and index/watcher status.
+3. **`jambavan_index {}`** — builds or refreshes the AST-aware code index.
+4. **`jambavan_watch { "action": "start" }`** — keeps the index live while you edit (skip for one-shot tasks).
+5. **`jambavan_context { "query": "<task-specific query>" }`** — pulls ranked, token-budgeted context before reading unfamiliar code.
 
 ## Quick Reference
 
 | Need | Tool | Key options |
 |------|------|-------------|
 | Understand unfamiliar code | `jambavan_context` | `query`, `compress_prose`, `include_diff`, `include_tests` |
-| Trace callers/callees | `jambavan_graph_query` | symbol name, direction |
-| Find path between symbols | `jambavan_graph_path` | from, to |
+| Trace callers/callees | `jambavan_graph_query` | `query`, `direction` |
+| Find path between symbols | `jambavan_graph_path` | `from`, `to` |
 | Graph overview / hotspots | `jambavan_graph_report` | — |
-| Persist a decision | `jambavan_memory_store` | scope, title, content |
-| Search past decisions | `jambavan_memory_search` | query |
-| Wake up with all memories | `jambavan_memory_recall` | scope |
-| Distill session into memories | `jambavan_memory_mine_session` | transcript |
-| Record a dead end | `jambavan_failure_store` | command, symptom, root cause |
-| Check before retrying | `jambavan_failure_search` | query |
-| Hand off to next session | `jambavan_session_export` | — |
-| Resume from handoff | `jambavan_session_import` | document |
+| Persist a decision | `jambavan_memory_store` | `title`, `body`, optional `scope` |
+| Search past decisions | `jambavan_memory_search` | `query`, optional `scope` |
+| Wake up with all memories | `jambavan_memory_recall` | optional `scope` |
+| Distill session into memories | `jambavan_memory_mine_session` | `text`, optional `scope` |
+| Record a dead end | `jambavan_failure_store` | `command`, `symptom`, optional `root_cause` |
+| Check before retrying | `jambavan_failure_search` | `query`, optional `scope` |
+| Hand off to next session | `jambavan_session_export` | optional `scope`, `share_safe` |
+| Resume from handoff | `jambavan_session_import` | `text`, optional `scope` |
 | Prepare review context | `jambavan_review_pack` | `base`, `max_files` |
-| Compress verbose prose | `compress_prompt` (`jambavan_sankshipta`) | file path |
+| Compress verbose prose | `compress_prompt` (`jambavan_sankshipta`) | `path`, optional `in_place`, `backup` |
 | Audit shortcut debt | `debt_ledger` (`jambavan_rin_mochan`) | — |
 | Investigate bug/failure root cause | `root_cause` (`jambavan_mool_kaaran`) | `symptom`, `context`, `attempts_so_far` |
 | Verification gate before completion | `verify_gate` (`jambavan_praman`) | `claim`, `type` |
@@ -48,31 +49,31 @@ Every session follows this sequence:
 
 ### Context (not raw file reads)
 
-**Before reading whole files**, ask `jambavan_context` with a query. It returns ranked, token-budgeted snippets — often 44–87% fewer tokens than reading full files.
+**Before reading whole files**, ask `jambavan_context` with a query. It returns ranked snippets under the configured approximate `cl100k_base` token budget. Measure any savings on the target repository with the benchmark; do not assume a universal percentage.
 
-```
-jambavan_context(query="auth middleware", include_diff=true)
+```text
+jambavan_context { "query": "auth middleware", "include_diff": true }
 ```
 
-Use `include_diff` when you need to understand recent changes. Use `include_tests` when you need to understand test coverage. Both share the token budget — they don't bloat the response.
+Use `include_diff` when you need to understand recent changes. Use `include_tests` when you need test associations. Both share the same total token budget.
 
 ### Graph (trace relationships)
 
-Before refactoring a symbol, use `jambavan_graph_query` to find all callers and callees. Before assuming two modules are unrelated, use `jambavan_graph_path`.
+Before refactoring a symbol, use `jambavan_graph_query` to inspect a bounded neighborhood of candidate callers and callees. Before assuming two modules are unrelated, use `jambavan_graph_path`.
 
-**Caveat:** The graph is inferred from AST + name matching (not full type resolution). Edges are labelled `EXTRACTED` (from AST) or `INFERRED` (name mention). Verify before large refactors.
+**Caveat:** The graph is not full type or scope resolution. Structural AST/import evidence produces `EXTRACTED` edges. Ambiguous same-name candidates are labelled `INFERRED` and excluded unless `include_inferred=true`; body-token mentions do not create graph edges. Results are bounded by the selected symbol and token limits, so verify important paths before large refactors.
 
 ### Memory (decisions survive sessions)
 
-Store decisions, architectural choices, and resolved ambiguities as memories. They persist as markdown files under `.jambavan/memory/` — human-readable, no database.
+Store decisions, architectural choices, and resolved ambiguities as memories. They persist as markdown files under `.jambavan/memory/` by default — human-readable, no memory database.
 
-- Use `jambavan_memory_store` after making a non-obvious decision.
-- Use `jambavan_memory_mine_session` at session end to distill durable facts.
+- Use `jambavan_memory_store` after making a non-obvious decision. Pass the project scope reported by `jambavan_awaken`; the tool otherwise defaults to `general`.
+- Use `jambavan_memory_mine_session` at session end to distill durable facts, with the same explicit project scope.
 - Use `jambavan_memory_recall` at session start (or rely on `jambavan_awaken`).
 
-### Failure Memory (don't repeat dead ends)
+### Failure Memory (check prior dead ends)
 
-Before retrying a failing approach, call `jambavan_failure_search`. If a prior session already diagnosed the root cause, you'll get the answer without re-investigating.
+Before retrying a failing approach, call `jambavan_failure_search`. A matching record may contain a prior root cause, resolution, or do-not-retry note.
 
 After hitting a dead end: `jambavan_failure_store` with command, symptom, root cause, and do-not-retry advice.
 
@@ -80,10 +81,10 @@ After hitting a dead end: `jambavan_failure_store` with command, symptom, root c
 
 Use the 4 counsel tools to avoid thrashing, enforce verification, and maintain rigorous planning:
 
-- **Root Cause Protocol (`root_cause`, canonical `jambavan_mool_kaaran`)**: Call BEFORE debugging any test failure or unexpected behavior. Focuses on Observe → Compare → Hypothesize → Fix. Escalates at 3+ attempts.
-- **Verification Gate (`verify_gate`, canonical `jambavan_praman`)**: Call BEFORE asserting that your work is done. Forces execution of fresh, complete commands and pasting of exact output text.
-- **Approach Strategy (`strategy_plan`, canonical `jambavan_yukti`)**: Call BEFORE writing any non-trivial code. Returns scaled structures (small/medium/large) for executing the task safely.
-- **Parallel Decomposition (`decompose_task`, canonical `jambavan_vibhaajan`)**: Call BEFORE undertaking complex multi-component tasks. Breaks work into independent units with clear contracts.
+- **Root Cause Protocol (`root_cause`, canonical `jambavan_mool_kaaran`)**: Use before proposing a fix for a test failure or unexpected behavior. Focuses on Observe → Compare → Hypothesize → Fix and recommends reassessment after 3+ failed attempts.
+- **Verification Gate (`verify_gate`, canonical `jambavan_praman`)**: Use before asserting that work is done. It asks for fresh evidence appropriate to the claim.
+- **Approach Strategy (`strategy_plan`, canonical `jambavan_yukti`)**: Use before writing non-trivial code. Returns scaled structures (small/medium/large) for executing the task safely.
+- **Parallel Decomposition (`decompose_task`, canonical `jambavan_vibhaajan`)**: Use for complex multi-component tasks that have independent units and clear contracts.
 
 ### Session Handoff
 
@@ -93,7 +94,7 @@ For human handoff outside the MCP host, `npx jambavan html-handoff --out <file>`
 
 ### Review Pack
 
-Before opening or updating a PR, call `jambavan_review_pack` after indexing. It maps touched files to symbols, callers, associated tests, touched rin debt, and past failure records. Outside the MCP host, use `npx jambavan review-pack --base origin/main --format json` for CI or PR-comment automation.
+Before opening or updating a PR, call `jambavan_review_pack` after indexing. It maps touched files to symbols, extracted caller candidates, associated tests, touched rin debt, and past failure records within configured limits. Outside the MCP host, use `npx jambavan review-pack --base origin/main --format json` for CI or PR-comment automation.
 
 ## Token Discipline
 
@@ -112,23 +113,23 @@ Jambavan bakes token efficiency into its design. Follow these patterns:
 
 | Mistake | Fix |
 |---------|-----|
-| Reading whole files without context query first | Use `jambavan_context` — it's faster and smaller |
+| Reading whole files without context query first | Use `jambavan_context` to retrieve bounded relevant spans |
 | Calling `jambavan_context` without indexing first | Always `jambavan_index` before `jambavan_context` |
 | Retrying a command that failed last session | `jambavan_failure_search` before retrying |
 | Forgetting decisions between sessions | `jambavan_memory_store` after non-obvious decisions |
 | Assuming graph edges are ground truth | Check `EXTRACTED` vs `INFERRED` confidence |
-| Skipping `jambavan_watch start` in long sessions | Index goes stale — edits won't appear in context |
+| Skipping `jambavan_watch start` in a continuing session | Later edits are not incrementally re-indexed |
 
-## Red Flags
+## Practices to avoid
 
-**Never:**
 - Skip `jambavan_index` and go straight to `jambavan_context`
 - Ignore failure search results and retry the same approach
 - Treat `INFERRED` graph edges as definitive for refactoring
 - Read 10+ whole files when a context query would suffice
 
-**Always:**
-- Run the session protocol (awaken → index → watch → context)
+## Default session practices
+
+- Run the session protocol (awaken → doctor → index → watch → context)
 - Store decisions that future sessions need
 - Record dead ends as failures
 - Use `include_diff` when investigating recent regressions

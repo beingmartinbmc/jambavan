@@ -13,15 +13,20 @@ import * as path from 'path';
 import * as os from 'os';
 import { ASTParser } from '../index/ast-parser';
 import type { JambavanConfig } from '../config/jambavan.config';
+import { redactForSharing } from './jambavan';
+
+const ISSUE_URL = 'https://github.com/beingmartinbmc/jambavan/issues/new';
 
 export interface DoctorContext {
   allowWrite: boolean;
   allowBash: boolean;
   /** Present when an index has been built/loaded (MCP path); absent for the plain CLI check. */
-  indexStats?: { files: number; symbols: number };
+  indexStats?: { files: number; symbols: number; failures?: { filePath: string; error: string }[] };
   watcherRunning?: boolean;
   /** Total tool count, when known (MCP path only). */
   toolCount?: number;
+  /** MCP/editor host name when the runtime can identify it. */
+  host?: string;
 }
 
 function checkRoot(config: JambavanConfig): string[] {
@@ -94,7 +99,11 @@ export function doctorReport(config: JambavanConfig, ctx: DoctorContext): string
   ];
 
   if (ctx.indexStats) {
-    sections.push([`Index:            ${ctx.indexStats.files} files, ${ctx.indexStats.symbols} symbols`]);
+    const failures = ctx.indexStats.failures ?? [];
+    sections.push([
+      `Index:            ${ctx.indexStats.files} files, ${ctx.indexStats.symbols} symbols, ${failures.length} failures`,
+      ...failures.map(f => `  \u26a0 ${f.filePath}: ${f.error}`),
+    ]);
   } else {
     sections.push(['Index:            not built (call jambavan_index)']);
   }
@@ -108,4 +117,71 @@ export function doctorReport(config: JambavanConfig, ctx: DoctorContext): string
   }
 
   return ['## Jambavan Doctor', '', ...sections.flat()].join('\n');
+}
+
+export function detectHost(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.CURSOR_TRACE_ID || env.TERM_PROGRAM?.toLowerCase() === 'cursor') return 'Cursor';
+  if (env.CLAUDE_CODE) return 'Claude Code';
+  if (env.CODEX_THREAD_ID || env.CODEX_SANDBOX) return 'Codex';
+  return undefined;
+}
+
+/** Copy-ready, privacy-safe issue text and prefilled URL. Never performs a network request. */
+export function doctorIssueReport(config: JambavanConfig, ctx: DoctorContext): string {
+  const backends = ASTParser.diagnostics();
+  const treeSitter = backends.filter(b => b.backend === 'tree-sitter');
+  const degraded = backends.filter(b => b.error);
+  const parserLines = degraded.length
+    ? [
+        `- Status: degraded (${degraded.length} native parser${degraded.length === 1 ? '' : 's'} failed)`,
+        ...degraded.map(b => `- ${b.language}: ${redactForSharing(b.error ?? 'native parser unavailable', config)}`),
+        '- Suggested action: run `npm rebuild`, then rerun `jambavan doctor`.',
+      ]
+    : [`- Status: healthy (${treeSitter.length} tree-sitter backends loaded)`];
+
+  const diagnostics = [
+    `- Root source: ${config.rootSource}`,
+    ctx.indexStats
+      ? `- Index: ${ctx.indexStats.files} files, ${ctx.indexStats.symbols} symbols`
+      : '- Index: not built. Suggested action: call `jambavan_index`.',
+    ...(ctx.indexStats?.failures ?? []).map(f =>
+      `- Index failure: ${f.filePath}: ${f.error}. Suggested action: inspect the file/parser error, then re-index.`),
+    ...(ctx.watcherRunning === false ? ['- Watcher: stopped. Suggested action: call `jambavan_watch` with `action=start` after indexing.'] : []),
+    ...(config.rootSource === 'cwd-fallback'
+      ? ['- Root is using cwd fallback. If results target the wrong project, set `JAMBAVAN_ROOT` explicitly.']
+      : []),
+  ];
+
+  const body = redactForSharing([
+    '## Environment',
+    `- OS: ${os.type()} ${os.release()} (${os.arch()})`,
+    `- Host: ${ctx.host ?? detectHost() ?? 'unknown'}`,
+    `- Node: ${process.version}`,
+    `- Root source: ${config.rootSource}`,
+    '',
+    '## Parser health',
+    ...parserLines,
+    '',
+    '## Diagnostics',
+    ...diagnostics,
+    '',
+    '## Problem',
+    '<!-- Describe what you expected, what happened, and the command/tool that exposed it. -->',
+  ].join('\n'), config);
+
+  const url = new URL(ISSUE_URL);
+  url.searchParams.set('title', '[Doctor] Environment diagnostic report');
+  url.searchParams.set('body', body);
+
+  return [
+    '## Redacted GitHub issue report',
+    '',
+    'Review the body before sharing; automated redaction is best-effort. No issue was posted.',
+    '',
+    `Prefilled issue URL: ${url.toString()}`,
+    '',
+    '--- BEGIN ISSUE BODY ---',
+    body,
+    '--- END ISSUE BODY ---',
+  ].join('\n');
 }

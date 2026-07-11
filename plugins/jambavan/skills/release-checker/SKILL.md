@@ -5,50 +5,47 @@ description: Use before claiming tests pass, a build succeeds, a bug is fixed, r
 
 # Release Checker
 
-If the `jambavan_praman` MCP tool is available, call it with your claim (and `type`: tests/build/fix/requirements/general) and follow its output verbatim. Otherwise, follow the protocol below directly.
+If the `jambavan_praman` MCP tool is available, call it with your claim (and `type`: tests/build/fix/requirements/general) and use its output as a verification checklist. Otherwise, follow the protocol below directly.
 
-## The Iron Law
+## Evidence rule
 
-NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE.
-
-If you have not run the verification command in THIS response, you cannot claim it passes.
+Match each completion claim to fresh evidence from the current working tree. If a relevant check is unavailable, unsafe, or disproportionate, report that limitation instead of presenting the result as verified.
 
 ## The Gate
 
-Before making ANY success/completion claim:
+Before making a success or completion claim:
 
 1. **IDENTIFY:** What command proves this claim?
-2. **RUN:** Execute the command fresh, complete (not partial).
-3. **READ:** Full output — check exit code, count failures.
+2. **RUN:** Execute the smallest complete command appropriate to the risk.
+3. **READ:** Inspect the complete result, including exit code and failure count.
 4. **VERIFY:** Does output confirm the claim?
-   - YES → State claim WITH evidence (paste the proof).
-   - NO  → State actual status with evidence. Do not spin.
+   - YES → State the claim with concise evidence.
+   - NO → State the actual status and the relevant failure.
 
-Skip any step = assertion without proof.
+Do not imply that an unrun check passed.
 
 ## Verification by claim type
 
-**Tests** — Run the test command. Read the output. Count: X pass, Y fail. "All tests pass" requires test output showing 0 failures. Previous runs do not count. "Should pass" does not count. If any test fails, report the failure — do not claim partial success as success.
+**Tests** — Run the relevant test command and report its pass/fail summary. Claim the full suite passes only after running the full suite; a focused test proves only its own scope.
 
 **Build** — Run the build command. Check exit code. "Build succeeds" requires build output showing exit 0. Linter passing ≠ build passing. Type-check passing ≠ bundle succeeding.
 
-**Bug fix** — Write or identify a test that catches the bug. Run it — confirm it FAILS without the fix (red). Apply the fix. Run it again — confirm it PASSES (green). Run the full suite — confirm nothing else broke. "Bug fixed" without red-green evidence is an assertion, not a fact.
+**Bug fix** — Prefer a reproducer that fails before the fix and passes after it. When a safe pre-fix run is impractical, explain the alternative evidence. Run regression checks in proportion to the change's blast radius.
 
 **Requirements met** — Re-read the original requirements/plan. Create a line-by-line checklist. For each item: what proves it's done (test? output? demo?). Check each item with evidence. Report gaps honestly — "tests pass" ≠ "requirements met."
 
-**Release / PR ready** — All of the above, plus: no uncommitted changes that should be committed, no stray debug code, and the diff matches the stated scope.
+**Release / PR ready** — Apply the relevant checks above, inspect the final diff for scope and debug artifacts, and distinguish intended uncommitted work from unrelated user changes.
 
-## Red Flags — you are about to lie
+## Unsupported-claim indicators
 
 - Using "should", "probably", "seems to."
 - Expressing satisfaction before running verification.
-- About to commit or open a PR without fresh evidence.
+- About to commit or open a PR without checking the final diff and relevant gates.
 - Trusting a previous run or a partial check.
-- Thinking "just this once" or "I'm confident."
-- Tired and wanting to be done.
+- Confidence offered in place of a check.
 
 ## Jambavan workflow (pre-release checklist)
 
-- `jambavan_review_pack` — touched files, their callers, related tests, past failures on those files, and risk flags (open rin debt, no matching test) vs. the base branch.
+- `jambavan_review_pack` — touched files, bounded extracted caller candidates, related tests, past failures on those files, and risk flags (open rin debt, no matching test) vs. the base branch.
 - `jambavan_rin_mochan` — any `// rin:` markers with no upgrade trigger should be resolved or justified before release, not silently shipped.
-- `jambavan_failure_search` — confirm this release doesn't reintroduce a previously recorded failure.
+- `jambavan_failure_search` — search relevant prior failures for regression risks; the search alone does not prove absence.

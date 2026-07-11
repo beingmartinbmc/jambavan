@@ -7,7 +7,7 @@
  *   • Claude Code  (claude mcp add)
  *   • Codex CLI    (MCP config)
  *   • Cursor       (.cursor/mcp.json)
- *   • Continue     (config.json mcpServers)
+ *   • Continue     (~/.continue/mcpServers/jambavan.json)
  *
  * Jambavan does NOT call any LLM itself.
  * The host model thinks. Jambavan acts.
@@ -15,10 +15,11 @@
  * Usage:
  *   npx -y jambavan → starts MCP server over stdio
  *   npx -y jambavan --help    → show registration instructions
- *   npx -y jambavan doctor    → one-shot environment/config health check
- *   npx -y jambavan badges    → print local Benchmark/Rin Ledger/Failure Immunity README badges
- *   npx -y jambavan review-pack [--base <branch>] [--format json|markdown]  → review pack for the current branch
- *   npx -y jambavan html-handoff [--out <file>] [--scope <scope>]  → write interactive HTML handoff report
+ *   npx -y jambavan doctor [--issue-report]  → health check or redacted issue report
+ *   npx -y jambavan badges    → print local Benchmark/Rin Ledger/Failure Memory README badges
+ *   npx -y jambavan evaluate --baseline <json> --jambavan <json> [--format json|markdown]  → compare supplied outcome evidence
+ *   npx -y jambavan review-pack [--base <branch>] [--format json|markdown] [--include-worktree]  → review pack for the current branch
+ *   npx -y jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]  → write interactive HTML handoff report
  *   npx -y jambavan bridge    → convert memories to/from a MemPalace-shaped markdown tree
  *   npx -y jambavan handoff --write-pr-template  → inject the session handoff card into a local PR template
  *   npx -y jambavan daemon start|stop|status  → run the file watcher standalone in a detached background process
@@ -31,7 +32,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { startServer } from './mcp/server';
 import { loadConfig } from './config/jambavan.config';
-import { doctorReport } from './tools/doctor';
+import { detectHost, doctorIssueReport, doctorReport } from './tools/doctor';
 import { JambavanIndex } from './index/indexer';
 import { harvestRin } from './tools/vibhishana-niti';
 import { MemoryStore } from './memory/store';
@@ -44,23 +45,69 @@ import { startDaemon, stopDaemon, formatDaemonStatus } from './tools/daemon';
 import { startGuiServer, openBrowser } from './tools/gui';
 import { buildReviewPackJson } from './tools/review-pack-json';
 import { buildHtmlHandoff } from './tools/html-handoff';
+import { runEvaluationCommand } from './evaluation';
+import pkg from '../package.json';
 
 const args = process.argv.slice(2);
 
-if (args[0] === 'review-pack') {
-  const config = loadConfig();
-  const flagVal = (name: string): string | undefined => {
-    const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined;
-  };
-  const base      = flagVal('--base');
-  const maxFiles  = flagVal('--max-files') ? Number(flagVal('--max-files')) : undefined;
-  const format    = flagVal('--format') ?? 'markdown';
+if (args[0] === '--version') {
+  process.stdout.write(`${pkg.version}\n`);
+  process.exit(0);
+}
 
+if (args[0] === 'evaluate') {
+  try {
+    process.stdout.write(runEvaluationCommand(args.slice(1)));
+    process.exit(0);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
+    process.exit(1);
+  }
+}
+
+if (args[0] === 'review-pack') {
+  const values = new Map<string, string>();
+  let includeWorktree = false;
+  try {
+    const known = new Set(['--base', '--max-files', '--format', '--include-worktree']);
+    for (let i = 1; i < args.length; i++) {
+      const option = args[i];
+      if (!known.has(option)) throw new Error(`Unknown review-pack option: ${option}`);
+      if (values.has(option) || (option === '--include-worktree' && includeWorktree)) {
+        throw new Error(`${option} may be provided only once`);
+      }
+      if (option === '--include-worktree') {
+        includeWorktree = true;
+        continue;
+      }
+      const value = args[++i];
+      if (!value || value.startsWith('--')) throw new Error(`${option} requires a value`);
+      values.set(option, value);
+    }
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
+    process.exit(1);
+  }
+
+  const base = values.get('--base');
+  const maxFilesValue = values.get('--max-files');
+  const maxFiles = maxFilesValue === undefined ? undefined : Number(maxFilesValue);
+  const format = values.get('--format') ?? 'markdown';
+  if (format !== 'markdown' && format !== 'json') {
+    process.stderr.write('--format must be markdown or json\n');
+    process.exit(1);
+  }
+  if (maxFiles !== undefined && (!Number.isFinite(maxFiles) || maxFiles <= 0)) {
+    process.stderr.write('--max-files must be a positive finite number\n');
+    process.exit(1);
+  }
+
+  const config = loadConfig();
   const index = new JambavanIndex(config);
   void index.index().then(() => {
     if (format === 'json') {
       try {
-        const pack = buildReviewPackJson(config, index, base, maxFiles);
+        const pack = buildReviewPackJson(config, index, base, maxFiles, includeWorktree);
         process.stdout.write(JSON.stringify(pack, null, 2) + '\n');
       } catch (err) {
         process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
@@ -73,6 +120,7 @@ if (args[0] === 'review-pack') {
       const input: Record<string, unknown> = {};
       if (base)     input['base']      = base;
       if (maxFiles) input['max_files'] = maxFiles;
+      if (includeWorktree) input['include_worktree'] = true;
       process.stdout.write(handlers.jambavan_review_pack(input) + '\n');
     }
     index.close();
@@ -87,10 +135,11 @@ if (args[0] === 'html-handoff') {
   };
   const outFile = flagVal('--out') ?? path.join(config.projectRoot, 'jambavan-handoff.html');
   const scope   = flagVal('--scope');
+  const shareSafe = args.includes('--share-safe');
 
   const index = new JambavanIndex(config);
   void index.index().then(() => {
-    const html = buildHtmlHandoff(config, index, { scope });
+    const html = buildHtmlHandoff(config, index, { scope, shareSafe });
     fs.mkdirSync(path.dirname(outFile), { recursive: true });
     fs.writeFileSync(outFile, html, 'utf-8');
     console.log(`Wrote interactive handoff to ${outFile}`);
@@ -155,11 +204,14 @@ if (args[0] === 'handoff') {
   };
 
   if (!args.includes('--write-pr-template')) {
-    console.error('Usage: jambavan handoff --write-pr-template [--scope <scope>] [--post]');
+    console.error('Usage: jambavan handoff --write-pr-template [--scope <scope>] [--share-safe] [--post]');
     process.exit(1);
   }
 
-  const handoffText = buildSessionHandoffHandlers(config).jambavan_session_export({ scope: flag('--scope') });
+  const handoffText = buildSessionHandoffHandlers(config).jambavan_session_export({
+    scope: flag('--scope'),
+    share_safe: args.includes('--share-safe'),
+  });
   const templatePath = path.join(config.projectRoot, '.github', 'pull_request_template.md');
   const existing = fs.existsSync(templatePath) ? fs.readFileSync(templatePath, 'utf-8') : '';
 
@@ -218,7 +270,7 @@ if (args[0] === 'bridge') {
 if (args[0] === 'badges') {
   const config = loadConfig();
 
-  let benchmarkCard = '📊 **Benchmark:** run `npx jambavan bench` to measure context savings on this repo.';
+  let benchmarkCard = '📊 **Benchmark:** no local result available.';
   try {
     // stdio must be explicit: the benchmark spawns a real MCP server subprocess
     // whose "[jambavan] MCP server ready" stderr line otherwise inherits all
@@ -242,9 +294,9 @@ if (args[0] === 'badges') {
 
   const store = new MemoryStore(config.memoryDir);
   const failureCount = store.list(projectScope(config)).filter(d => d.frontmatter.type === 'FailureRecord').length;
-  const failureImmunity = `🛡️ **Failure Immunity:** immune to ${failureCount} past loop trap${failureCount === 1 ? '' : 's'}.`;
+  const failureMemory = `🛡️ **Failure Memory:** ${failureCount} stored failure record${failureCount === 1 ? '' : 's'}.`;
 
-  console.log([benchmarkCard, rinLedger, failureImmunity].join('\n'));
+  console.log([benchmarkCard, rinLedger, failureMemory].join('\n'));
   console.error('\n(Paste the lines above into your README. Prefer a rendered badge? Use a shields.io static-badge URL instead — that pulls from an external CDN when the README renders, so it is opt-in, not default.)');
   process.exit(0);
 }
@@ -259,34 +311,42 @@ if (args[0] === 'doctor') {
     indexStats = { files: stats.files.totalFiles, symbols: stats.symbols };
     idx.close();
   }
-  console.log(doctorReport(config, {
+  const context = {
     allowWrite: process.env.JAMBAVAN_ALLOW_WRITE === '1',
     allowBash: process.env.JAMBAVAN_ALLOW_BASH === '1',
     indexStats,
-  }));
+    host: detectHost(),
+  };
+  console.log(args.includes('--issue-report')
+    ? doctorIssueReport(config, context)
+    : doctorReport(config, context));
   process.exit(0);
 }
 
 if (args.includes('--help') || args.includes('-h')) {
   console.log(`
-jambavan — MCP server for Claude Code, Codex, and Cursor
-=======================================================
+jambavan — local-first MCP server for Claude Code, Cursor, Codex, Continue, and any MCP client
+=============================================================================================
+
+No LLM calls, telemetry, or code upload. Source-file mutation and shell execution
+are disabled by default; index and memory tools still write local .jambavan state.
 
 Jambavan exposes these MCP tools to the host model:
 
   jambavan_awaken        Return Jambavan startup protocol + recent project memories
   jambavan_index         Build / refresh the codebase index (tree-sitter, incremental)
-  jambavan_context       Search index and return ranked, token-budgeted code context
+  jambavan_context       Return budgeted symbols, project memories, and extracted callers/callees
   jambavan_watch         Start / stop live file watcher (incremental re-index on save)
-  jambavan_graph_report  Report lightweight symbol/file graph hubs and confidence notes
-  jambavan_graph_query   Query graph nodes + nearby edges
-  jambavan_graph_path    Shortest path between two graph nodes
-  jambavan_sankshipta    Compress markdown/prose into fewer prompt tokens
+  jambavan_graph_report  Report graph hubs; inferred ambiguous edges are opt-in
+  jambavan_graph_query   Query graph nodes + nearby extracted edges
+  jambavan_graph_path    Shortest path over extracted graph edges
+  jambavan_sankshipta    Compress markdown/prose into fewer prompt tokens (write-gated)
   jambavan_vibhishana_niti  Activate efficient senior-dev mode (lite / full / ultra)
   jambavan_rin_mochan    Harvest rin comments into a tracked debt ledger
   jambavan_diagnostics   Show parser backends (tree-sitter vs regex) and index stats
   jambavan_doctor        One-shot health check: root source, parsers, gates, memory dir, CI
   jambavan_review_pack   Review pack for the current branch: touched symbols/callers/tests/failures/risk
+  jambavan_impact        Trace changed symbols to inbound callers and associated tests
 
   jambavan_memory_store  Persist a memory as an OKF markdown document
   jambavan_memory_search BM25 search across stored memories
@@ -296,8 +356,8 @@ Jambavan exposes these MCP tools to the host model:
   jambavan_memory_delete Remove a memory by ID or wipe a scope
   jambavan_memory_status Bundle statistics (total count, by scope)
 
-  jambavan_failure_store Store a structured failure record (command, symptom, root cause)
-  jambavan_failure_search Search past failures before retrying a failing command
+  jambavan_failure_store Store a failure record; bash failures are also recorded automatically
+  jambavan_failure_search Search failures; exact unresolved bash retries are blocked by default
 
   jambavan_session_export Export session context as a portable handoff document
   jambavan_session_import Import a handoff document into memory
@@ -317,11 +377,26 @@ Jambavan exposes these MCP tools to the host model:
   compress_prompt  Alias for jambavan_sankshipta (write-gated)
 
   read_file            Read a file (with optional line range)
-  write_file           Write or overwrite a file
-  patch_file           Find-and-replace patch on an existing file
-  bash                 Execute a shell command
   search               Ripgrep-powered code search
   list_files           List directory contents
+
+  Opt-in tools:
+  write_file, patch_file, jambavan_sankshipta  Require JAMBAVAN_ALLOW_WRITE=1
+  bash                                           Requires JAMBAVAN_ALLOW_BASH=1
+
+Direct CLI commands
+-------------------
+  jambavan doctor [--issue-report]
+  jambavan review-pack [--base <branch>] [--format markdown|json] [--max-files <n>] [--include-worktree]
+  jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]
+  jambavan daemon start|stop|status
+  jambavan gui [--port <n>] [--no-open]
+  jambavan badges
+  jambavan evaluate --baseline <json> --jambavan <json> [--format json|markdown]
+  jambavan bridge --to mempalace [--out <dir>] [--scope <scope>]
+  jambavan bridge --from mempalace [--in <dir>]
+  jambavan handoff --write-pr-template [--scope <scope>] [--share-safe] [--post]
+  jambavan --version
 
 Typical workflow
 ----------------
@@ -344,27 +419,35 @@ Cursor (.cursor/mcp.json):
     }
   }
 
-Codex (~/.codex/config.yaml):
-  mcpServers:
-    - name: jambavan
-      command: npx -y jambavan
+Codex:
+  codex mcp add jambavan -- npx -y jambavan
 
-Continue (~/.continue/config.json):
-  "mcpServers": [{ "name": "jambavan", "command": "npx -y jambavan" }]
+Continue (~/.continue/config.yaml, Agent mode):
+  mcpServers:
+    - name: Jambavan
+      command: npx
+      args: [-y, jambavan]
 
 Environment:
   JAMBAVAN_ROOT=<path>         Override project root (default: auto-detected)
+  JAMBAVAN_SCOPE=<slug>        Clone-independent shared memory scope (lowercase letters, numbers, hyphens)
   JAMBAVAN_TOKEN_BUDGET=<n>    Max tokens in jambavan_context results (default: 8000)
   JAMBAVAN_MEMORY_HOME=<path>  Shared memory palace path (default: .jambavan/memory)
   JAMBAVAN_DEV_MODE=<level>    Default Vibhishana Niti level: lite | full | ultra (default: full)
+  JAMBAVAN_ALLOW_WRITE=1       Advertise write_file, patch_file, and jambavan_sankshipta
+  JAMBAVAN_ALLOW_BASH=1        Advertise bash
   JAMBAVAN_ALLOW_OUTSIDE_ROOT=1  Disable project-root sandbox for local trusted use only
+  JAMBAVAN_ALLOW_SECRETS=1     Allow file tools to access secret-looking files
+  JAMBAVAN_BASH_INHERIT_ENV=1  Pass the full host environment to bash
+  JAMBAVAN_MAX_OUTPUT_CHARS=<n>  Max characters returned by a tool (default: 100000)
+  JAMBAVAN_MAX_READ_BYTES=<n>  Max file size read_file loads (default: 5242880)
 `);
   process.exit(0);
 }
 
 // All CLI sub-commands above schedule process.exit() before reaching here.
 // Only start the MCP server when no sub-command matched.
-const CLI_COMMANDS = new Set(['gui', 'review-pack', 'html-handoff', 'daemon', 'bridge', 'badges', 'doctor', '--help', '-h', '--version']);
+const CLI_COMMANDS = new Set(['gui', 'evaluate', 'review-pack', 'html-handoff', 'daemon', 'bridge', 'badges', 'doctor', '--help', '-h', '--version']);
 if (!CLI_COMMANDS.has(args[0] ?? '')) {
   startServer().catch(err => {
     process.stderr.write(`[jambavan] Fatal: ${err}\n`);

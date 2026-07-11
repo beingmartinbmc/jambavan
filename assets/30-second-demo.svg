@@ -1,55 +1,57 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
-  <title id="title">30-second Jambavan demo</title>
-  <desc id="desc">A five-step terminal storyboard: register Jambavan, run doctor, index the repo, fetch context, and reuse memory and failure history.</desc>
+  <title id="title">Jambavan under-30-second demo — review pack</title>
+  <desc id="desc">The final frame of a six-step illustrative storyboard: connect Jambavan, call jambavan_awaken and jambavan_index, retrieve context with jambavan_context, guard against repeated failures, trace changes with jambavan_impact, and build a jambavan_review_pack.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#020617"/>
-      <stop offset="0.55" stop-color="#172554"/>
+      <stop offset="0.55" stop-color="#0f2942"/>
       <stop offset="1" stop-color="#0f766e"/>
     </linearGradient>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="24" stdDeviation="30" flood-color="#000000" flood-opacity="0.35"/>
+      <feDropShadow dx="0" dy="22" stdDeviation="28" flood-color="#000000" flood-opacity="0.36"/>
     </filter>
   </defs>
 
   <rect width="1200" height="720" rx="34" fill="url(#bg)"/>
-  <circle cx="1020" cy="120" r="180" fill="#f59e0b" opacity="0.12"/>
-  <circle cx="145" cy="620" r="240" fill="#22c55e" opacity="0.10"/>
+  <circle cx="1050" cy="90" r="180" fill="#f59e0b" opacity="0.12"/>
+  <circle cx="110" cy="660" r="230" fill="#22c55e" opacity="0.09"/>
 
-  <text x="600" y="76" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="38" font-weight="800" fill="#f8fafc">Stop your coding agent from forgetting your repo</text>
-  <text x="600" y="112" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" fill="#cbd5e1">Local MCP memory, indexed context, failure history, and review packs in 30 seconds</text>
+  <text x="84" y="58" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="800" letter-spacing="3" fill="#67e8f9">JAMBAVAN</text>
+  <text x="84" y="104" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="38" font-weight="800" fill="#f8fafc">Give your coding agent its memory back</text>
+  <text x="84" y="136" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="18" fill="#cbd5e1">Local repo context, decisions, failure memory, and review impact through MCP.</text>
 
   <g filter="url(#shadow)">
-    <rect x="82" y="144" width="1036" height="500" rx="24" fill="#0b1020"/>
-    <rect x="82" y="144" width="1036" height="54" rx="24" fill="#151b2e"/>
-    <path d="M82 174 h1036 v24 h-1036 z" fill="#151b2e"/>
-    <circle cx="118" cy="171" r="8" fill="#ef4444"/>
-    <circle cx="148" cy="171" r="8" fill="#f59e0b"/>
-    <circle cx="178" cy="171" r="8" fill="#22c55e"/>
-    <text x="600" y="177" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="15" fill="#a7b0c8">jambavan demo</text>
+    <rect x="70" y="166" width="1060" height="494" rx="24" fill="#0b1020"/>
+    <rect x="70" y="166" width="1060" height="52" rx="24" fill="#151b2e"/>
+    <path d="M70 190 h1060 v28 h-1060 z" fill="#151b2e"/>
+    <circle cx="104" cy="192" r="7" fill="#f87171"/>
+    <circle cx="130" cy="192" r="7" fill="#fbbf24"/>
+    <circle cx="156" cy="192" r="7" fill="#2dd4bf"/>
+    <text x="600" y="198" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#a7b0c8">jambavan · under-30-second storyboard</text>
 
-    <g font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700">
-      <rect x="116" y="226" width="184" height="40" rx="20" fill="#2563eb"/>
-      <text x="208" y="252" text-anchor="middle" fill="#ffffff">1 register</text>
-      <rect x="316" y="226" width="184" height="40" rx="20" fill="#334155"/>
-      <text x="408" y="252" text-anchor="middle" fill="#ffffff">2 doctor</text>
-      <rect x="516" y="226" width="184" height="40" rx="20" fill="#334155"/>
-      <text x="608" y="252" text-anchor="middle" fill="#ffffff">3 index</text>
-      <rect x="716" y="226" width="184" height="40" rx="20" fill="#334155"/>
-      <text x="808" y="252" text-anchor="middle" fill="#ffffff">4 context</text>
-      <rect x="916" y="226" width="154" height="40" rx="20" fill="#334155"/>
-      <text x="993" y="252" text-anchor="middle" fill="#ffffff">5 recall</text>
+    <g font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="700">
+      <rect x="94" y="240" width="146" height="36" rx="18" fill="#334155"/><text x="167" y="263" text-anchor="middle" fill="#e2e8f0">1 connect</text>
+      <rect x="250" y="240" width="146" height="36" rx="18" fill="#334155"/><text x="323" y="263" text-anchor="middle" fill="#e2e8f0">2 awaken</text>
+      <rect x="406" y="240" width="146" height="36" rx="18" fill="#334155"/><text x="479" y="263" text-anchor="middle" fill="#e2e8f0">3 context</text>
+      <rect x="562" y="240" width="146" height="36" rx="18" fill="#334155"/><text x="635" y="263" text-anchor="middle" fill="#e2e8f0">4 guard</text>
+      <rect x="718" y="240" width="146" height="36" rx="18" fill="#334155"/><text x="791" y="263" text-anchor="middle" fill="#e2e8f0">5 impact</text>
+      <rect x="874" y="240" width="146" height="36" rx="18" fill="#2563eb"/><text x="947" y="263" text-anchor="middle" fill="#ffffff">6 review</text>
     </g>
 
-    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20">
-      <text x="124" y="322" fill="#60a5fa">$ claude mcp add jambavan -- npx -y jambavan</text>
-      <text x="124" y="358" fill="#94a3b8">Registered MCP server: jambavan</text>
-      <text x="124" y="412" fill="#60a5fa">$ npx jambavan doctor</text>
-      <text x="124" y="448" fill="#94a3b8">Project root: /repo/app (source: env) · no LLM calls · writes off</text>
-      <text x="124" y="502" fill="#60a5fa">$ jambavan_index &amp;&amp; jambavan_context query="auth middleware"</text>
-      <text x="124" y="538" fill="#94a3b8">Indexed symbols → ranked snippets, callers, tests, and recent diff</text>
-      <text x="124" y="592" fill="#60a5fa">$ jambavan_failure_search query="flaky auth test"</text>
-      <text x="124" y="628" fill="#f8fafc">Do not retry the timeout bump; root cause was an unawaited promise.</text>
-    </g>
+    <rect x="94" y="302" width="150" height="28" rx="14" fill="#15324b"/>
+    <text x="169" y="321" text-anchor="middle" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="800" letter-spacing="1" fill="#67e8f9">AGENT TOOL CALL</text>
+    <text x="94" y="366" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="24" font-weight="700" fill="#7dd3fc">jambavan_review_pack</text>
+    <text x="94" y="398" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17" fill="#94a3b8">base="main"  include_worktree=true</text>
+
+    <rect x="94" y="426" width="976" height="142" rx="16" fill="#111a2e" stroke="#263552"/>
+    <text x="120" y="458" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700" fill="#e2e8f0">4 touched files · 3 changed symbols · extracted callers and matching tests</text>
+    <text x="120" y="492" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#a5f3fc">AuthService.login</text>
+    <text x="340" y="492" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="15" fill="#cbd5e1">2 callers · 1 matching test</text>
+    <text x="120" y="522" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16" fill="#a5f3fc">SessionStore.save</text>
+    <text x="340" y="522" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="15" fill="#fcd34d">1 caller · no matching test</text>
+    <text x="120" y="552" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" fill="#94a3b8">Risk signals: open rin marker · prior failure record mentions the changed path</text>
+
+    <line x1="94" y1="598" x2="1070" y2="598" stroke="#24324a"/>
+    <text x="94" y="628" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" fill="#7dd3fc">No LLM calls · no telemetry · local .jambavan state · source mutation and shell off by default</text>
   </g>
 </svg>

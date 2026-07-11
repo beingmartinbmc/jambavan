@@ -11,9 +11,10 @@
  */
 
 import { execFileSync } from 'child_process';
+import * as path from 'path';
 import { MemoryStore, type MemoryDoc } from '../memory/store';
 import type { JambavanConfig } from '../config/jambavan.config';
-import { projectScope } from './jambavan';
+import { projectScope, redactForSharing } from './jambavan';
 import { harvestRin } from './vibhishana-niti';
 import { countTokens } from '../context/token-counter';
 
@@ -40,16 +41,16 @@ function describeStatusCode(code: string): string {
 }
 
 /** One `### ` block for a memory doc — shared by every memory-derived section. */
-function renderMemoryBlock(doc: MemoryDoc): string {
+function renderMemoryBlock(doc: MemoryDoc, redact: (value: string) => string = value => value): string {
   const typeBadge = doc.frontmatter.type && doc.frontmatter.type !== 'Memory'
-    ? ` [${doc.frontmatter.type}]` : '';
+    ? ` [${redact(doc.frontmatter.type)}]` : '';
   return [
-    `### ${doc.frontmatter.title}`,
+    `### ${redact(doc.frontmatter.title)}`,
     `*${doc.frontmatter.timestamp.slice(0, 10)}*` +
     typeBadge +
-    (doc.frontmatter.tags.length ? ` · tags: ${doc.frontmatter.tags.join(', ')}` : ''),
+    (doc.frontmatter.tags.length ? ` · tags: ${redact(doc.frontmatter.tags.join(', '))}` : ''),
     '',
-    doc.body.trim(),
+    redact(doc.body.trim()),
   ].join('\n');
 }
 
@@ -75,6 +76,7 @@ export const SESSION_HANDOFF_TOOL_DEFS = [
         include_rin:   { type: 'boolean', description: 'Include rin debt markers (default: true).' },
         include_git:   { type: 'boolean', description: 'Include git status/recent commits (default: true).' },
         max_memories:  { type: 'number',  description: 'Max memories to include (default: 15).' },
+        share_safe:     { type: 'boolean', description: 'Redact local paths/secrets and omit git-sensitive data for sharing (default: false).' },
       },
       required: [],
     },
@@ -107,13 +109,19 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
     jambavan_session_export(input: Record<string, unknown>): string {
       const targetScope  = input['scope'] ? String(input['scope']) : scope();
       const includeRin   = input['include_rin'] !== false;
-      const includeGit   = input['include_git'] !== false;
+      const shareSafe    = input['share_safe'] === true;
+      const includeGit   = !shareSafe && input['include_git'] !== false;
       const maxMemories  = input['max_memories'] ? Number(input['max_memories']) : 15;
+      const redact       = (value: string) => shareSafe ? redactForSharing(value, config) : value;
 
       const sections: string[] = [
         `# Jambavan Session Handoff`,
-        `**Project:** ${config.projectRoot}`,
-        `**Scope:** ${targetScope}`,
+        ...(shareSafe ? [
+          '> ⚠️ **Review before sharing.** Automated redaction is best-effort; inspect this handoff for private data.',
+          '',
+        ] : []),
+        `**Project:** ${shareSafe ? path.basename(config.projectRoot) : config.projectRoot}`,
+        `**Scope:** ${redact(targetScope)}`,
         `**Exported:** ${new Date().toISOString().slice(0, 19)}`,
         '',
       ];
@@ -131,7 +139,7 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
 
       sections.push(`## Decisions (${decisions.length})`);
       sections.push(decisions.length
-        ? decisions.map(renderMemoryBlock).join('\n\n')
+        ? decisions.map(d => renderMemoryBlock(d, redact)).join('\n\n')
         : 'None recorded. Tag durable architecture decisions with jambavan_memory_store(type="Decision") so they surface here.');
       sections.push('');
 
@@ -139,13 +147,13 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
       if (failures.length === 0) {
         sections.push('None recorded.');
       } else {
-        sections.push(...[...openFailures.slice(0, 10), ...resolvedFailures.slice(0, 5)].map(renderMemoryBlock).map(b => b + '\n'));
+        sections.push(...[...openFailures.slice(0, 10), ...resolvedFailures.slice(0, 5)].map(d => renderMemoryBlock(d, redact)).map(b => b + '\n'));
       }
       sections.push('');
 
       sections.push(`## Other Memories (${otherDocs.length})`);
       sections.push(otherDocs.length
-        ? otherDocs.map(renderMemoryBlock).join('\n\n')
+        ? otherDocs.map(d => renderMemoryBlock(d, redact)).join('\n\n')
         : 'None.');
       sections.push('');
 
@@ -156,7 +164,7 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
         if (rinMarkers.length > 0) {
           // Take first 10 for handoff compactness
           for (const marker of rinMarkers.slice(0, 10)) {
-            sections.push(`- ${marker.file}:${marker.line}: ${marker.comment}`);
+            sections.push(`- ${redact(marker.file)}:${marker.line}: ${redact(marker.comment)}`);
           }
           if (rinMarkers.length > 10) sections.push(`  … and ${rinMarkers.length - 10} more`);
         } else {
@@ -216,13 +224,15 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
       const openWithPath = openFailures.map(d => ({ doc: d, next: extractNextPath(d) })).find(x => x.next);
       if (openWithPath) {
         sections.push(
-          `Suggested by the most recent open failure ("${openWithPath.doc.frontmatter.title}"):`,
+          `Suggested by the most recent open failure ("${redact(openWithPath.doc.frontmatter.title)}"):`,
           '```',
-          openWithPath.next!,
+          redact(openWithPath.next!),
           '```',
         );
       } else if (dirtyFiles.length > 0) {
         sections.push(`No recorded next step — ${dirtyFiles.length} dirty file(s) above are the likely resume point.`);
+      } else if (shareSafe) {
+        sections.push('No recorded next step — inspect the local working tree before resuming.');
       } else {
         sections.push('No recorded next step and a clean working tree — start from jambavan_awaken.');
       }

@@ -1,9 +1,8 @@
 import * as path from 'path';
 import * as fs from 'fs';
 
-// rin: intentionally NOT loading .env — auto-ingesting project secrets into
-// process.env is a leak vector for an MCP server. JAMBAVAN_* config vars come
-// from the host's MCP launch env. Re-enable dotenv only if a user need appears.
+// rin: host launch env only; add opt-in project config when users need persistent settings.
+// Auto-ingesting .env secrets into process.env is a leak vector for an MCP server.
 
 /**
  * Walk up the directory tree from cwd to find the project root.
@@ -39,12 +38,22 @@ export interface JambavanConfig {
   ignore: string[];
   /** How projectRoot was determined. Mutated in place by applyResolvedRoot(). */
   rootSource: RootSource;
+  /** Optional clone-independent memory scope from JAMBAVAN_SCOPE. */
+  scope?: string;
+}
+
+function validateScope(scope: string): string {
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/.test(scope)) {
+    throw new Error('Invalid JAMBAVAN_SCOPE: use a lowercase slug of 1-80 letters, numbers, or hyphens.');
+  }
+  return scope;
 }
 
 export function loadConfig(overrides: Partial<JambavanConfig> = {}): JambavanConfig {
   const envRoot = process.env.JAMBAVAN_ROOT;
   const projectRoot = envRoot ?? findProjectRoot();
   const rootSource: RootSource = envRoot ? 'env' : 'cwd-fallback';
+  const scope = overrides.scope ?? process.env.JAMBAVAN_SCOPE;
 
   const indexDir = path.join(projectRoot, '.jambavan');
 
@@ -59,6 +68,7 @@ export function loadConfig(overrides: Partial<JambavanConfig> = {}): JambavanCon
     ],
     rootSource,
     ...overrides,
+    ...(scope !== undefined ? { scope: validateScope(scope) } : {}),
   };
 }
 

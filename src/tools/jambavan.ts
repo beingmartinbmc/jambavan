@@ -1,4 +1,5 @@
 import * as crypto from 'crypto';
+import * as os from 'os';
 import * as path from 'path';
 import { vibhishanaNitiInstructions } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
@@ -11,9 +12,33 @@ import type { JambavanConfig } from '../config/jambavan.config';
  * (e.g. ~/work/api and ~/side-project/api) never collide in a shared memory palace.
  */
 export function projectScope(config: JambavanConfig): string {
+  if (config.scope) return config.scope;
   const base = path.basename(config.projectRoot).toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'project';
   const hash = crypto.createHash('sha256').update(config.projectRoot).digest('hex').slice(0, 6);
   return `${base}-${hash}`;
+}
+
+/** Best-effort removal of local paths and common credential shapes before sharing. */
+export function redactForSharing(value: string, config: JambavanConfig): string {
+  let redacted = value;
+  const roots = [
+    config.memoryDir,
+    config.indexDir,
+    config.projectRoot,
+    os.homedir(),
+  ].filter((root, i, all) => root.length > 1 && all.indexOf(root) === i)
+    .sort((a, b) => b.length - a.length);
+
+  for (const root of roots) {
+    redacted = redacted.split(root).join(root === os.homedir() ? '~' : '[REDACTED_PATH]');
+  }
+
+  redacted = redacted
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/g, '[REDACTED_SECRET]')
+    .replace(/((?:api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|passwd|authorization)\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi, '$1[REDACTED]');
+
+  return redacted;
 }
 
 export function jambavanInstructions(config: JambavanConfig): string {

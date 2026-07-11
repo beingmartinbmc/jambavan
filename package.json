@@ -1,19 +1,22 @@
 {
   "name": "jambavan",
-  "version": "0.5.4",
+  "version": "0.6.0",
+  "mcpName": "io.github.beingmartinbmc/jambavan",
   "license": "MIT",
-  "description": "Local-first MCP memory and codebase awareness for coding agents: indexed context, persistent memory, failure history, review packs, prompt compression, and a local graph GUI.",
+  "description": "Local-first MCP memory and code intelligence that helps coding agents recall repo context, decisions, failures, and review impact.",
   "main": "dist/index.js",
   "bin": {
     "jambavan": "dist/index.js"
   },
   "files": [
     "dist",
+    "src",
     "assets/30-second-demo.gif",
     "assets/30-second-demo.svg",
     "assets/usage-screenshot.svg",
     "assets/gui-screenshot.svg",
     "examples",
+    "server.json",
     ".github/social-preview.png",
     "ARCHITECTURE.md",
     "LICENSE"
@@ -35,7 +38,10 @@
     "agent-memory",
     "claude-code",
     "cursor",
-    "codex"
+    "codex",
+    "code-intelligence",
+    "failure-memory",
+    "review-pack"
   ],
   "engines": {
     "node": ">=20 <27"
@@ -50,11 +56,12 @@
     "start": "node dist/index.js",
     "lint": "tsc --noEmit",
     "docs-check": "node scripts/check-doc-tools.js",
+    "installer-check": "node scripts/check-installers.js",
     "self-check": "npm run build && node dist/self-check.js",
     "bench": "npm run build && node dist/benchmark.js",
     "tool-check": "npm run build && node dist/tool-check.js",
     "unit": "node --require ts-node/register --test test/*.test.ts",
-    "coverage": "node --require ts-node/register --experimental-test-coverage --test-coverage-include='src/context/token-counter.ts' --test-coverage-include='src/index/ast-parser.ts' --test-coverage-include='src/index/indexer.ts' --test-coverage-include='src/knowledge/graph.ts' --test-coverage-include='src/memory/store.ts' --test-coverage-include='src/mcp/tool-aliases.ts' --test-coverage-include='src/tools/bash.ts' --test-coverage-include='src/tools/review-pack.ts' --test-coverage-include='src/tools/memory-bridge.ts' --test-coverage-include='src/tools/pr-handoff.ts' --test-coverage-include='src/tools/daemon.ts' --test-coverage-include='src/tools/gui.ts' --test-coverage-include='src/tools/path-guard.ts' --test-coverage-include='src/tools/read-file.ts' --test-coverage-include='src/tools/registry.ts' --test-coverage-include='src/tools/sankshipta.ts' --test-coverage-include='src/tools/write-file.ts' --test-coverage-lines=90 --test test/*.test.ts",
+    "coverage": "node --require ts-node/register --experimental-test-coverage --test-coverage-include='src/**/*.ts' --test-coverage-lines=80 --test-coverage-branches=75 --test-coverage-functions=75 --test test/*.test.ts",
     "test": "npm run unit && npm run self-check && npm run tool-check",
     "prepack": "npm run build"
   },
@@ -87,5 +94,11 @@
   "homepage": "https://github.com/beingmartinbmc/jambavan#readme",
   "bugs": {
     "url": "https://github.com/beingmartinbmc/jambavan/issues"
-  }
+  },
+  "directories": {
+    "example": "examples",
+    "test": "test"
+  },
+  "type": "commonjs",
+  "types": "./dist/index.d.ts"
 }

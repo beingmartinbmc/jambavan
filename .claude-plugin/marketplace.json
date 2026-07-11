@@ -3,12 +3,12 @@
   "owner": {
     "name": "beingmartinbmc"
   },
-  "description": "Local-first MCP server for persistent coding-agent memory, codebase-aware context, failure history, review packs, prompt compression, and a local graph GUI.",
+  "description": "Local-first MCP memory and code intelligence that helps coding agents recall repo context, decisions, failures, and review impact.",
   "plugins": [
     {
       "name": "jambavan",
       "source": "./plugins/jambavan",
-      "description": "MCP server: persistent memory, AST-aware code index, token-budgeted context, failure history, review packs, prompt compression, and local graph GUI. Read-only by default; write/shell tools are opt-in.",
+      "description": "MCP server for persistent memory, AST-aware context, failure records, review packs, prompt compression, and a local graph GUI. Source-file mutation and shell tools are opt-in.",
       "category": "developer-tools",
       "keywords": [
         "mcp",

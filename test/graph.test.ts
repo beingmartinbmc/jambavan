@@ -1,9 +1,18 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
+import * as fs from 'fs';
 import * as path from 'path';
-import { buildSymbolGraph, graphQuery, graphPath, graphReport } from '../src/knowledge/graph';
+import {
+  buildGraphNeighborhood,
+  buildSymbolGraph,
+  extractedStructuralNeighbors,
+  graphQuery,
+  graphPath,
+  graphReport,
+} from '../src/knowledge/graph';
 import type { Symbol } from '../src/index/ast-parser';
 import { mkTempConfig } from '../test-support/config';
+import { JambavanIndex } from '../src/index/indexer';
 
 function sym(name: string, file: string, content: string, references: Symbol['references'] = []): Symbol {
   return { name, type: 'function', filePath: file, startLine: 1, endLine: 1, content, references };
@@ -60,9 +69,7 @@ test('buildSymbolGraph: explicit call reference becomes an EXTRACTED call edge',
   } finally { cleanup(); }
 });
 
-test('buildSymbolGraph: name-only resolution links a call to EVERY same-named symbol', () => {
-  // This is the documented limitation: edges are name-matched, not resolver-backed.
-  // A call to "beta" links to both beta definitions because there is no scope resolution.
+test('buildSymbolGraph: ambiguous name-only call fan-out is marked INFERRED', () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     const g = buildSymbolGraph([
@@ -72,41 +79,18 @@ test('buildSymbolGraph: name-only resolution links a call to EVERY same-named sy
     ], config);
     const callEdges = g.edges.filter(e => e.type === 'call');
     assert.equal(callEdges.length, 2, 'name-only match fans out to both betas');
+    assert.ok(callEdges.every(edge => edge.confidence === 'INFERRED'));
   } finally { cleanup(); }
 });
 
-test('buildSymbolGraph: body token mention becomes an INFERRED edge', () => {
+test('buildSymbolGraph: body token mentions do not create edges', () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     const g = buildSymbolGraph([
       sym('alpha', path.join(root, 'a.ts'), 'function alpha() { return 1; }'),
       sym('gamma', path.join(root, 'g.ts'), 'function gamma() { return alpha + 2; }'),
     ], config);
-    assert.ok(g.edges.some(e => e.type === 'mentions' && e.confidence === 'INFERRED'));
-  } finally { cleanup(); }
-});
-
-test('buildSymbolGraph: common names do not create unbounded inferred mention fan-out', () => {
-  const { config, root, cleanup } = mkTempConfig();
-  try {
-    const symbols = [sym('source', path.join(root, 'source.ts'), 'function source() { return handler; }')];
-    for (let i = 0; i < 26; i++) {
-      symbols.push(sym('handler', path.join(root, `h${i}.ts`), `function handler${i}() {}`));
-    }
-    const g = buildSymbolGraph(symbols, config);
-    assert.equal(g.edges.filter(e => e.type === 'mentions').length, 0);
-  } finally { cleanup(); }
-});
-
-test('buildSymbolGraph: short (<3 char) and self names do not create mention edges', () => {
-  const { config, root, cleanup } = mkTempConfig();
-  try {
-    const g = buildSymbolGraph([
-      sym('ab', path.join(root, 'a.ts'), 'function ab() { return ab; }'),
-      sym('gamma', path.join(root, 'g.ts'), 'function gamma() { return ab; }'),
-    ], config);
-    // "ab" is 2 chars -> below the mention threshold -> no inferred edge to it.
-    assert.ok(!g.edges.some(e => e.type === 'mentions'));
+    assert.equal(g.edges.filter(e => e.type !== 'contains').length, 0);
   } finally { cleanup(); }
 });
 
@@ -126,12 +110,30 @@ test('graphReport: labels inferred edge count and confidence semantics', () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     const g = buildSymbolGraph([
-      sym('alpha', path.join(root, 'a.ts'), 'function alpha() { return 1; }'),
-      sym('gamma', path.join(root, 'g.ts'), 'function gamma() { return alpha; }'),
+      sym('alpha', path.join(root, 'a.ts'), 'alpha calls beta', [{ name: 'beta', type: 'call' }]),
+      sym('beta', path.join(root, 'b.ts'), 'b'),
+      sym('beta', path.join(root, 'c.ts'), 'c'),
     ], config);
     const report = graphReport(g);
-    assert.match(report, /inferred/);
+    assert.match(report, /0 inferred/);
+    assert.match(report, /inferred edges excluded by default/);
     assert.match(report, /EXTRACTED edges are structural/);
+    assert.match(graphReport(g, 10, true), /2 inferred/);
+  } finally { cleanup(); }
+});
+
+test('graph query/path require explicit opt-in for inferred edges', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const g = buildSymbolGraph([
+      sym('alpha', path.join(root, 'a.ts'), 'alpha calls beta', [{ name: 'beta', type: 'call' }]),
+      sym('beta', path.join(root, 'b.ts'), 'b'),
+      sym('beta', path.join(root, 'c.ts'), 'c'),
+    ], config);
+    assert.doesNotMatch(graphQuery(g, 'alpha'), /call\/INFERRED/);
+    assert.match(graphQuery(g, 'alpha', 2000, 'both', true), /call\/INFERRED/);
+    assert.match(graphPath(g, 'alpha', 'beta'), /No path found/);
+    assert.match(graphPath(g, 'alpha', 'beta', true), /via call\/INFERRED/);
   } finally { cleanup(); }
 });
 
@@ -144,6 +146,58 @@ test('graphQuery: finds a node and returns connected edges', () => {
     ], config);
     const out = graphQuery(g, 'alpha');
     assert.match(out, /call\/EXTRACTED/);
+  } finally { cleanup(); }
+});
+
+test('graphQuery: direction distinguishes callers from callees', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const g = buildSymbolGraph([
+      sym('alpha', path.join(root, 'a.ts'), 'function alpha() { return beta(); }', [{ name: 'beta', type: 'call' }]),
+      sym('beta', path.join(root, 'b.ts'), 'function beta() {}'),
+    ], config);
+    assert.match(graphQuery(g, 'beta', 2000, 'inbound'), /alpha/);
+    assert.doesNotMatch(graphQuery(g, 'beta', 2000, 'outbound'), /alpha/);
+  } finally { cleanup(); }
+});
+
+test('buildGraphNeighborhood: seeds from the query instead of alphabetical symbol order', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'z-target.ts'), 'export function rareTarget() { return 1; }\n');
+    fs.writeFileSync(
+      path.join(root, 'src', 'y-caller.ts'),
+      'import { rareTarget } from "./z-target"; export function invokeRare() { return rareTarget(); }\n',
+    );
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const result = buildGraphNeighborhood(index, config, ['rareTarget'], 100);
+
+    assert.ok(result.graph.nodes.some(node => node.label === 'rareTarget'));
+    assert.ok(result.graph.nodes.some(node => node.label === 'invokeRare'));
+    index.close();
+  } finally { cleanup(); }
+});
+
+test('extractedStructuralNeighbors: adds resolver-backed callers outside lexical seeds', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'target.ts'), 'export function rareTarget() { return 1; }\n');
+    fs.writeFileSync(
+      path.join(root, 'src', 'caller.ts'),
+      'import { rareTarget } from "./target"; export function invokeRare() { return rareTarget(); }\n',
+    );
+    const index = new JambavanIndex(config);
+    await index.index();
+    const seed = index.search('rareTarget', 1)[0].symbol;
+
+    const neighbors = extractedStructuralNeighbors(index, config, [seed]);
+
+    assert.deepEqual(neighbors.map(symbol => symbol.name), ['invokeRare']);
+    index.close();
   } finally { cleanup(); }
 });
 

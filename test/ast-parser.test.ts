@@ -25,6 +25,29 @@ test('ASTParser: JavaScript class methods and fields are indexed', () => {
   } finally { cleanup(); }
 });
 
+test('ASTParser: TSX uses the TSX grammar and indexes a JSX-returning component', () => {
+  const { root, cleanup } = mkTempConfig();
+  try {
+    const file = path.join(root, 'component.tsx');
+    fs.writeFileSync(file, 'export function Greeting() { return <main>Hello</main>; }\n');
+    const parsed = new ASTParser().parseFile(file);
+    assert.equal(parsed.language, 'tsx');
+    assert.equal(parsed.symbols.find(s => s.name === 'Greeting')?.content,
+      'export function Greeting() { return <main>Hello</main>; }');
+    assert.equal(ASTParser.diagnostics().find(d => d.language === 'tsx')?.backend, 'tree-sitter');
+  } finally { cleanup(); }
+});
+
+test('ASTParser: parses source files larger than tree-sitter default buffer', () => {
+  const { root, cleanup } = mkTempConfig();
+  try {
+    const file = path.join(root, 'large.ts');
+    fs.writeFileSync(file, `/* ${'x'.repeat(40_000)} */\nexport function afterLargeComment() { return true; }\n`);
+    const parsed = new ASTParser().parseFile(file);
+    assert.ok(parsed.symbols.some(symbol => symbol.name === 'afterLargeComment'));
+  } finally { cleanup(); }
+});
+
 test('ASTParser: reports support, unknown files, and diagnostics', () => {
   const { root, cleanup } = mkTempConfig();
   try {

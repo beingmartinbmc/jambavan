@@ -103,9 +103,9 @@ if (Test-Path $cursorDir) {
   $mcpFile = Join-Path $cursorDir "mcp.json"
   $updateCursorConfig = @'
 const fs = require("fs"), path = require("path");
-const file = process.argv[1];
-const aw = process.argv[2] === "true";
-const ab = process.argv[3] === "true";
+const file = process.argv[2];
+const aw = process.argv[3] === "true";
+const ab = process.argv[4] === "true";
 let cfg = {};
 if (fs.existsSync(file)) {
   try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); }
@@ -142,7 +142,7 @@ fs.writeFileSync(temp, JSON.stringify(cfg, null, 2) + "\n");
 fs.renameSync(temp, file);
 process.stdout.write("added");
 '@
-  $result = & node -e $updateCursorConfig $mcpFile $allowWrite.ToString().ToLowerInvariant() $allowBash.ToString().ToLowerInvariant()
+  $result = $updateCursorConfig | & node - $mcpFile $allowWrite.ToString().ToLowerInvariant() $allowBash.ToString().ToLowerInvariant()
   if ($LASTEXITCODE -ne 0) {
     Write-Error "Cursor config was not changed. Fix $mcpFile and re-run."
     exit 1

@@ -130,6 +130,8 @@ test('install.sh: preserves existing Continue YAML and prints exact manual guida
 test('install.ps1: stays compatible with PowerShell 5.1 and documents lifecycle commands', () => {
   const script = fs.readFileSync(path.join(repoRoot, 'install.ps1'), 'utf8');
   assert.doesNotMatch(script, /ConvertFrom-Json\s+-AsHashtable/);
+  assert.doesNotMatch(script, /node -e \$updateCursorConfig/);
+  assert.match(script, /\$updateCursorConfig \| & node - /);
   assert.doesNotMatch(script, /mcpServers[\\/]jambavan\.json/);
   assert.match(script, /Node\.js >= 20 and < 27 is required/);
   assert.match(script, /Join-Path \$continueDir "config\.yaml"/);

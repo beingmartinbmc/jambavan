@@ -61,7 +61,7 @@ try {
   const continueConfig = fs.readFileSync(continueFile, 'utf8');
   assert.match(continueConfig, /^name: Local config$/m);
   assert.match(continueConfig, /^schema: v1$/m);
-  assert.match(continueConfig, /^mcpServers:\n  - name: Jambavan$/m);
+  assert.match(continueConfig, /^mcpServers:\r?\n  - name: Jambavan$/m);
   assert.match(continueConfig, /^    command: npx$/m);
   assert.match(continueConfig, /^      - jambavan$/m);
   assert.equal(

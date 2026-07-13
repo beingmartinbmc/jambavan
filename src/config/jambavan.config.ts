@@ -8,22 +8,22 @@ import * as fs from 'fs';
  * Walk up the directory tree from cwd to find the project root.
  * Identified by the presence of package.json or .git.
  */
-function findProjectRoot(): string {
+function findProjectRoot(): { root: string; foundProject: boolean } {
   let dir = process.cwd();
   while (dir !== path.parse(dir).root) {
     if (
       fs.existsSync(path.join(dir, '.git')) ||
       fs.existsSync(path.join(dir, 'package.json'))
     ) {
-      return dir;
+      return { root: dir, foundProject: true };
     }
     dir = path.dirname(dir);
   }
-  return process.cwd();
+  return { root: process.cwd(), foundProject: false };
 }
 
 /** Where projectRoot came from — surfaced by jambavan_doctor to explain root confusion. */
-export type RootSource = 'env' | 'client-roots' | 'cwd-fallback';
+export type RootSource = 'env' | 'client-roots' | 'tool-input' | 'cwd-project' | 'cwd-fallback';
 
 export interface JambavanConfig {
   /** Absolute path to the project being indexed/served */
@@ -51,8 +51,9 @@ function validateScope(scope: string): string {
 
 export function loadConfig(overrides: Partial<JambavanConfig> = {}): JambavanConfig {
   const envRoot = process.env.JAMBAVAN_ROOT;
-  const projectRoot = envRoot ?? findProjectRoot();
-  const rootSource: RootSource = envRoot ? 'env' : 'cwd-fallback';
+  const detected = findProjectRoot();
+  const projectRoot = envRoot ?? detected.root;
+  const rootSource: RootSource = envRoot ? 'env' : detected.foundProject ? 'cwd-project' : 'cwd-fallback';
   const scope = overrides.scope ?? process.env.JAMBAVAN_SCOPE;
 
   const indexDir = path.join(projectRoot, '.jambavan');
@@ -79,14 +80,60 @@ export function loadConfig(overrides: Partial<JambavanConfig> = {}): JambavanCon
  * No-op if JAMBAVAN_ROOT was set explicitly (that always wins) or the new
  * root matches what's already resolved.
  */
-export function applyResolvedRoot(config: JambavanConfig, newRoot: string): void {
-  if (process.env.JAMBAVAN_ROOT) return;
-  if (newRoot === config.projectRoot) return;
+export function applyResolvedRoot(
+  config: JambavanConfig,
+  newRoot: string,
+  source: Extract<RootSource, 'client-roots' | 'tool-input'> = 'client-roots',
+): boolean {
+  if (process.env.JAMBAVAN_ROOT) return false;
+  if (newRoot === config.projectRoot) {
+    if (config.rootSource !== 'cwd-fallback') return false;
+    config.rootSource = source;
+    return true;
+  }
 
   config.projectRoot = newRoot;
   config.indexDir = path.join(newRoot, '.jambavan');
   if (!process.env.JAMBAVAN_MEMORY_HOME) {
     config.memoryDir = path.join(config.indexDir, 'memory');
   }
-  config.rootSource = 'client-roots';
+  config.rootSource = source;
+  return true;
+}
+
+export function isUnsafeFallbackRoot(config: JambavanConfig): boolean {
+  return config.rootSource === 'cwd-fallback';
+}
+
+export function resolveToolRoot(config: JambavanConfig, value: unknown): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error('root must be a non-empty absolute directory path.');
+  }
+  if (value.includes('\0') || !path.isAbsolute(value)) {
+    throw new Error('root must be a non-empty absolute directory path.');
+  }
+
+  let resolved: string;
+  try {
+    resolved = fs.realpathSync(value);
+  } catch {
+    throw new Error(`root does not exist: ${value}`);
+  }
+  if (!fs.statSync(resolved).isDirectory()) {
+    throw new Error(`root is not a directory: ${value}`);
+  }
+  if (config.rootSource !== 'cwd-fallback' && resolved !== config.projectRoot) {
+    throw new Error(`root is already fixed by ${config.rootSource}: ${config.projectRoot}`);
+  }
+  const relative = path.relative(config.projectRoot, resolved);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`root must be inside the current fallback root: ${config.projectRoot}`);
+  }
+  return resolved;
+}
+
+export function ensureGeneratedStateDir(indexDir: string): void {
+  fs.mkdirSync(indexDir, { recursive: true });
+  const ignoreFile = path.join(indexDir, '.gitignore');
+  if (!fs.existsSync(ignoreFile)) fs.writeFileSync(ignoreFile, '*\n', 'utf8');
 }

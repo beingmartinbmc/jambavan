@@ -15,12 +15,12 @@ printf "${BOLD}Jambavan install${RESET}\n\n"
 
 # --- Node version check -------------------------------------------------------
 if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js >= 20 and < 27 is required. Install it from https://nodejs.org and re-run." >&2
+  echo "Node.js >= 20.19.0 and < 27 is required. Install it from https://nodejs.org and re-run." >&2
   exit 1
 fi
-node_major=$(node -p "process.versions.node.split('.')[0]")
-if [ "$node_major" -lt 20 ] || [ "$node_major" -ge 27 ]; then
-  echo "Node.js >= 20 and < 27 is required (found $(node -v)). Install a supported version and re-run." >&2
+IFS=. read -r node_major node_minor _ <<< "$(node -p "process.versions.node")"
+if [ "$node_major" -lt 20 ] || { [ "$node_major" -eq 20 ] && [ "$node_minor" -lt 19 ]; } || [ "$node_major" -ge 27 ]; then
+  echo "Node.js >= 20.19.0 and < 27 is required (found $(node -v)). Install a supported version and re-run." >&2
   exit 1
 fi
 ok "Node $(node -v)"

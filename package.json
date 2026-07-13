@@ -1,6 +1,6 @@
 {
   "name": "jambavan",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "mcpName": "io.github.beingmartinbmc/jambavan",
   "license": "MIT",
   "description": "Local-first MCP memory and code intelligence that helps coding agents recall repo context, decisions, failures, and review impact.",
@@ -44,7 +44,7 @@
     "review-pack"
   ],
   "engines": {
-    "node": ">=20 <27"
+    "node": ">=20.19.0 <27"
   },
   "publishConfig": {
     "access": "public"

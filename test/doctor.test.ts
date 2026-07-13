@@ -3,7 +3,11 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as path from 'path';
 import { mkTempConfig, withEnv } from '../test-support/config';
-import { applyResolvedRoot } from '../src/config/jambavan.config';
+import {
+  applyResolvedRoot,
+  isUnsafeFallbackRoot,
+  resolveToolRoot,
+} from '../src/config/jambavan.config';
 import { doctorIssueReport, doctorReport } from '../src/tools/doctor';
 import { buildMemoryHandlers } from '../src/tools/memory';
 import { buildFailureHandlers } from '../src/tools/failure-memory';
@@ -76,6 +80,57 @@ test('applyResolvedRoot: preserves JAMBAVAN_MEMORY_HOME override', async () => {
   });
 });
 
+test('applyResolvedRoot: explicit tool root resolves an identical cwd fallback', async () => {
+  await withEnv({ JAMBAVAN_ROOT: undefined }, () => {
+    const { config, cleanup } = mkTempConfig();
+    try {
+      config.rootSource = 'cwd-fallback';
+      assert.equal(applyResolvedRoot(config, config.projectRoot, 'tool-input'), true);
+      assert.equal(config.rootSource, 'tool-input');
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+test('resolveToolRoot: accepts only an existing directory inside an unresolved fallback root', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    config.rootSource = 'cwd-fallback';
+    const child = path.join(root, 'Portfolio');
+    const file = path.join(root, 'file.txt');
+    fs.mkdirSync(child);
+    fs.writeFileSync(file, 'x');
+
+    assert.equal(resolveToolRoot(config, child), fs.realpathSync(child));
+    assert.throws(() => resolveToolRoot(config, 'Portfolio'), /absolute directory/);
+    assert.throws(() => resolveToolRoot(config, file), /not a directory/);
+    assert.throws(() => resolveToolRoot(config, path.dirname(root)), /inside the current fallback root/);
+    assert.throws(() => resolveToolRoot(config, `${child}\0bad`), /absolute directory/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('unsafe unresolved fallback is explicit and tool binding marks the resolved source', async () => {
+  await withEnv({ JAMBAVAN_ROOT: undefined, JAMBAVAN_MEMORY_HOME: undefined }, () => {
+    const { config, root, cleanup } = mkTempConfig();
+    try {
+      config.projectRoot = require('os').homedir();
+      config.rootSource = 'cwd-fallback';
+      assert.equal(isUnsafeFallbackRoot(config), true);
+
+      config.projectRoot = path.dirname(root);
+      const resolved = resolveToolRoot(config, root);
+      assert.equal(applyResolvedRoot(config, resolved, 'tool-input'), true);
+      assert.equal(config.rootSource, 'tool-input');
+      assert.equal(isUnsafeFallbackRoot(config), false);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 // ── handlers built before applyResolvedRoot must still honor the resolved root ──
 // Regression test for server.ts's real sequence: buildMemoryHandlers/
 // buildFailureHandlers/buildSessionHandoffHandlers are constructed once at
@@ -138,13 +193,13 @@ test('doctorReport: warns when root fell back to cwd and looks like $HOME', () =
   config.projectRoot = os.homedir();
   config.rootSource = 'cwd-fallback';
   const report = doctorReport(config, { allowWrite: false, allowBash: false });
-  assert.match(report, /Root fell back to \$HOME/);
+  assert.match(report, /Project root is unresolved \(fallback: \$HOME\)/);
 });
 
 test('doctorReport: no $HOME warning when root came from env', () => {
   const { config } = mkTempConfig();
   const report = doctorReport(config, { allowWrite: false, allowBash: false });
-  assert.doesNotMatch(report, /Root fell back to \$HOME/);
+  assert.doesNotMatch(report, /Project root is unresolved/);
 });
 
 test('doctorReport: reports index stats when provided, "not built" otherwise', () => {

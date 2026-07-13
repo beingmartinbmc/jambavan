@@ -17,7 +17,10 @@ async function main(): Promise<void> {
   const index = new JambavanIndex(config);
 
   const stats = await index.index();
-  console.log(`[jambavan:daemon] indexed ${stats.indexedFiles}/${stats.totalFiles} files (${stats.totalSymbols} symbols) in ${stats.durationMs}ms`);
+  console.log(
+    `[jambavan:daemon] indexed ${stats.indexedFiles}/${stats.totalFiles} files `
+    + `(${stats.indexedSymbols} symbols extracted; ${stats.totalSymbols} total) in ${stats.durationMs}ms`,
+  );
 
   const watcher = new FileWatcher(index, config);
   watcher.start();

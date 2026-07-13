@@ -133,6 +133,7 @@ test('startDaemon: spawns a new process, writes pid file, and returns started=tr
   const { config, cleanup } = mkTempConfig();
   try {
     const result = startDaemon(config);
+    assert.equal(fs.readFileSync(path.join(config.indexDir, '.gitignore'), 'utf8'), '*\n');
     // Worker path does not exist in test env, but spawn still assigns a pid on most platforms
     // before the child exits. Only assert structural shape; the child will die immediately.
     assert.ok(typeof result.started === 'boolean');

@@ -73,6 +73,7 @@ if (missingFromPlugin.length) {
 
 // --- 6. Keep release and MCP Registry metadata aligned ---
 const expectedMcpName = 'io.github.beingmartinbmc/jambavan';
+const expectedNodeRange = '>=20.19.0 <27';
 const versions = [
   ['package-lock.json', packageLock.version],
   ['package-lock.json root package', packageLock.packages?.['']?.version],
@@ -90,6 +91,16 @@ if (packageJson.mcpName !== expectedMcpName || registryJson.name !== expectedMcp
 }
 if (registryJson.packages?.[0]?.identifier !== packageJson.name) {
   throw new Error('server.json npm identifier must match package.json name');
+}
+if (packageJson.engines?.node !== expectedNodeRange || packageLock.packages?.['']?.engines?.node !== expectedNodeRange) {
+  throw new Error(`package.json and package-lock.json must require Node ${expectedNodeRange}`);
+}
+if (typeof registryJson.description !== 'string' || registryJson.description.length < 1 || registryJson.description.length > 100) {
+  throw new Error('server.json description must be 1-100 characters');
+}
+const reviewExample = fs.readFileSync(path.join(root, 'examples/review-pack.md'), 'utf8');
+if (!reviewExample.includes(`package_version: ${packageJson.version}`)) {
+  throw new Error(`examples/review-pack.md package_version must match package.json ${packageJson.version}`);
 }
 
 // --- 7. Catch canonical repository and host-config drift on distribution surfaces ---
@@ -153,8 +164,8 @@ if (!docs.includes('~/.continue/config.yaml')) {
 if (!readme.includes('npm view jambavan version')) {
   throw new Error('README must document the supported current-version command');
 }
-if (!readme.includes('Node >=20 <27')) {
-  throw new Error('README must document the package engine range: Node >=20 <27');
+if (!readme.includes(`Node ${expectedNodeRange}`)) {
+  throw new Error(`README must document the package engine range: Node ${expectedNodeRange}`);
 }
 
 // --- 8. Every local Markdown/HTML link in Markdown must resolve ---

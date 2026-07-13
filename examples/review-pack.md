@@ -81,7 +81,7 @@ jobs:
   review:
     uses: beingmartinbmc/jambavan/.github/workflows/jambavan-review.yml@main
     with:
-      package_version: 0.6.0
+      package_version: 0.6.1
 ```
 
 The called workflow runs the requested published package version (`latest` by default) with only repository-read and PR-comment permissions. Pin both `package_version` and the workflow reference to a release tag or commit SHA for reproducible or security-sensitive use. GitHub gives fork pull requests a read-only token, so their review pack can run but cannot post the comment.

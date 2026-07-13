@@ -15,9 +15,9 @@ Jambavan is an MCP server that provides AST-aware code indexing, token-budgeted 
 
 Use this sequence for a new project session:
 
-1. **`jambavan_awaken {}`** — loads the protocol and recent project memories.
+1. **`jambavan_awaken {}`** — loads the protocol and recent project memories. If it reports an unresolved fallback, repeat with an eligible `{ "root": "/absolute/repo/path" }` before any stateful call.
 2. **`jambavan_doctor {}`** — confirms the project root, gates, storage, and index/watcher status.
-3. **`jambavan_index {}`** — builds or refreshes the AST-aware code index.
+3. **`jambavan_index {}`** — builds or refreshes the AST-aware code index; it accepts the same optional existing absolute directory inside the unresolved fallback root, but cannot replace an already fixed binding.
 4. **`jambavan_watch { "action": "start" }`** — keeps the index live while you edit (skip for one-shot tasks).
 5. **`jambavan_context { "query": "<task-specific query>" }`** — pulls ranked, token-budgeted context before reading unfamiliar code.
 
@@ -31,7 +31,7 @@ Use this sequence for a new project session:
 | Graph overview / hotspots | `jambavan_graph_report` | — |
 | Persist a decision | `jambavan_memory_store` | `title`, `body`, optional `scope` |
 | Search past decisions | `jambavan_memory_search` | `query`, optional `scope` |
-| Wake up with all memories | `jambavan_memory_recall` | optional `scope` |
+| Wake up with active memories | `jambavan_memory_recall` | optional `scope`, `limit` (default 20) |
 | Distill session into memories | `jambavan_memory_mine_session` | `text`, optional `scope` |
 | Record a dead end | `jambavan_failure_store` | `command`, `symptom`, optional `root_cause` |
 | Check before retrying | `jambavan_failure_search` | `query`, optional `scope` |
@@ -65,7 +65,7 @@ Before refactoring a symbol, use `jambavan_graph_query` to inspect a bounded nei
 
 ### Memory (decisions survive sessions)
 
-Store decisions, architectural choices, and resolved ambiguities as memories. They persist as markdown files under `.jambavan/memory/` by default — human-readable, no memory database.
+Store decisions, architectural choices, and resolved ambiguities as memories. They persist as markdown files under `.jambavan/memory/` by default — human-readable, no memory database. Generated `.jambavan/` state self-ignores in Git unless a user deliberately changes its nested `.gitignore`.
 
 - Use `jambavan_memory_store` after making a non-obvious decision. Pass the project scope reported by `jambavan_awaken`; the tool otherwise defaults to `general`.
 - Use `jambavan_memory_mine_session` at session end to distill durable facts, with the same explicit project scope.

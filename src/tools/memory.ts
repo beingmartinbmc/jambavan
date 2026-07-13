@@ -5,11 +5,11 @@
  * MCP tools:
  *   jambavan_memory_store        — persist a memory as an OKF concept document
  *   jambavan_memory_search       — BM25 search across stored memories
- *   jambavan_memory_recall       — load all memories for a scope (session wake-up)
+ *   jambavan_memory_recall       — load bounded active memories (session wake-up)
  *   jambavan_memory_mine_session — mine durable facts from a transcript/log text
  *   jambavan_memory_invalidate   — mark a memory superseded/obsolete without deleting
  *   jambavan_memory_delete       — remove a memory by ID or delete an entire scope
- *   jambavan_memory_status       — bundle statistics (total, by scope)
+ *   jambavan_memory_status       — active-memory statistics by scope
  */
 
 import { MemoryStore } from '../memory/store';
@@ -22,7 +22,7 @@ export const MEMORY_TOOL_DEFS = [
     name: 'jambavan_memory_store',
     description: [
       'Persist a memory as an Open Knowledge Format (OKF) concept document.',
-      'Memories are markdown files with YAML frontmatter — human-readable, git-diffable, portable.',
+      'Memories are markdown files with YAML frontmatter — human-readable and portable; git-diffable when deliberately unignored.',
       'Each memory has a title, body (markdown), optional tags, and a scope (e.g. project name).',
       'Memories with the same title in the same scope are overwritten (idempotent).',
       'Returns the OKF concept ID (scope/slug) of the stored document.',
@@ -63,15 +63,14 @@ export const MEMORY_TOOL_DEFS = [
   {
     name: 'jambavan_memory_recall',
     description: [
-      'Recall all memories for a scope — the session wake-up operation.',
-      'Returns the full content of every memory in the scope, newest first.',
+      'Recall up to limit active memories, newest first (default: 20).',
       'Use at the start of a new session to restore context about a project or topic.',
-      'Omit scope to retrieve all memories across all scopes.',
+      'Omit scope to search across scopes. Invalidated documents are excluded.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
-        scope: { type: 'string', description: 'Scope to recall. Omit for all memories.' },
+        scope: { type: 'string', description: 'Scope to recall. Omit to search across scopes.' },
         limit: { type: 'number', description: 'Max memories to return (default: 20).' },
       },
       required: [],
@@ -129,7 +128,7 @@ export const MEMORY_TOOL_DEFS = [
   {
     name: 'jambavan_memory_status',
     description: [
-      'Show memory bundle statistics: total memory count and breakdown by scope.',
+      'Show active-memory statistics by scope; invalidated documents are excluded.',
       'Read-only. Use to understand what is stored before a search or recall.',
     ].join(' '),
     inputSchema: {
@@ -209,7 +208,7 @@ export function buildMemoryHandlers(config: JambavanConfig) {
 
       const header = scope
         ? `# Memories: ${scope} (${docs.length})\n`
-        : `# All Memories (${docs.length})\n`;
+        : `# Active Memories (${docs.length})\n`;
 
       return header + '\n' + docs.map(doc =>
         `## ${doc.frontmatter.title}\n` +

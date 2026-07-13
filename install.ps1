@@ -10,12 +10,12 @@ Write-Host "Jambavan install`n" -ForegroundColor White
 # --- Node version check -------------------------------------------------------
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
-  Write-Error "Node.js >= 20 and < 27 is required. Install it from https://nodejs.org and re-run."
+  Write-Error "Node.js >= 20.19.0 and < 27 is required. Install it from https://nodejs.org and re-run."
   exit 1
 }
-$nodeMajor = [int](node -p "process.versions.node.split('.')[0]")
-if ($nodeMajor -lt 20 -or $nodeMajor -ge 27) {
-  Write-Error "Node.js >= 20 and < 27 is required (found $(node -v)). Install a supported version and re-run."
+$nodeVersion = [version](node -p "process.versions.node")
+if ($nodeVersion -lt [version]'20.19.0' -or $nodeVersion -ge [version]'27.0.0') {
+  Write-Error "Node.js >= 20.19.0 and < 27 is required (found $(node -v)). Install a supported version and re-run."
   exit 1
 }
 Write-Host "  [ok] Node $(node -v)" -ForegroundColor Green

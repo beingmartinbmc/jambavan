@@ -72,9 +72,9 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 
 | Tool | Purpose |
 |---|---|
-| `jambavan_index` | Build / refresh AST-aware codebase index (incremental) |
+| `jambavan_index` | Optionally bind an existing absolute directory inside an unresolved fallback root, then build / refresh the AST-aware codebase index |
 | `jambavan_context` | Return lexical symbols plus bounded extracted callers/callees and top project-memory matches. Optional diff/test enrichments; everything shares one token budget |
-| `jambavan_watch` | Start / stop live file watcher (incremental per-file re-index) |
+| `jambavan_watch` | Start / stop the active watcher backend and report persistent index totals (incremental per-file re-index) |
 | `jambavan_diagnostics` | Show tree-sitter vs regex parser backends + index stats |
 | `jambavan_doctor` | One-shot environment health check: root source, parser backends, write/bash gates, token budget, memory dir, `.gitignore`/CI, and index/watcher status |
 
@@ -120,11 +120,11 @@ The mythological tool names are the canonical API. These English aliases are als
 |---|---|
 | `jambavan_memory_store` | Persist a memory as an OKF markdown document; requires `title` and `body` |
 | `jambavan_memory_search` | BM25 full-text search across stored memories |
-| `jambavan_memory_recall` | Load all memories for a scope — session wake-up |
+| `jambavan_memory_recall` | Recall up to `limit` active memories, newest first (default 20); omit scope to search across scopes |
 | `jambavan_memory_mine_session` | Deterministically mine durable items from required `text` |
 | `jambavan_memory_invalidate` | Mark a memory superseded without deleting history |
 | `jambavan_memory_delete` | Remove a memory by ID or wipe an entire scope |
-| `jambavan_memory_status` | Bundle statistics (total count, by scope) |
+| `jambavan_memory_status` | Active-memory statistics by scope; invalidated documents are excluded |
 
 ### Failure memory & session handoff
 
@@ -197,7 +197,7 @@ Local, no-server helpers run as `npx jambavan <subcommand>`. None call an LLM. C
 | `jambavan handoff --write-pr-template [--scope <scope>] [--share-safe] [--post]` | Runs the `jambavan_session_export` handoff card and injects it as an HTML-comment-bounded block into `.github/pull_request_template.md` (see `src/tools/pr-handoff.ts` for the pure inject/replace transform); idempotent re-injection, no duplication. `--share-safe` redacts local paths/secrets and omits git-sensitive data. `--post` additionally shells to the caller's own authenticated `gh pr comment` |
 | `jambavan review-pack [--base <ref>] [--format markdown\|json] [--max-files <n>] [--include-worktree]` | Indexes the project, then writes a branch review pack to stdout. Markdown delegates to `jambavan_review_pack`; JSON uses `src/tools/review-pack-json.ts` for `{ base, touchedCount, analyzedCount, truncated, files[], rinMarkers[], failures[] }`, which is what the GitHub Action consumes |
 | `jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]` | Indexes the project and writes a self-contained HTML handoff report (`src/tools/html-handoff.ts`) with memory timeline, rin debt, indexed-symbol stats, git dirty files/recent commits, collapsible sections, and copy-to-clipboard. `--share-safe` redacts local paths/secrets and omits git-sensitive data. No external assets or network calls |
-| `jambavan daemon start\|stop\|status` | Spawns/stops/inspects a detached background process (`src/daemon-worker.ts`, managed by `src/tools/daemon.ts`) that runs the same `FileWatcher` as `jambavan_watch`, standalone. PID file at `.jambavan/daemon.pid`, log at `.jambavan/daemon.log`, liveness checked via `process.kill(pid, 0)`. `jambavan_watch`/`jambavan_diagnostics`/`jambavan_awaken` all check this PID file first to avoid starting a redundant in-process watcher |
+| `jambavan daemon start\|stop\|status` | Spawns/stops/inspects a detached process (`src/daemon-worker.ts`, managed by `src/tools/daemon.ts`) using the same `FileWatcher`. PID/log files live under `.jambavan/`; liveness uses `process.kill(pid, 0)`. MCP opens its SQLite index on demand. `jambavan_watch start` refuses an in-process watcher while a daemon PID is active; `stop` stops in-process first, otherwise the daemon |
 | `jambavan gui [--port <n>] [--no-open]` | Indexes the project, then serves a dependency-free static page (`src/tools/gui.ts`) over Node's `http` module bound to `127.0.0.1` only — a force-directed graph view (from `buildSymbolGraph`, capped to the 400 highest-degree nodes), rin debt (`harvestRin`), and failure records (`MemoryStore`). `/api/data` serves the graph/sidebar data; `/api/node/:id` serves click-through source snippets, callers, callees, and heat counts. Opens the default browser unless `--no-open` is passed |
 
 `node dist/benchmark.js --json` (not a `jambavan` subcommand, run directly) emits the same benchmark data as `npm run bench` as one JSON object instead of tables.
@@ -356,7 +356,7 @@ Host model calls jambavan_context { "query": "auth middleware" }
 
 ## How `jambavan_memory_*` works
 
-Memories are stored as [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concept documents — markdown files with YAML frontmatter — inside `.jambavan/memory/`. No database, no embeddings, no external services.
+Memories are stored as [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concept documents — markdown files with YAML frontmatter — inside `.jambavan/memory/`. No database, no embeddings, no external services. The generated state is Git-ignored by default; users can deliberately unignore memories if they want versioned project memory.
 
 ```
 jambavan_memory_store { "title": "Why we use GraphQL", "body": "...", "scope": "my-project" }
@@ -371,7 +371,7 @@ jambavan_memory_store { "title": "Why we use GraphQL", "body": "...", "scope": "
          │
          ▼
   .jambavan/memory/my-project/why-we-use-graphql.md
-  → Human-readable, git-diffable, portable
+  → Human-readable and portable; git-diffable when deliberately unignored
 
 jambavan_memory_search { "query": "graphql rationale", "scope": "my-project" }
          │
@@ -423,7 +423,7 @@ Jambavan keeps retrieval, storage, and deterministic transforms separate from th
 | Env var | Default | Description |
 |---|---|---|
 | `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
-| `JAMBAVAN_SCOPE` | path-derived slug + hash | Clone-independent memory scope; 1-80 lowercase letters, numbers, or hyphens |
+| `JAMBAVAN_SCOPE` | path-derived slug + hash | Optional validated clone-independent scope override; when unset, Jambavan derives a slug and hash from the absolute project path |
 | `JAMBAVAN_MEMORY_HOME` | `<indexDir>/memory` | Where OKF memory docs live; point at a shared palace to reuse memory across projects |
 | `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max approximate `cl100k_base` tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite` / `full` / `ultra`) |
@@ -449,7 +449,8 @@ Jambavan bakes token-efficient computer use into its startup protocol and Vibhis
 
 Jambavan is driven by a host model, so source mutation and shell execution are granted explicitly:
 
-- **Source mutation and shell are off by default.** `read_file`, `search`, and `list_files` register without opt-in. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_sankshipta`; `JAMBAVAN_ALLOW_BASH=1` adds `bash`. Indexing, memory, failure tracking, handoff generation, and daemon operation still write local `.jambavan/` state.
+- **Source mutation and shell are off by default.** `read_file`, `search`, and `list_files` register without opt-in. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_sankshipta`; `JAMBAVAN_ALLOW_BASH=1` adds `bash`. Indexing, memory, failure tracking, handoff generation, and daemon operation still write local `.jambavan/` state, which self-ignores via `.jambavan/.gitignore`.
+- **Unresolved root binding fails closed.** Launch-time `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from process cwd, and a supported single file-URI MCP `roots/list` result may replace that result. If the source remains `cwd-fallback`, stateful tools are blocked. `jambavan_awaken.root` or `jambavan_index.root` can bind an existing absolute directory inside that fallback root; they cannot override an already fixed `env`, `client-roots`, `cwd-project`, or `tool-input` binding.
 - **Path containment.** Direct file/search/list path arguments and the shell working directory resolve inside `JAMBAVAN_ROOT`; symlinks are checked via `realpath`. An enabled shell command is not path-sandboxed. `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` disables direct-path containment for trusted local use.
 - **Direct secret-path guard.** Known secret basenames/extensions and immediate parent directories are refused for direct file/search/list paths and shell working directories unless `JAMBAVAN_ALLOW_SECRETS=1`. This is not content scanning and does not stop an enabled shell command from opening a secret file.
 - **`bash` isolation.** Runs with a minimal no-color env (no inherited host secrets unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and a best-effort footgun blocklist for obvious root/home/project wipes, destructive git resets/cleans, fork bombs, and blind remote shell pipes. The blocklist is **not** a security boundary — run inside a container/microVM for real isolation.
@@ -480,6 +481,7 @@ First run (jambavan_index):
 Every subsequent call (jambavan_index):
   Discover and hash candidate files → compare to cache → skip unchanged
   Re-parse only stale/new files
+  Report symbols extracted this run separately from total symbols in SQLite
   Discovery/hash: O(n files)
   Parsing: O(changed files)
 ```

@@ -7,7 +7,7 @@ import { buildFailureHandlers } from '../src/tools/failure-memory';
 import { buildSessionHandoffHandlers } from '../src/tools/session-handoff';
 import { buildHtmlHandoff } from '../src/tools/html-handoff';
 import { buildTestMap, isTestFile, formatTestAssociations, testAssociationsFor } from '../src/index/test-map';
-import { projectScope } from '../src/tools/jambavan';
+import { awakenReport, projectScope } from '../src/tools/jambavan';
 import { buildSymbolGraph } from '../src/knowledge/graph';
 import { loadConfig, type JambavanConfig } from '../src/config/jambavan.config';
 import { MemoryStore } from '../src/memory/store';
@@ -40,6 +40,32 @@ test('projectScope: JAMBAVAN_SCOPE provides a validated clone-independent overri
       assert.throws(() => loadConfig(), /Invalid JAMBAVAN_SCOPE/);
     });
   } finally { cleanup(); }
+});
+
+test('MemoryStore: default project memory self-ignores generated Jambavan state', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    new MemoryStore(config.memoryDir);
+    assert.equal(fs.readFileSync(path.join(config.indexDir, '.gitignore'), 'utf8'), '*\n');
+  } finally {
+    cleanup();
+  }
+});
+
+test('awakenReport: unsafe home fallback blocks memory recall and asks for a root', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    config.projectRoot = require('os').homedir();
+    config.indexDir = path.join(config.projectRoot, '.jambavan');
+    config.memoryDir = path.join(config.indexDir, 'memory');
+    config.rootSource = 'cwd-fallback';
+    const report = awakenReport(config, { includeMemories: true });
+    assert.match(report, /project root required/i);
+    assert.match(report, /Stateful MCP tools are blocked/);
+    assert.doesNotMatch(report, /Recalled memories/);
+  } finally {
+    cleanup();
+  }
 });
 
 // ── Failure Memory ───────────────────────────────────────────────────────────

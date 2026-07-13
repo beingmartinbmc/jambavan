@@ -24,9 +24,16 @@ import {
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { fileURLToPath } from 'url';
+import * as fs from 'fs';
+import * as path from 'path';
 
 import pkg from '../../package.json';
-import { loadConfig, applyResolvedRoot } from '../config/jambavan.config';
+import {
+  loadConfig,
+  applyResolvedRoot,
+  isUnsafeFallbackRoot,
+  resolveToolRoot,
+} from '../config/jambavan.config';
 import { aliasToolsFor, resolveToolAlias } from './tool-aliases';
 import { detectHost, doctorIssueReport, doctorReport } from '../tools/doctor';
 import { ToolRegistry, boundedInt, capOutput } from '../tools/registry';
@@ -52,9 +59,9 @@ import {
 import { SESSION_HANDOFF_TOOL_DEFS, buildSessionHandoffHandlers } from '../tools/session-handoff';
 import { REVIEW_PACK_TOOL_DEFS, buildReviewPackHandlers } from '../tools/review-pack';
 import { IMPACT_TOOL_DEFS, buildImpactHandlers } from '../tools/impact';
-import { getDaemonStatus, formatDaemonStatus } from '../tools/daemon';
+import { getDaemonStatus, formatDaemonStatus, stopDaemon } from '../tools/daemon';
 import { sankshiptaFile } from '../tools/sankshipta';
-import { awakenReport, jambavanInstructions, projectScope } from '../tools/jambavan';
+import { awakenReport, projectScope } from '../tools/jambavan';
 import {
   buildGraphNeighborhood,
   buildSymbolGraph,
@@ -70,6 +77,8 @@ import { vibhaajanProtocol } from '../tools/vibhaajan';
 import { getRecentSymbolChanges, formatRecentChanges } from '../context/diff-enricher';
 import { buildTestMap, formatTestAssociations, testAssociationsFor } from '../index/test-map';
 import { MemoryStore } from '../memory/store';
+
+let rootResolutionIssue: string | undefined;
 
 /**
  * Ask the MCP host for its real workspace root via roots/list, if it supports
@@ -87,10 +96,13 @@ async function resolveClientRoots(server: Server, config: ReturnType<typeof load
     const newRoot = selectClientRoot(roots ?? []);
     if (!newRoot) return;
     applyResolvedRoot(config, newRoot);
+    rootResolutionIssue = undefined;
   } catch (err) {
-    if (err instanceof Error && err.message.startsWith('Jambavan root selection failed:')) throw err;
-    // Host declared the roots capability but didn't answer in time — keep the
-    // cwd-walkup fallback rather than blocking startup on it.
+    // An explicit tool root can still recover from an unanswered, unsupported,
+    // or ambiguous roots/list response. Mark the fallback unresolved so
+    // stateful calls fail closed until the user selects one repository.
+    rootResolutionIssue = err instanceof Error ? err.message : String(err);
+    config.rootSource = 'cwd-fallback';
   }
 }
 
@@ -291,8 +303,32 @@ function ensureIndex(): JambavanIndex {
   return jambavanIndex;
 }
 
-const reviewPackHandlers = buildReviewPackHandlers(config, () => jambavanIndex);
-const impactHandlers = buildImpactHandlers(config, () => jambavanIndex);
+function loadExistingIndex(): JambavanIndex | undefined {
+  if (!jambavanIndex && fs.existsSync(path.join(config.indexDir, 'symbols.db'))) {
+    jambavanIndex = new JambavanIndex(config);
+  }
+  return jambavanIndex;
+}
+
+function bindToolRoot(value: unknown): void {
+  if (value === undefined) return;
+  const root = resolveToolRoot(config, value);
+  if (root === config.projectRoot) {
+    applyResolvedRoot(config, root, 'tool-input');
+    rootResolutionIssue = undefined;
+    return;
+  }
+  if (getDaemonStatus(config).running) stopDaemon(config);
+  fileWatcher?.stop();
+  fileWatcher = undefined;
+  jambavanIndex?.close();
+  jambavanIndex = undefined;
+  applyResolvedRoot(config, root, 'tool-input');
+  rootResolutionIssue = undefined;
+}
+
+const reviewPackHandlers = buildReviewPackHandlers(config, loadExistingIndex);
+const impactHandlers = buildImpactHandlers(config, loadExistingIndex);
 
 // ── MCP Tool schema helpers ───────────────────────────────────────────────────
 
@@ -319,6 +355,7 @@ const NATIVE_TOOLS: Tool[] = [
       type:       'object' as const,
       properties: {
         include_memories: { type: 'boolean', description: 'Include recent memories for this project scope (default: true).' },
+        root: { type: 'string', description: 'Existing absolute directory inside the current unresolved fallback root. Cannot override an already fixed env, client-roots, cwd-project, or tool-input binding.' },
       },
       required: [],
     },
@@ -333,7 +370,9 @@ const NATIVE_TOOLS: Tool[] = [
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
-      properties: {},
+      properties: {
+        root: { type: 'string', description: 'Existing absolute directory inside the current unresolved fallback root. Cannot override an already fixed env, client-roots, cwd-project, or tool-input binding.' },
+      },
       required:   [],
     },
   },
@@ -379,7 +418,7 @@ const NATIVE_TOOLS: Tool[] = [
     description: [
       'Control the live file watcher that keeps the index in sync as you edit code.',
       'Actions: "start" — begin watching (index must exist first); "stop" — stop watching; "status" — show watcher state.',
-      'While running, every file save triggers an incremental re-index of just that file (no full rescan).',
+      'While running, supported non-ignored source-file changes trigger incremental re-indexing (no full rescan).',
       'Use "start" after jambavan_index, then forget about it — the index stays fresh automatically.',
     ].join(' '),
     inputSchema: {
@@ -628,12 +667,22 @@ const NATIVE_TOOLS: Tool[] = [
   },
 ];
 
+function advertisedTools(): Tool[] {
+  const native = allowWrite
+    ? NATIVE_TOOLS
+    : NATIVE_TOOLS.filter(tool => tool.name !== 'jambavan_sankshipta');
+  return [...native, ...aliasToolsFor(native), ...registry.definitions().map(toMcpTool)];
+}
+
 // ── Server ────────────────────────────────────────────────────────────────────
 
 export async function startServer(): Promise<void> {
   const server = new Server(
     { name: 'jambavan', version: pkg.version },
-    { capabilities: { tools: {} }, instructions: jambavanInstructions(config) },
+    {
+      capabilities: { tools: {} },
+      instructions: 'Call jambavan_awaken first; it reports the resolved project root and current operating protocol.',
+    },
   );
 
   const rootResolution = new RootResolutionGate();
@@ -642,13 +691,9 @@ export async function startServer(): Promise<void> {
   // ── tools/list ─────────────────────────────────────────────────────────────
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    const registryTools = registry.definitions().map(toMcpTool);
     // jambavan_sankshipta mutates files in-place by default, so it is a write
     // tool: keep it off the advertised list unless writes are explicitly enabled.
-    const native = allowWrite
-      ? NATIVE_TOOLS
-      : NATIVE_TOOLS.filter(t => t.name !== 'jambavan_sankshipta');
-    return { tools: [...native, ...aliasToolsFor(native), ...registryTools] };
+    return { tools: advertisedTools() };
   });
 
   // ── tools/call ─────────────────────────────────────────────────────────────
@@ -681,14 +726,48 @@ export async function startServer(): Promise<void> {
     const name = resolveToolAlias(requestedName);
     const input = args as Record<string, unknown>;
 
+    if (name === 'jambavan_awaken' || name === 'jambavan_index') {
+      try {
+        bindToolRoot(input['root']);
+      } catch (err) {
+        return {
+          content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }],
+          isError: true,
+        };
+      }
+    }
+
+    if (isUnsafeFallbackRoot(config)) {
+      const safeWithoutRoot = new Set([
+        'jambavan_awaken',
+        'jambavan_diagnostics',
+        'jambavan_doctor',
+        'jambavan_vibhishana_niti',
+        'jambavan_mool_kaaran',
+        'jambavan_praman',
+        'jambavan_yukti',
+        'jambavan_vibhaajan',
+      ]);
+      if (!safeWithoutRoot.has(name)) {
+        return {
+          content: [{
+            type: 'text',
+            text: 'Project root is unresolved; stateful MCP tools are blocked. Pass an eligible root to jambavan_awaken or jambavan_index, or set JAMBAVAN_ROOT and reconnect.',
+          }],
+          isError: true,
+        };
+      }
+    }
+
     // ── jambavan_awaken ───────────────────────────────────────────────────────
     if (name === 'jambavan_awaken') {
+      const report = awakenReport(config, {
+        includeMemories: (input['include_memories'] as boolean | undefined) ?? true,
+      });
       return {
         content: [{
           type: 'text',
-          text: awakenReport(config, {
-            includeMemories: (input['include_memories'] as boolean | undefined) ?? true,
-          }),
+          text: rootResolutionIssue ? `${report}\n\nRoot resolution issue: ${rootResolutionIssue}` : report,
         }],
       };
     }
@@ -702,7 +781,8 @@ export async function startServer(): Promise<void> {
           `Indexed:          ${stats.indexedFiles} files`,
           `Skipped (unchanged): ${stats.skippedFiles} files`,
           `Failed:           ${stats.failedFiles} files`,
-          `Symbols extracted: ${stats.totalSymbols}`,
+          `Symbols extracted this run: ${stats.indexedSymbols}`,
+          `Total indexed symbols: ${stats.totalSymbols}`,
           `Duration:          ${stats.durationMs}ms`,
           `Index stored at:   ${config.indexDir}`,
         ].join('\n');
@@ -717,7 +797,8 @@ export async function startServer(): Promise<void> {
 
     // ── jambavan_context ──────────────────────────────────────────────────────
     if (name === 'jambavan_context') {
-      if (!jambavanIndex) {
+      const index = loadExistingIndex();
+      if (!index) {
         return {
           content: [{
             type: 'text',
@@ -727,7 +808,7 @@ export async function startServer(): Promise<void> {
         };
       }
 
-      return { content: [{ type: 'text', text: buildContextResponse(jambavanIndex, config, input) }] };
+      return { content: [{ type: 'text', text: buildContextResponse(index, config, input) }] };
     }
 
     // ── jambavan_watch ────────────────────────────────────────────────────────
@@ -744,7 +825,8 @@ export async function startServer(): Promise<void> {
             }],
           };
         }
-        if (!jambavanIndex) {
+        const index = loadExistingIndex();
+        if (!index) {
           return {
             content: [{
               type: 'text',
@@ -756,7 +838,7 @@ export async function startServer(): Promise<void> {
         if (fileWatcher?.getStatus().running) {
           return { content: [{ type: 'text', text: 'Watcher already running.' }] };
         }
-        fileWatcher = new FileWatcher(jambavanIndex, config);
+        fileWatcher = new FileWatcher(index, config);
         fileWatcher.start();
         return {
           content: [{
@@ -764,18 +846,21 @@ export async function startServer(): Promise<void> {
             text: [
               'Watcher started.',
               `Watching: ${config.projectRoot}`,
-              'Every file save will incrementally update the index automatically.',
+              'Supported non-ignored source-file changes will incrementally update the index.',
             ].join('\n'),
           }],
         };
       }
 
       if (action === 'stop') {
-        if (!fileWatcher?.getStatus().running) {
-          return { content: [{ type: 'text', text: 'Watcher is not running.' }] };
+        if (fileWatcher?.getStatus().running) {
+          fileWatcher.stop();
+          return { content: [{ type: 'text', text: 'In-process watcher stopped.' }] };
         }
-        fileWatcher.stop();
-        return { content: [{ type: 'text', text: 'Watcher stopped.' }] };
+        if (getDaemonStatus(config).running) {
+          return { content: [{ type: 'text', text: stopDaemon(config).message }] };
+        }
+        return { content: [{ type: 'text', text: 'Watcher is not running.' }] };
       }
 
       if (action === 'status') {
@@ -785,12 +870,20 @@ export async function startServer(): Promise<void> {
           lastEvent:      null,
           lastFile:       null,
         };
+        const daemon = getDaemonStatus(config);
+        const stats = loadExistingIndex()?.stats();
         const lines = [
           `Background daemon: ${formatDaemonStatus(config)}`,
           `In-process watcher running: ${s.running}`,
-          `Files processed: ${s.filesProcessed}`,
-          `Last event:      ${s.lastEvent ?? 'none'}`,
-          `Last file:       ${s.lastFile  ?? 'none'}`,
+          `Active watcher: ${daemon.running ? 'background daemon' : s.running ? 'in-process' : 'none'}`,
+          ...(s.running
+            ? [
+                `Files processed this MCP session: ${s.filesProcessed}`,
+                `Last event:      ${s.lastEvent ?? 'none'}`,
+                `Last file:       ${s.lastFile  ?? 'none'}`,
+              ]
+            : []),
+          `Indexed state:   ${stats ? `${stats.files.totalFiles} files, ${stats.symbols} symbols` : 'not built'}`,
         ];
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       }
@@ -831,13 +924,14 @@ export async function startServer(): Promise<void> {
 
     // ── jambavan_graph_report ─────────────────────────────────────────────────
     if (name === 'jambavan_graph_report') {
-      if (!jambavanIndex) {
+      const index = loadExistingIndex();
+      if (!index) {
         return { content: [{ type: 'text', text: 'Index not built yet. Call jambavan_index first.' }], isError: true };
       }
       const max = boundedInt(input['max_nodes'], { min: 1, max: 100, fallback: 10 });
       const symbolLimit = boundedInt(input['symbol_limit'], { min: 100, max: 20_000, fallback: 5000 });
-      const graph = buildSymbolGraph(jambavanIndex.getAllSymbols(symbolLimit), config, jambavanIndex.getAllReExports());
-      const stats = jambavanIndex.stats();
+      const graph = buildSymbolGraph(index.getAllSymbols(symbolLimit), config, index.getAllReExports());
+      const stats = index.stats();
       return {
         content: [{
           type: 'text',
@@ -849,14 +943,15 @@ export async function startServer(): Promise<void> {
 
     // ── jambavan_graph_query / jambavan_graph_path ───────────────────────────────
     if (name === 'jambavan_graph_query' || name === 'jambavan_graph_path') {
-      if (!jambavanIndex) {
+      const index = loadExistingIndex();
+      if (!index) {
         return { content: [{ type: 'text', text: 'Index not built yet. Call jambavan_index first.' }], isError: true };
       }
       const symbolLimit = boundedInt(input['symbol_limit'], { min: 100, max: 20_000, fallback: 5000 });
       const queries = name === 'jambavan_graph_query'
         ? [String(input['query'] ?? '')]
         : [String(input['from'] ?? ''), String(input['to'] ?? '')];
-      const neighborhood = buildGraphNeighborhood(jambavanIndex, config, queries, symbolLimit);
+      const neighborhood = buildGraphNeighborhood(index, config, queries, symbolLimit);
       const graph = neighborhood.graph;
       const direction = ['inbound', 'outbound', 'both'].includes(String(input['direction']))
         ? String(input['direction']) as 'inbound' | 'outbound' | 'both'
@@ -887,7 +982,7 @@ export async function startServer(): Promise<void> {
       // it loud here instead of letting it masquerade as a healthy fallback.
       const degraded = backends.filter(b => b.error);
 
-      const indexStats = jambavanIndex?.stats();
+      const indexStats = loadExistingIndex()?.stats();
       const lines = [
         '## Jambavan Diagnostics',
         '',
@@ -911,18 +1006,19 @@ export async function startServer(): Promise<void> {
 
     // ── jambavan_doctor ────────────────────────────────────────────────────────
     if (name === 'jambavan_doctor') {
+      const index = loadExistingIndex();
       const context = {
         allowWrite: allowWrite,
         allowBash: allowBash,
-        indexStats: jambavanIndex
+        indexStats: index
           ? {
-              files: jambavanIndex.stats().files.totalFiles,
-              symbols: jambavanIndex.stats().symbols,
-              failures: jambavanIndex.stats().failures,
+              files: index.stats().files.totalFiles,
+              symbols: index.stats().symbols,
+              failures: index.stats().failures,
             }
           : undefined,
         watcherRunning: fileWatcher?.getStatus().running ?? false,
-        toolCount: NATIVE_TOOLS.length + registry.definitions().length,
+        toolCount: advertisedTools().length,
         host: detectHost(),
       };
       const text = input['issue_report']

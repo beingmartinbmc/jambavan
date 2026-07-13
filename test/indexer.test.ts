@@ -11,6 +11,22 @@ function writeSrc(root: string, relPath: string, content: string): void {
   fs.writeFileSync(full, content, 'utf-8');
 }
 
+test('JambavanIndex: reports per-run and persistent symbols and self-ignores generated state', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  const idx = new JambavanIndex(config);
+  try {
+    writeSrc(root, 'a.ts', 'export function indexedOnce() { return 1; }');
+    const cold = await idx.index();
+    const warm = await idx.index();
+
+    assert.ok(cold.indexedSymbols > 0);
+    assert.equal(cold.totalSymbols, cold.indexedSymbols);
+    assert.equal(warm.indexedSymbols, 0);
+    assert.equal(warm.totalSymbols, cold.totalSymbols);
+    assert.equal(fs.readFileSync(path.join(config.indexDir, '.gitignore'), 'utf8'), '*\n');
+  } finally { idx.close(); cleanup(); }
+});
+
 test('JambavanIndex.search: exact name match ranks above prefix and content-only matches', async () => {
   const { config, root, cleanup } = mkTempConfig();
   const idx = new JambavanIndex(config);

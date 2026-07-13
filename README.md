@@ -93,7 +93,7 @@ curl -fsSL https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/instal
 irm https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/install.ps1 | iex
 ```
 
-Needs Node >=20 <27. Safe to re-run. It skips agents you do not have and does not remove other MCP servers from your config. As with any internet shell script, read it before piping it into a shell.
+Needs Node >=20.19.0 <27. Safe to re-run. It skips agents you do not have and does not remove other MCP servers from your config. As with any internet shell script, read it before piping it into a shell.
 
 ## Manual Registration
 
@@ -147,7 +147,7 @@ jambavan_watch { "action": "start" }
 jambavan_context { "query": "<task-specific identifier or question>" }
 ```
 
-`jambavan_doctor` checks project-root detection, parser backends, gates, memory paths, CI hints, and index/watcher status. If it reports a root such as `$HOME`, set `JAMBAVAN_ROOT` to one repo, reconnect, and run doctor again.
+`jambavan_doctor` checks project-root detection, parser backends, gates, memory paths, CI hints, and index/watcher status. When root resolution remains at `cwd-fallback`, stateful tools fail closed. `jambavan_awaken.root` or `jambavan_index.root` can bind an existing absolute directory inside that fallback root. Use `JAMBAVAN_ROOT` and reconnect when the repository is outside it or another source already fixed the root.
 
 ## Activate, Update, And Uninstall
 
@@ -258,7 +258,7 @@ Next check: run the focused auth test with fake timers enabled.
 
 ## Privacy And Safety
 
-**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, memory, failure records, and daemon state under `.jambavan/` by default. Those operational writes still occur when source mutation is disabled.
+**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, memory, failure records, and daemon state under `.jambavan/` by default. It creates `.jambavan/.gitignore` with `*` so generated state stays out of Git status without editing the repository's tracked `.gitignore`. Those operational writes still occur when source mutation is disabled.
 
 Source-mutating and shell MCP tools are not advertised unless you opt in:
 
@@ -327,9 +327,9 @@ In Claude Code this can show up as `-32000` / `failed to reconnect` because the 
 
 ### Root Confusion
 
-Jambavan resolves the project root in this order: explicit `JAMBAVAN_ROOT`, MCP `roots/list` from the host, then a walk up from the server process cwd. Some hosts start MCP servers with `cwd=$HOME`; if they also do not answer `roots/list`, Jambavan can index too much.
+At startup, `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from the server process cwd, and a supported single file-URI MCP `roots/list` result may replace that cwd result. When the resulting source is `cwd-fallback`, stateful tools fail closed. `jambavan_awaken.root` or `jambavan_index.root` may then bind an existing absolute directory inside the current fallback root; use `JAMBAVAN_ROOT` and reconnect when the repository is outside it. A tool root cannot override an already fixed `env`, `client-roots`, `cwd-project`, or `tool-input` root.
 
-Run `jambavan_doctor` or `npx jambavan doctor`. Healthy output should show the target repo with `source: env` or `source: client-roots`.
+Run `jambavan_doctor` or `npx jambavan doctor`. Healthy MCP output should show the target repo with `source: env`, `source: client-roots`, `source: tool-input`, or `source: cwd-project`.
 
 ## Claude Code Plugin
 
@@ -411,7 +411,7 @@ npx jambavan handoff --write-pr-template --post
 
 ## Background Daemon
 
-`npx jambavan daemon start` runs the same watcher used by `jambavan_watch` in a detached background process. It writes `.jambavan/daemon.pid` and `.jambavan/daemon.log`.
+`npx jambavan daemon start` runs the same watcher used by `jambavan_watch` in a detached background process. It writes `.jambavan/daemon.pid` and `.jambavan/daemon.log`. MCP opens a daemon-built SQLite index on demand. `jambavan_watch start` refuses to add an in-process watcher while a daemon PID is active; `stop` stops the in-process watcher first, otherwise the daemon.
 
 ```bash
 npx jambavan daemon start
@@ -442,7 +442,7 @@ The page has three tabs: code graph, Rin Debt, and Failures. It includes search,
 | Env var | Default | Description |
 |---|---|---|
 | `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
-| `JAMBAVAN_SCOPE` | path-derived slug + hash | Clone-independent memory scope; 1-80 lowercase letters, numbers, or hyphens |
+| `JAMBAVAN_SCOPE` | path-derived slug + hash | Optional validated clone-independent scope override; when unset, Jambavan derives a slug and hash from the absolute project path |
 | `JAMBAVAN_MEMORY_HOME` | `<indexDir>/memory` | Where memory docs live |
 | `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max approximate `cl100k_base` tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite`, `full`, `ultra`) |

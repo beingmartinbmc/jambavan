@@ -21,13 +21,14 @@ import ignore from 'ignore';
 import Database from 'better-sqlite3';
 import { FileCache } from './file-cache';
 import { ASTParser, type Symbol, type ParsedFile } from './ast-parser';
-import type { JambavanConfig } from '../config/jambavan.config';
+import { ensureGeneratedStateDir, type JambavanConfig } from '../config/jambavan.config';
 
 export interface IndexStats {
   totalFiles: number;
   indexedFiles: number;
   skippedFiles: number;
   failedFiles: number;
+  indexedSymbols: number;
   totalSymbols: number;
   durationMs: number;
 }
@@ -57,7 +58,7 @@ export class JambavanIndex {
   private failures = new Map<string, IndexFailure>();
 
   constructor(private config: JambavanConfig) {
-    fs.mkdirSync(config.indexDir, { recursive: true });
+    ensureGeneratedStateDir(config.indexDir);
     this.cache  = new FileCache(config.indexDir);
     this.parser = new ASTParser();
     this.db     = new Database(path.join(config.indexDir, 'symbols.db'));
@@ -157,7 +158,7 @@ export class JambavanIndex {
     const start = Date.now();
     const files = await this.discoverFiles();
     const stale: string[] = [];
-    let totalSymbols = 0;
+    let indexedSymbols = 0;
     let indexedFiles = 0;
     let staleCheckFailures = 0;
 
@@ -172,7 +173,7 @@ export class JambavanIndex {
     }
 
     for (const filePath of stale) {
-      totalSymbols += this.indexFile(filePath);
+      indexedSymbols += this.indexFile(filePath);
       if (!this.failures.has(filePath)) indexedFiles++;
     }
 
@@ -192,7 +193,8 @@ export class JambavanIndex {
       indexedFiles,
       skippedFiles: files.length - stale.length - staleCheckFailures,
       failedFiles:  this.failures.size,
-      totalSymbols,
+      indexedSymbols,
+      totalSymbols: this.stats().symbols,
       durationMs:   Date.now() - start,
     };
   }

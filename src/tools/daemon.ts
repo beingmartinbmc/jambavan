@@ -16,7 +16,7 @@
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { JambavanConfig } from '../config/jambavan.config';
+import { ensureGeneratedStateDir, type JambavanConfig } from '../config/jambavan.config';
 
 export interface DaemonStatus {
   running: boolean;
@@ -64,7 +64,7 @@ export function startDaemon(config: JambavanConfig): { started: boolean; pid?: n
     return { started: false, pid: status.pid, message: `Daemon already running (pid ${status.pid}).` };
   }
 
-  fs.mkdirSync(config.indexDir, { recursive: true });
+  ensureGeneratedStateDir(config.indexDir);
   const workerPath = path.join(__dirname, '..', 'daemon-worker.js');
   const out = fs.openSync(logFile(config), 'a');
   const err = fs.openSync(logFile(config), 'a');

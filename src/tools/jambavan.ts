@@ -4,7 +4,7 @@ import * as path from 'path';
 import { vibhishanaNitiInstructions } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
 import { getDaemonStatus } from './daemon';
-import type { JambavanConfig } from '../config/jambavan.config';
+import { isUnsafeFallbackRoot, type JambavanConfig } from '../config/jambavan.config';
 
 /**
  * Derive a memory scope from the project root path.
@@ -42,6 +42,17 @@ export function redactForSharing(value: string, config: JambavanConfig): string 
 }
 
 export function jambavanInstructions(config: JambavanConfig): string {
+  if (isUnsafeFallbackRoot(config)) {
+    return [
+      'JAMBAVAN PROTOCOL — project root required.',
+      '',
+      `Unresolved fallback root: ${config.projectRoot}`,
+      'Stateful MCP tools are blocked.',
+      'Pass an eligible root to jambavan_awaken or jambavan_index, or set JAMBAVAN_ROOT and reconnect.',
+      '',
+      vibhishanaNitiInstructions(process.env.JAMBAVAN_DEV_MODE),
+    ].join('\n');
+  }
   const scope = projectScope(config);
   return [
     'JAMBAVAN PROTOCOL — awaken the agent powers now.',
@@ -93,7 +104,7 @@ export function awakenReport(config: JambavanConfig, opts: { includeMemories?: b
     parts.push('', `Background daemon already watching this project (pid ${daemon.pid}) — skip jambavan_watch action=start, the index is already staying live.`);
   }
 
-  if (opts.includeMemories ?? true) {
+  if ((opts.includeMemories ?? true) && !isUnsafeFallbackRoot(config)) {
     const docs = new MemoryStore(config.memoryDir).list(scope)
       .sort((a, b) => b.frontmatter.timestamp.localeCompare(a.frontmatter.timestamp))
       .slice(0, 10);

@@ -2,19 +2,19 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.beingmartinbmc/jambavan",
   "title": "Jambavan",
-  "description": "Local-first MCP memory and code intelligence that helps coding agents recall repo context, decisions, failures, and review impact.",
+  "description": "Local-first MCP memory and code intelligence for repo context, decisions, failures, and reviews.",
   "websiteUrl": "https://github.com/beingmartinbmc/jambavan",
   "repository": {
     "url": "https://github.com/beingmartinbmc/jambavan",
     "source": "github"
   },
-  "version": "0.6.0",
+  "version": "0.6.1",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "jambavan",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "transport": {
         "type": "stdio"
       }

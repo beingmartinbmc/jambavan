@@ -3,7 +3,7 @@
  *
  * Persistent agent memory as an Open Knowledge Format (OKF) bundle.
  * Each memory is a markdown file with Jambavan-written YAML frontmatter —
- * human-readable and git-diffable without a bespoke SDK.
+ * human-readable and portable; git-diffable when deliberately unignored.
  *
  * OKF spec: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
  *
@@ -19,6 +19,7 @@
 import * as fs   from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import { ensureGeneratedStateDir } from '../config/jambavan.config';
 
 // ── OKF document shape ────────────────────────────────────────────────────────
 
@@ -149,6 +150,9 @@ export class MemoryStore {
 
   constructor(memoryDir: string) {
     this.bundleRoot = memoryDir;
+    if (path.basename(memoryDir) === 'memory' && path.basename(path.dirname(memoryDir)) === '.jambavan') {
+      ensureGeneratedStateDir(path.dirname(memoryDir));
+    }
     fs.mkdirSync(this.bundleRoot, { recursive: true });
   }
 

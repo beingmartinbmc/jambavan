@@ -248,10 +248,10 @@ async function main(): Promise<void> {
 
   log('## Index');
   log(`  files discovered  : ${cold.totalFiles}`);
-  log(`  symbols extracted : ${cold.totalSymbols}`);
+  log(`  symbols extracted : ${cold.indexedSymbols}`);
   log(`  cold build        : ${cold.durationMs} ms  (${cold.indexedFiles} files parsed)`);
   log(`  warm re-index     : ${warm.durationMs} ms  (${warm.skippedFiles} skipped)`);
-  log(`  cold throughput   : ${perSec(cold.totalFiles, cold.durationMs)} files · ${perSec(cold.totalSymbols, cold.durationMs)} symbols`);
+  log(`  cold throughput   : ${perSec(cold.totalFiles, cold.durationMs)} files · ${perSec(cold.indexedSymbols, cold.durationMs)} symbols`);
   if (warm.durationMs > 0) {
     log(`  incremental speedup: ${(cold.durationMs / Math.max(warm.durationMs, 1)).toFixed(1)}x`);
   }

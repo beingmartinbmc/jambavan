@@ -52,7 +52,7 @@ async function main(): Promise<void> {
 
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v != null) env[k] = v;
-  env.JAMBAVAN_ROOT = proj;
+  delete env.JAMBAVAN_ROOT;
   // tool-check exercises the mutating tools, which are off by default now.
   env.JAMBAVAN_ALLOW_WRITE = '1';
   env.JAMBAVAN_ALLOW_BASH  = '1';
@@ -60,7 +60,7 @@ async function main(): Promise<void> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args:    [path.join(repoRoot, 'dist', 'index.js')],
-    cwd:     repoRoot,
+    cwd:     path.dirname(proj),
     env,
   });
   const client = new Client({ name: 'jambavan-tool-check', version: '0.0.0' }, { capabilities: {} });
@@ -87,16 +87,27 @@ async function main(): Promise<void> {
   }
 
   // Ordered so dependencies are satisfied (index before context/graph, etc.)
-  await call('jambavan_awaken', {});
+  const awakened = await call('jambavan_awaken', { root: proj });
+  if (!awakened.includes(proj)) throw new Error('jambavan_awaken did not bind the requested root');
   await call('jambavan_diagnostics', {});
-  await call('jambavan_doctor', {});
+  const doctor = await call('jambavan_doctor', {});
+  if (!doctor.includes(`Tools available:  ${advertised.length}`)) {
+    throw new Error('jambavan_doctor tool count does not match tools/list');
+  }
   await call('jambavan_index', {});
+  const warmIndex = await call('jambavan_index', {});
+  if (!/Symbols extracted this run: 0/.test(warmIndex) || !/Total indexed symbols: [1-9]/.test(warmIndex)) {
+    throw new Error('warm index output did not separate per-run and total symbol counts');
+  }
   await call('jambavan_context', { query: 'greet' });
   await call('jambavan_graph_report', {});
   await call('jambavan_graph_query', { query: 'greet' });
   await call('jambavan_graph_path', { from: 'main', to: 'greet' });
   await call('jambavan_watch', { action: 'start' });
-  await call('jambavan_watch', { action: 'status' });
+  const watcherStatus = await call('jambavan_watch', { action: 'status' });
+  if (!/Active watcher: in-process/.test(watcherStatus) || !/Indexed state:\s+1 files, [1-9]/.test(watcherStatus)) {
+    throw new Error('watcher status did not report the active backend and persistent index totals');
+  }
   await call('jambavan_watch', { action: 'stop' });
   await call('jambavan_vibhishana_niti', { mode: 'full' });
   await call('jambavan_rin_mochan', {});

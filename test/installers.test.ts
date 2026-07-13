@@ -7,7 +7,7 @@ import { spawnSync } from 'child_process';
 
 const repoRoot = path.resolve(__dirname, '..');
 
-function runShellInstaller(mcpConfig: string, npxExit = 0, nodeMajor = 20, continueConfig?: string | null): {
+function runShellInstaller(mcpConfig: string, npxExit = 0, nodeVersion = '20.19.0', continueConfig?: string | null): {
   status: number | null;
   configPath: string;
   continuePath: string;
@@ -23,8 +23,8 @@ function runShellInstaller(mcpConfig: string, npxExit = 0, nodeMajor = 20, conti
   fs.mkdirSync(cursor);
   const nodePath = path.join(bin, 'node');
   fs.writeFileSync(nodePath, `#!/bin/sh
-if [ "$1" = "-p" ] && [ "$2" = "process.versions.node.split('.')[0]" ]; then
-  printf '%s\\n' '${nodeMajor}'
+if [ "$1" = "-p" ] && [ "$2" = "process.versions.node" ]; then
+  printf '%s\\n' '${nodeVersion}'
 else
   exec '${process.execPath.replace(/'/g, "'\\''")}' "$@"
 fi
@@ -73,13 +73,13 @@ test('install.sh: package preflight failure aborts before config changes', () =>
   } finally { run.cleanup(); }
 });
 
-test('install.sh: rejects Node versions outside >=20 <27', () => {
-  for (const nodeMajor of [19, 27]) {
+test('install.sh: rejects Node versions outside >=20.19.0 <27', () => {
+  for (const nodeVersion of ['20.18.9', '27.0.0']) {
     const existing = '{"mcpServers":{}}\n';
-    const run = runShellInstaller(existing, 0, nodeMajor);
+    const run = runShellInstaller(existing, 0, nodeVersion);
     try {
       assert.notEqual(run.status, 0);
-      assert.match(run.stderr, /Node\.js >= 20 and < 27 is required/);
+      assert.match(run.stderr, /Node\.js >= 20\.19\.0 and < 27 is required/);
       assert.equal(fs.readFileSync(run.configPath, 'utf8'), existing);
     } finally { run.cleanup(); }
   }
@@ -102,7 +102,7 @@ test('install.sh: preserves existing servers and backs up before atomic replacem
 });
 
 test('install.sh: writes documented Continue config.yaml instead of a JSON drop-in', () => {
-  const run = runShellInstaller('{"mcpServers":{}}\n', 0, 20, null);
+  const run = runShellInstaller('{"mcpServers":{}}\n', 0, '20.19.0', null);
   try {
     assert.equal(run.status, 0);
     const config = fs.readFileSync(run.continuePath, 'utf8');
@@ -119,7 +119,7 @@ test('install.sh: writes documented Continue config.yaml instead of a JSON drop-
 
 test('install.sh: preserves existing Continue YAML and prints exact manual guidance', () => {
   const existing = 'name: Existing\nversion: 1.0.0\nschema: v1\n';
-  const run = runShellInstaller('{"mcpServers":{}}\n', 0, 20, existing);
+  const run = runShellInstaller('{"mcpServers":{}}\n', 0, '20.19.0', existing);
   try {
     assert.equal(run.status, 0);
     assert.equal(fs.readFileSync(run.continuePath, 'utf8'), existing);
@@ -133,7 +133,7 @@ test('install.ps1: stays compatible with PowerShell 5.1 and documents lifecycle 
   assert.doesNotMatch(script, /node -e \$updateCursorConfig/);
   assert.match(script, /\$updateCursorConfig \| & node - /);
   assert.doesNotMatch(script, /mcpServers[\\/]jambavan\.json/);
-  assert.match(script, /Node\.js >= 20 and < 27 is required/);
+  assert.match(script, /Node\.js >= 20\.19\.0 and < 27 is required/);
   assert.match(script, /Join-Path \$continueDir "config\.yaml"/);
   assert.match(script, /Package preflight failed/);
   assert.match(script, /\.bak/);
@@ -148,7 +148,7 @@ test('release and reusable review workflows keep version inputs and checks safe'
   const review = fs.readFileSync(path.join(workflows, 'jambavan-review.yml'), 'utf8');
   const release = fs.readFileSync(path.join(workflows, 'release.yml'), 'utf8');
 
-  assert.match(ci, /node-version: \[20, 22, 24, 26\]/);
+  assert.match(ci, /node-version: \['20\.19\.0', 22, 24, 26\]/);
   assert.match(ci, /shell: powershell/);
   assert.match(ci, /PSVersionTable\.PSVersion\.Major/);
   assert.match(review, /^\s{6}package_version:$/m);

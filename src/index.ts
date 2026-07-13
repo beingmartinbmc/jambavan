@@ -350,11 +350,11 @@ Jambavan exposes these MCP tools to the host model:
 
   jambavan_memory_store  Persist a memory as an OKF markdown document
   jambavan_memory_search BM25 search across stored memories
-  jambavan_memory_recall Load all memories for a scope (session wake-up)
+  jambavan_memory_recall Load up to 20 active memories by default (session wake-up)
   jambavan_memory_mine_session  Mine durable facts from pasted transcript/log text
   jambavan_memory_invalidate Mark a memory superseded/obsolete
   jambavan_memory_delete Remove a memory by ID or wipe a scope
-  jambavan_memory_status Bundle statistics (total count, by scope)
+  jambavan_memory_status Active-memory statistics by scope
 
   jambavan_failure_store Store a failure record; bash failures are also recorded automatically
   jambavan_failure_search Search failures; exact unresolved bash retries are blocked by default

@@ -32,14 +32,12 @@ export interface DoctorContext {
 function checkRoot(config: JambavanConfig): string[] {
   const lines = [`Project root:     ${config.projectRoot} (source: ${config.rootSource})`];
   const looksLikeHome = config.projectRoot === os.homedir();
-  if (config.rootSource === 'cwd-fallback' && looksLikeHome) {
+  if (config.rootSource === 'cwd-fallback') {
     lines.push(
-      '  \u26a0 Root fell back to $HOME — this MCP host likely spawned Jambavan with cwd=$HOME',
-      '    and does not support the roots/list capability. Fix: set JAMBAVAN_ROOT=<project path>',
-      '    in this project\'s MCP server config (see README "Fix first-run root confusion").',
+      `  \u26a0 Project root is unresolved${looksLikeHome ? ' (fallback: $HOME)' : ''}; stateful MCP tools are blocked.`,
+      '    Pass an eligible root to jambavan_awaken or jambavan_index,',
+      '    or set JAMBAVAN_ROOT=<project path> and reconnect.',
     );
-  } else if (config.rootSource === 'cwd-fallback') {
-    lines.push('  Tip: set JAMBAVAN_ROOT explicitly if this is ever the wrong project.');
   }
   return lines;
 }
@@ -148,7 +146,7 @@ export function doctorIssueReport(config: JambavanConfig, ctx: DoctorContext): s
       `- Index failure: ${f.filePath}: ${f.error}. Suggested action: inspect the file/parser error, then re-index.`),
     ...(ctx.watcherRunning === false ? ['- Watcher: stopped. Suggested action: call `jambavan_watch` with `action=start` after indexing.'] : []),
     ...(config.rootSource === 'cwd-fallback'
-      ? ['- Root is using cwd fallback. If results target the wrong project, set `JAMBAVAN_ROOT` explicitly.']
+      ? ['- Project root is unresolved; stateful MCP tools are blocked. Pass an eligible tool root or set `JAMBAVAN_ROOT` and reconnect.']
       : []),
   ];
 

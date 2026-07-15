@@ -46,22 +46,26 @@ export function detectBaseBranch(root: string): string {
 }
 
 export function getChangedFiles(root: string, base: string, includeWorktree = false): ChangedFile[] {
-  const touched = parseNameStatus(git(root, ['diff', '--find-renames', '--name-status', `${base}...HEAD`]));
-  const ranges = parseChangedRanges(git(root, ['diff', '--find-renames', '--unified=0', `${base}...HEAD`]));
+  // Both modes diff from the merge-base so a file that only exists on the base
+  // branch is never reported as changed here.
+  //   committed-only: `base...HEAD` (three-dot) already means merge-base→HEAD.
+  //   include_worktree: resolve the merge-base commit explicitly and diff it
+  //     against the working tree (`git diff <merge-base>`), giving committed and
+  //     uncommitted ranges one shared coordinate system. Plain `git diff <base>`
+  //     would compare the base branch's *tip* to the working tree and mis-report
+  //     base-only files as deletions.
+  let range: string[];
+  if (includeWorktree) {
+    const mergeBase = git(root, ['merge-base', base, 'HEAD']).trim();
+    range = [mergeBase];
+  } else {
+    range = [`${base}...HEAD`];
+  }
+  const touched = parseNameStatus(git(root, ['diff', '--find-renames', '--name-status', ...range]));
+  const ranges = parseChangedRanges(git(root, ['diff', '--find-renames', '--unified=0', ...range]));
   const byPath = new Map(touched.map(file => [file.path, file]));
 
   if (includeWorktree) {
-    for (const file of parseNameStatus(git(root, ['diff', '--find-renames', '--name-status', 'HEAD']))) {
-      const existing = byPath.get(file.path);
-      if (existing) {
-        if (existing.status !== file.status) existing.status = `${existing.status}+${file.status}`;
-      } else {
-        byPath.set(file.path, file);
-      }
-    }
-    for (const [file, additions] of parseChangedRanges(git(root, ['diff', '--find-renames', '--unified=0', 'HEAD']))) {
-      ranges.set(file, [...(ranges.get(file) ?? []), ...additions]);
-    }
     for (const file of git(root, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean)) {
       let lineCount = 0;
       try {
@@ -81,7 +85,10 @@ export function getChangedFiles(root: string, base: string, includeWorktree = fa
     }
   }
 
-  return [...byPath.values()].map(file => ({ ...file, ranges: ranges.get(file.path) ?? file.ranges }));
+  return [...byPath.values()].map(file => ({
+    ...file,
+    ranges: ranges.get(file.path) ?? file.ranges,
+  }));
 }
 
 export const REVIEW_PACK_TOOL_DEFS = [
@@ -168,7 +175,7 @@ export function buildReviewPackHandlers(config: JambavanConfig, getIndex: () => 
       for (const file of analyzed) {
         const absPath = path.join(root, file.path);
         const isTest = isTestFile(absPath);
-        const fileSymbols = file.status === 'D'
+        const fileSymbols = file.status.startsWith('D')
           ? []
           : changedSymbols(index.getFileSymbols(absPath), file.ranges);
 

@@ -22,7 +22,6 @@
  *   npx -y jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]  → write interactive HTML handoff report
  *   npx -y jambavan bridge    → convert memories to/from a MemPalace-shaped markdown tree
  *   npx -y jambavan handoff --write-pr-template  → inject the session handoff card into a local PR template
- *   npx -y jambavan daemon start|stop|status  → run the file watcher standalone in a detached background process
  *   npx -y jambavan gui [--port <n>] [--no-open]  → local dependency-free graph/rin/failure visualizer
  */
 
@@ -41,7 +40,6 @@ import type { BenchmarkReport } from './benchmark';
 import { exportToMemPalace, importFromMemPalace } from './tools/memory-bridge';
 import { buildSessionHandoffHandlers } from './tools/session-handoff';
 import { injectHandoffBlock } from './tools/pr-handoff';
-import { startDaemon, stopDaemon, formatDaemonStatus } from './tools/daemon';
 import { startGuiServer, openBrowser } from './tools/gui';
 import { buildReviewPackJson } from './tools/review-pack-json';
 import { buildHtmlHandoff } from './tools/html-handoff';
@@ -171,29 +169,6 @@ if (args[0] === 'gui') {
       if (!args.includes('--no-open')) openBrowser(url);
     });
   });
-}
-
-if (args[0] === 'daemon') {
-  const config = loadConfig();
-  const sub = args[1];
-
-  if (sub === 'start') {
-    const result = startDaemon(config);
-    console.log(result.message);
-    process.exit(result.started ? 0 : 1);
-  }
-  if (sub === 'stop') {
-    const result = stopDaemon(config);
-    console.log(result.message);
-    process.exit(result.stopped ? 0 : 1);
-  }
-  if (sub === 'status') {
-    console.log(formatDaemonStatus(config));
-    process.exit(0);
-  }
-
-  console.error('Usage: jambavan daemon start|stop|status');
-  process.exit(1);
 }
 
 if (args[0] === 'handoff') {
@@ -389,7 +364,6 @@ Direct CLI commands
   jambavan doctor [--issue-report]
   jambavan review-pack [--base <branch>] [--format markdown|json] [--max-files <n>] [--include-worktree]
   jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]
-  jambavan daemon start|stop|status
   jambavan gui [--port <n>] [--no-open]
   jambavan badges
   jambavan evaluate --baseline <json> --jambavan <json> [--format json|markdown]
@@ -446,9 +420,32 @@ Environment:
 }
 
 // All CLI sub-commands above schedule process.exit() before reaching here.
-// Only start the MCP server when no sub-command matched.
-const CLI_COMMANDS = new Set(['gui', 'evaluate', 'review-pack', 'html-handoff', 'daemon', 'bridge', 'badges', 'doctor', '--help', '-h', '--version']);
-if (!CLI_COMMANDS.has(args[0] ?? '')) {
+// The MCP server is launched with NO sub-command (hosts run `npx -y jambavan`).
+// Any other first token is an unknown command and must be rejected — never
+// silently fall through to the server (that hid the removed `daemon` command).
+const CLI_COMMANDS = new Set(['gui', 'evaluate', 'review-pack', 'html-handoff', 'bridge', 'badges', 'doctor', '--help', '-h', '--version']);
+const command = args[0];
+if (command !== undefined && !CLI_COMMANDS.has(command)) {
+  if (command === 'daemon') {
+    process.stderr.write(
+      'The background daemon was removed in 1.0. Use the `jambavan_watch` tool ' +
+      '(action=start) for a live index within an MCP session.\n' +
+      'If a pre-1.0 daemon is still running, stop that process yourself and delete ' +
+      '.jambavan/daemon.pid.\n',
+    );
+  } else {
+    process.stderr.write(`[jambavan] Unknown command: ${command}\nRun \`jambavan --help\` for usage.\n`);
+  }
+  process.exit(2);
+}
+
+// Only the no-subcommand invocation (`npx -y jambavan`) starts the MCP server.
+// Every CLI subcommand above owns its own lifecycle: the synchronous ones
+// already called process.exit(), and the async ones (review-pack, gui,
+// html-handoff) exit from inside their own promise. Falling through to
+// startServer() unconditionally would boot the MCP server alongside a valid
+// CLI command.
+if (command === undefined) {
   startServer().catch(err => {
     process.stderr.write(`[jambavan] Fatal: ${err}\n`);
     process.exit(1);

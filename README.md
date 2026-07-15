@@ -196,7 +196,7 @@ The Ramayana names remain stable, but Jambavan also exposes English aliases for 
 
 ## Representative output shapes
 
-The examples below illustrate the current fields and layout. They are representative, not results from a claimed benchmark run.
+The examples below illustrate the current fields and layout; they are not measured results.
 
 `jambavan_context { "query": "review pack" }` returns focused code spans instead of whole files:
 
@@ -258,7 +258,7 @@ Next check: run the focused auth test with fake timers enabled.
 
 ## Privacy And Safety
 
-**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, memory, failure records, and daemon state under `.jambavan/` by default. It creates `.jambavan/.gitignore` with `*` so generated state stays out of Git status without editing the repository's tracked `.gitignore`. Those operational writes still occur when source mutation is disabled.
+**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, memory, and failure records under `.jambavan/` by default. It creates `.jambavan/.gitignore` with `*` so generated state stays out of Git status without editing the repository's tracked `.gitignore`. Those operational writes still occur when source mutation is disabled.
 
 Source-mutating and shell MCP tools are not advertised unless you opt in:
 
@@ -349,8 +349,6 @@ The plugin registers the same `npx -y jambavan` MCP server and bundles skills fo
 - [Codex CLI setup](https://github.com/beingmartinbmc/jambavan/blob/main/examples/codex.md)
 - [Continue setup](https://github.com/beingmartinbmc/jambavan/blob/main/examples/continue.md)
 - [Review pack output](https://github.com/beingmartinbmc/jambavan/blob/main/examples/review-pack.md)
-- [Shareable benchmark proof card](https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-proof-card.md)
-- [Offline outcome evaluation](https://github.com/beingmartinbmc/jambavan/blob/main/examples/outcome-evaluation.md)
 
 ## Direct CLI Commands
 
@@ -369,10 +367,8 @@ Useful one-shot commands:
 npx jambavan doctor
 npx jambavan review-pack --base origin/main --format json --max-files 200
 npx jambavan html-handoff --out /tmp/handoff.html --share-safe
-npx jambavan daemon start
 npx jambavan gui
 npx jambavan badges
-npx jambavan evaluate --baseline baseline.json --jambavan jambavan.json --format markdown
 ```
 
 ## Badges Command
@@ -383,7 +379,7 @@ npx jambavan evaluate --baseline baseline.json --jambavan jambavan.json --format
 npx jambavan badges
 ```
 
-The lines summarize benchmark context-token savings for the current repo, Rin Ledger debt markers (`// rin:` comments), and Failure Memory (`FailureRecord` memories in the default project scope). The command makes no network calls. If you want rendered badge images, use a [shields.io static badge](https://shields.io/badges/static-badge) URL explicitly; README renders will then fetch from shields.io's CDN.
+The lines summarize context-token savings for the current repo, Rin Ledger debt markers (`// rin:` comments), and Failure Memory (`FailureRecord` memories in the default project scope). The command makes no network calls. If you want rendered badge images, use a [shields.io static badge](https://shields.io/badges/static-badge) URL explicitly; README renders will then fetch from shields.io's CDN.
 
 ## Memory Bridge
 
@@ -409,17 +405,11 @@ npx jambavan handoff --write-pr-template --post
 
 `npx jambavan html-handoff` writes a self-contained HTML report for humans: memory timeline, rin debt, indexed-symbol stats, dirty files, recent commits, collapsible sections, and copy buttons.
 
-## Background Daemon
+## Live Index Watching
 
-`npx jambavan daemon start` runs the same watcher used by `jambavan_watch` in a detached background process. It writes `.jambavan/daemon.pid` and `.jambavan/daemon.log`. MCP opens a daemon-built SQLite index on demand. `jambavan_watch start` refuses to add an in-process watcher while a daemon PID is active; `stop` stops the in-process watcher first, otherwise the daemon.
+Use the `jambavan_watch` tool (`action: start|stop|status`) to keep the index live within an MCP session: supported source-file changes incrementally update the index while the session runs. Most MCP hosts restart the server per session, so there is nothing to manage between sessions.
 
-```bash
-npx jambavan daemon start
-npx jambavan daemon status
-npx jambavan daemon stop
-```
-
-This mainly helps long-lived terminal or CI workflows where no MCP host keeps the index warm between tool calls.
+> **Removed in 1.0:** the standalone background daemon (`jambavan daemon start|stop|status`). A PID file is discovery metadata, not proof of identity, so it could never be signalled safely. If a pre-1.0 daemon left a `.jambavan/daemon.pid` behind, `jambavan_watch` and awaken print a one-line notice telling you to stop that process manually and delete the file — Jambavan never signals it.
 
 ## GUI Visualizer
 
@@ -455,21 +445,6 @@ The page has three tabs: code graph, Rin Debt, and Failures. It includes search,
 | `JAMBAVAN_MAX_READ_BYTES` | `5242880` | Max file size `read_file` loads |
 
 `JAMBAVAN_SCOPE` controls the project scope used by awakening, context-memory enrichment, failure memory, and handoffs. Manual `jambavan_memory_store` and `jambavan_memory_mine_session` calls default to `general`; pass the project scope explicitly when those memories should be recalled with the project.
-
-## Benchmark
-
-`npm run bench` is a retrieval benchmark. It dogfoods the real pipeline: deterministic, local-only, no LLM calls, no embeddings, no external services. It derives queries from the repo's own symbols and measures index speed, context token savings, graph extraction, prompt compression, and MCP tool latency. It does not measure task correctness or completion. Results depend on the repository, machine, Node version, and cache state; they are measurements, not universal performance claims.
-
-Run it on your repo:
-
-```bash
-JAMBAVAN_ROOT=/path/to/your/repo npm run bench
-node dist/benchmark.js --json
-```
-
-Token counts are `cl100k_base` estimates. They are exact for that tokenizer, not for every host model. To publish aggregate results without leaking paths, symbol names, or tool output, use the [benchmark proof-card template and methodology](https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-proof-card.md).
-
-For outcome evidence, `jambavan evaluate` compares strict, paired JSON records from baseline and Jambavan runs. It reports completion, first-pass success, repeated failures, successful-task duration, and supplied input-token counts without calling an LLM or executing an agent. See the [input schema, metric definitions, and outcome proof card](https://github.com/beingmartinbmc/jambavan/blob/main/examples/outcome-evaluation.md).
 
 ## Community
 

@@ -62,9 +62,17 @@ export function parseChangedRanges(raw: string): Map<string, ChangedRange[]> {
     if (!match) continue;
     const start = Number(match[1]);
     const count = match[2] === undefined ? 1 : Number(match[2]);
-    if (count === 0) continue;
     const fileRanges = ranges.get(currentPath) ?? [];
-    fileRanges.push({ start, end: start + count - 1 });
+    if (count === 0) {
+      // Pure deletion: no surviving new-side lines. Encode the deletion point as
+      // an inverted (zero-width) range {start+1 .. start}, so changedSymbols'
+      // overlap test degrades to strict containment — it tags only a symbol that
+      // still *encloses* the gap (an interior deletion), never a top-level
+      // neighbour whose body was removed whole (start === 0 encloses nothing).
+      fileRanges.push({ start: start + 1, end: start });
+    } else {
+      fileRanges.push({ start, end: start + count - 1 });
+    }
     ranges.set(currentPath, fileRanges);
   }
   return ranges;

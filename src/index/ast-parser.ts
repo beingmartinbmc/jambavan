@@ -642,8 +642,6 @@ export class ASTParser {
     }
 
     const source = fs.readFileSync(filePath, 'utf-8');
-
-    // Try tree-sitter first; fall back to regex when grammar unavailable
     const parser = getParser(language);
     const { symbols, reExports } = parser
       ? extractWithTreeSitter(source, filePath, language, parser)

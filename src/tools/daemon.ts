@@ -1,107 +1,80 @@
 /**
- * Background daemon — runs the existing FileWatcher standalone in a detached
- * process so the index stays live without an MCP host process attached.
+ * Legacy daemon migration guard.
  *
- * No new watch mechanism: this only manages the lifecycle (spawn/PID
- * file/liveness check) around the same `FileWatcher` used in-process by the
- * `jambavan_watch` tool (src/index/watcher.ts). The worker script it spawns
- * is `dist/daemon-worker.js` (see src/daemon-worker.ts).
+ * The background daemon (`jambavan daemon start|stop|status`) was removed from
+ * the stable 1.0 surface: a PID file is discovery metadata, not proof of
+ * identity, so we could never safely signal a process we found there. All the
+ * value it offered is covered by the in-process `jambavan_watch`.
  *
- * Caveat (documented in README): many MCP hosts restart the server process
- * per session anyway, which narrows how much this buys you over
- * `jambavan_watch start` — it mainly helps long-lived terminal/CI workflows
- * where nothing else keeps the index warm between tool calls.
+ * What remains is read-only migration handling: a `.jambavan/daemon.pid` left
+ * behind by a pre-1.0 install (JSON record OR a legacy bare-integer file) is
+ * detected and surfaced with safe upgrade instructions. We NEVER call
+ * process.kill on that pid — the user stops any lingering process themselves.
  */
 
-import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ensureGeneratedStateDir, type JambavanConfig } from '../config/jambavan.config';
-
-export interface DaemonStatus {
-  running: boolean;
-  pid?: number;
-  stale?: boolean; // pid file present but process is dead (crashed / killed without cleanup)
-}
+import type { JambavanConfig } from '../config/jambavan.config';
 
 function pidFile(config: JambavanConfig): string {
   return path.join(config.indexDir, 'daemon.pid');
 }
 
-function logFile(config: JambavanConfig): string {
-  return path.join(config.indexDir, 'daemon.log');
-}
-
-function readPid(config: JambavanConfig): number | undefined {
+/**
+ * Best-effort read of a leftover daemon pid record for *display only*.
+ * Accepts the 1.0-era JSON record `{ pid }` and a pre-JSON bare-integer file
+ * (which is also valid JSON). Malformed content yields `{ pid: undefined }`.
+ * Returns undefined only when the file is absent (ENOENT). An unreadable
+ * record (EACCES/EIO/etc.) yields `{ pid: undefined }` so startup fails closed.
+ * The pid is never signalled.
+ */
+export function detectLegacyDaemon(config: JambavanConfig): { pid?: number } | undefined {
+  let raw: string;
   try {
-    const raw = fs.readFileSync(pidFile(config), 'utf-8').trim();
-    const pid = Number(raw);
-    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+    raw = fs.readFileSync(pidFile(config), 'utf-8').trim();
+  } catch (err: unknown) {
+    // Only ENOENT means "no record exists". Any other read failure (EACCES,
+    // EIO, etc.) means a record is present but unreadable — fail closed so
+    // the watcher refuses to double-index.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    return { pid: undefined };
+  }
+  if (!raw) return { pid: undefined };
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    // 1.0-era record: { pid: <n> }. Legacy bare-integer files also parse as
+    // valid JSON numbers, so accept a top-level number too.
+    const pid = typeof parsed === 'number'
+      ? parsed
+      : (parsed && typeof (parsed as { pid?: unknown }).pid === 'number'
+          ? (parsed as { pid: number }).pid
+          : undefined);
+    if (pid !== undefined && Number.isInteger(pid) && pid > 0) {
+      return { pid };
+    }
   } catch {
-    return undefined;
+    // Not JSON at all (e.g. a malformed "123abc"): no trustworthy pid.
   }
+  return { pid: undefined };
 }
 
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0); // signal 0: existence check only, doesn't actually kill
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function getDaemonStatus(config: JambavanConfig): DaemonStatus {
-  const pid = readPid(config);
-  if (pid === undefined) return { running: false };
-  if (isAlive(pid)) return { running: true, pid };
-  return { running: false, pid, stale: true };
-}
-
-export function startDaemon(config: JambavanConfig): { started: boolean; pid?: number; message: string } {
-  const status = getDaemonStatus(config);
-  if (status.running) {
-    return { started: false, pid: status.pid, message: `Daemon already running (pid ${status.pid}).` };
-  }
-
-  ensureGeneratedStateDir(config.indexDir);
-  const workerPath = path.join(__dirname, '..', 'daemon-worker.js');
-  const out = fs.openSync(logFile(config), 'a');
-  const err = fs.openSync(logFile(config), 'a');
-
-  const child = spawn(process.execPath, [workerPath], {
-    cwd: config.projectRoot,
-    env: { ...process.env, JAMBAVAN_ROOT: config.projectRoot },
-    detached: true,
-    stdio: ['ignore', out, err],
-  });
-  child.unref();
-
-  if (!child.pid) return { started: false, message: 'Failed to spawn daemon process.' };
-
-  fs.writeFileSync(pidFile(config), String(child.pid), 'utf-8');
-  return { started: true, pid: child.pid, message: `Daemon started (pid ${child.pid}). Log: ${logFile(config)}` };
-}
-
-export function stopDaemon(config: JambavanConfig): { stopped: boolean; message: string } {
-  const status = getDaemonStatus(config);
-  if (!status.pid) return { stopped: false, message: 'Daemon is not running (no pid file).' };
-  if (!status.running) {
-    fs.rmSync(pidFile(config), { force: true });
-    return { stopped: false, message: `Daemon pid file was stale (pid ${status.pid} not alive); cleaned up.` };
-  }
-  try {
-    process.kill(status.pid, 'SIGTERM');
-  } catch (err) {
-    return { stopped: false, message: `Failed to stop daemon (pid ${status.pid}): ${err instanceof Error ? err.message : err}` };
-  }
-  fs.rmSync(pidFile(config), { force: true });
-  return { stopped: true, message: `Daemon stopped (pid ${status.pid}).` };
-}
-
-export function formatDaemonStatus(config: JambavanConfig): string {
-  const status = getDaemonStatus(config);
-  if (status.running) return `Daemon active (pid ${status.pid}). Log: ${logFile(config)}`;
-  if (status.stale) return `Daemon pid file is stale (pid ${status.pid} not alive) — run "jambavan daemon stop" to clean it up, then "start" again.`;
-  return 'Daemon not running.';
+/**
+ * One-line upgrade notice if a legacy daemon record is present, else undefined.
+ * Surfaced by jambavan_watch/awaken so a lingering pre-1.0 daemon can't
+ * silently double-index. No signalling and no `kill` suggestion — a PID file is
+ * discovery metadata, not proof of identity, so the pid may now belong to an
+ * unrelated process. The user identifies and stops the real daemon manually.
+ */
+export function legacyDaemonNotice(config: JambavanConfig): string | undefined {
+  const rec = detectLegacyDaemon(config);
+  if (!rec) return undefined;
+  const where = pidFile(config);
+  const pid = rec.pid !== undefined ? ` (recorded pid ${rec.pid})` : '';
+  return [
+    `Found a leftover background-daemon record${pid} from a pre-1.0 Jambavan.`,
+    'The background daemon was removed in 1.0. If that process is still running it may',
+    'double-index this project. Find it yourself (the recorded pid may since have been',
+    `reused by an unrelated process, so do not blindly kill it), stop it, and delete ${where}.`,
+    'Use `jambavan_watch start` for a live index instead.',
+  ].join(' ');
 }

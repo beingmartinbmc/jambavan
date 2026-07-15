@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { vibhishanaNitiInstructions } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
-import { getDaemonStatus } from './daemon';
+import { legacyDaemonNotice } from './daemon';
 import { isUnsafeFallbackRoot, type JambavanConfig } from '../config/jambavan.config';
 
 /**
@@ -99,9 +99,9 @@ export function awakenReport(config: JambavanConfig, opts: { includeMemories?: b
   const scope = projectScope(config);
   const parts = [jambavanInstructions(config)];
 
-  const daemon = getDaemonStatus(config);
-  if (daemon.running) {
-    parts.push('', `Background daemon already watching this project (pid ${daemon.pid}) — skip jambavan_watch action=start, the index is already staying live.`);
+  const legacy = legacyDaemonNotice(config);
+  if (legacy) {
+    parts.push('', `⚠ ${legacy}`);
   }
 
   if ((opts.includeMemories ?? true) && !isUnsafeFallbackRoot(config)) {

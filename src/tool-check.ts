@@ -105,8 +105,8 @@ async function main(): Promise<void> {
   await call('jambavan_graph_path', { from: 'main', to: 'greet' });
   await call('jambavan_watch', { action: 'start' });
   const watcherStatus = await call('jambavan_watch', { action: 'status' });
-  if (!/Active watcher: in-process/.test(watcherStatus) || !/Indexed state:\s+1 files, [1-9]/.test(watcherStatus)) {
-    throw new Error('watcher status did not report the active backend and persistent index totals');
+  if (!/In-process watcher running: true/.test(watcherStatus) || !/Indexed state:\s+1 files, [1-9]/.test(watcherStatus)) {
+    throw new Error('watcher status did not report the in-process watcher and persistent index totals');
   }
   await call('jambavan_watch', { action: 'stop' });
   await call('jambavan_vibhishana_niti', { mode: 'full' });

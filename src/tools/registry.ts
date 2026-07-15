@@ -20,7 +20,9 @@ export interface ToolResult {
 export type ToolHandler = (input: Record<string, unknown>) => Promise<ToolResult>;
 
 /** Max characters any tool result may return to the host model (flood guard). */
-const MAX_OUTPUT_CHARS = Math.max(1_000, Number(process.env.JAMBAVAN_MAX_OUTPUT_CHARS ?? 100_000));
+const MAX_OUTPUT_CHARS = boundedInt(process.env.JAMBAVAN_MAX_OUTPUT_CHARS, {
+  min: 1_000, max: 10_000_000, fallback: 100_000,
+});
 
 /** Truncate oversized output so a single tool call can't blow the model's context. */
 export function capOutput(output: string): string {
@@ -37,7 +39,19 @@ export function capOutput(output: string): string {
  * Trust-boundary guard for host-supplied numeric params.
  */
 export function boundedInt(value: unknown, opts: { min: number; max: number; fallback: number }): number {
-  const n = typeof value === 'number' ? value : Number(value);
+  // Trust boundary: accept only real numbers and trimmed numeric strings.
+  // Anything else coerces through Number() to a misleading value —
+  // null/[]/''→0 (clamps to min), [25]→25, true→1 — so reject by type first.
+  let n: number;
+  if (typeof value === 'number') {
+    n = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return opts.fallback; // e.g. JAMBAVAN_TOKEN_BUDGET=""
+    n = Number(trimmed);
+  } else {
+    return opts.fallback;
+  }
   if (!Number.isFinite(n)) return opts.fallback;
   return Math.min(opts.max, Math.max(opts.min, Math.floor(n)));
 }

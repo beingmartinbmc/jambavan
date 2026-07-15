@@ -18,12 +18,13 @@ test('boundedInt: non-numeric input (NaN via coercion) falls back', () => {
   assert.equal(boundedInt({}, opts), 10);
 });
 
-test('boundedInt: values that coerce to a finite number (null, []) clamp, not fall back', () => {
-  // Documented edge: Number(null) === 0 and Number([]) === 0 — both finite, so
-  // they clamp to min. Safe for trust-boundary use (result stays in range).
+test('boundedInt: values that would coerce to a finite number (null, []) fall back', () => {
+  // Trust boundary: Number(null) === 0 and Number([]) === 0 are coercion
+  // artifacts, not caller intent. Rejecting by type means these yield the
+  // documented fallback instead of silently clamping to min.
   const opts = { min: 1, max: 100, fallback: 10 };
-  assert.equal(boundedInt(null, opts), 1);
-  assert.equal(boundedInt([], opts), 1);
+  assert.equal(boundedInt(null, opts), 10);
+  assert.equal(boundedInt([], opts), 10);
 });
 
 test('boundedInt: Infinity is not finite -> fallback', () => {
@@ -44,6 +45,34 @@ test('boundedInt: floors fractional input', () => {
 
 test('boundedInt: numeric string coerces', () => {
   assert.equal(boundedInt('25', { min: 1, max: 100, fallback: 10 }), 25);
+});
+
+test('boundedInt: blank / whitespace-only string falls back (not clamped to min)', () => {
+  // Regression: Number('') and Number('   ') coerce to 0, which previously
+  // clamped to min instead of using the documented default. An empty env var
+  // (e.g. JAMBAVAN_TOKEN_BUDGET="") must yield the fallback.
+  assert.equal(boundedInt('', { min: 100, max: 1_000_000, fallback: 8_000 }), 8_000);
+  assert.equal(boundedInt('   ', { min: 100, max: 1_000_000, fallback: 8_000 }), 8_000);
+  assert.equal(boundedInt('\t\n', { min: 1, max: 100, fallback: 30 }), 30);
+});
+
+test('boundedInt: non-numeric types fall back instead of coercing through Number()', () => {
+  // Regression: Number() coerces these to misleading values at a trust boundary —
+  // null/undefined→0, []→0, [25]→25, true→1, {}→NaN. All must yield the fallback
+  // (except NaN which already did). Only real numbers and numeric strings pass.
+  const opts = { min: 1, max: 100, fallback: 30 };
+  assert.equal(boundedInt(null, opts), 30);
+  assert.equal(boundedInt(undefined, opts), 30);
+  assert.equal(boundedInt([], opts), 30);
+  assert.equal(boundedInt([25], opts), 30);
+  assert.equal(boundedInt(true, opts), 30);
+  assert.equal(boundedInt(false, opts), 30);
+  assert.equal(boundedInt({}, opts), 30);
+  // Real numbers and numeric strings still work and clamp as before.
+  assert.equal(boundedInt(50, opts), 50);
+  assert.equal(boundedInt('50', opts), 50);
+  assert.equal(boundedInt(500, opts), 100); // clamps to max
+  assert.equal(boundedInt(-5, opts), 1);    // clamps to min
 });
 
 test('capOutput: short output is untouched', () => {

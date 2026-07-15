@@ -18,6 +18,7 @@
 
 import { Server }               from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { Transport }       from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -59,7 +60,7 @@ import {
 import { SESSION_HANDOFF_TOOL_DEFS, buildSessionHandoffHandlers } from '../tools/session-handoff';
 import { REVIEW_PACK_TOOL_DEFS, buildReviewPackHandlers } from '../tools/review-pack';
 import { IMPACT_TOOL_DEFS, buildImpactHandlers } from '../tools/impact';
-import { getDaemonStatus, formatDaemonStatus, stopDaemon } from '../tools/daemon';
+import { legacyDaemonNotice } from '../tools/daemon';
 import { sankshiptaFile } from '../tools/sankshipta';
 import { awakenReport, projectScope } from '../tools/jambavan';
 import {
@@ -318,7 +319,6 @@ function bindToolRoot(value: unknown): void {
     rootResolutionIssue = undefined;
     return;
   }
-  if (getDaemonStatus(config).running) stopDaemon(config);
   fileWatcher?.stop();
   fileWatcher = undefined;
   jambavanIndex?.close();
@@ -676,7 +676,7 @@ function advertisedTools(): Tool[] {
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
-export async function startServer(): Promise<void> {
+export async function startServer(injectedTransport?: Transport): Promise<void> {
   const server = new Server(
     { name: 'jambavan', version: pkg.version },
     {
@@ -816,15 +816,6 @@ export async function startServer(): Promise<void> {
       const action = input['action'] as string;
 
       if (action === 'start') {
-        const daemon = getDaemonStatus(config);
-        if (daemon.running) {
-          return {
-            content: [{
-              type: 'text',
-              text: `Background daemon already watching (pid ${daemon.pid}) — skipping in-process watcher to avoid duplicate indexing. Run "jambavan daemon stop" first if you want this session's watcher instead.`,
-            }],
-          };
-        }
         const index = loadExistingIndex();
         if (!index) {
           return {
@@ -837,6 +828,15 @@ export async function startServer(): Promise<void> {
         }
         if (fileWatcher?.getStatus().running) {
           return { content: [{ type: 'text', text: 'Watcher already running.' }] };
+        }
+        // Refuse to start a second indexer while a pre-1.0 daemon record is
+        // present: starting first and warning afterward still double-indexes.
+        const legacy = legacyDaemonNotice(config);
+        if (legacy) {
+          return {
+            content: [{ type: 'text', text: `⚠ ${legacy}` }],
+            isError: true,
+          };
         }
         fileWatcher = new FileWatcher(index, config);
         fileWatcher.start();
@@ -857,9 +857,6 @@ export async function startServer(): Promise<void> {
           fileWatcher.stop();
           return { content: [{ type: 'text', text: 'In-process watcher stopped.' }] };
         }
-        if (getDaemonStatus(config).running) {
-          return { content: [{ type: 'text', text: stopDaemon(config).message }] };
-        }
         return { content: [{ type: 'text', text: 'Watcher is not running.' }] };
       }
 
@@ -870,12 +867,10 @@ export async function startServer(): Promise<void> {
           lastEvent:      null,
           lastFile:       null,
         };
-        const daemon = getDaemonStatus(config);
         const stats = loadExistingIndex()?.stats();
+        const legacy = legacyDaemonNotice(config);
         const lines = [
-          `Background daemon: ${formatDaemonStatus(config)}`,
           `In-process watcher running: ${s.running}`,
-          `Active watcher: ${daemon.running ? 'background daemon' : s.running ? 'in-process' : 'none'}`,
           ...(s.running
             ? [
                 `Files processed this MCP session: ${s.filesProcessed}`,
@@ -884,6 +879,7 @@ export async function startServer(): Promise<void> {
               ]
             : []),
           `Indexed state:   ${stats ? `${stats.files.totalFiles} files, ${stats.symbols} symbols` : 'not built'}`,
+          ...(legacy ? [`⚠ ${legacy}`] : []),
         ];
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       }
@@ -997,7 +993,7 @@ export async function startServer(): Promise<void> {
           ? `Index: ${indexStats.files.totalFiles} files · ${indexStats.symbols} symbols · ${indexStats.failures.length} failures`
           : 'Index: not built (call jambavan_index)',
         ...(indexStats?.failures.map(f => `  ⚠ ${f.filePath}: ${f.error}`) ?? []),
-        `Watcher: ${fileWatcher?.getStatus().running ? 'running' : 'stopped'} (in-process) · ${formatDaemonStatus(config)}`,
+        `Watcher: ${fileWatcher?.getStatus().running ? 'running' : 'stopped'} (in-process)`,
         `Project root: ${config.projectRoot} (source: ${config.rootSource})`,
       ];
 
@@ -1145,10 +1141,15 @@ export async function startServer(): Promise<void> {
     return { content: [{ type: 'text', text: result.output }] };
   }
 
-  // ── stdio transport ────────────────────────────────────────────────────────
-  const transport = new StdioServerTransport();
+  // ── transport ──────────────────────────────────────────────────────────────
+  // Defaults to stdio (how every MCP host launches Jambavan). An injected
+  // transport lets an in-process test drive the real tools/call dispatch through
+  // the SDK without spawning a subprocess.
+  const transport = injectedTransport ?? new StdioServerTransport();
   await server.connect(transport);
 
-  process.stderr.write(`[jambavan] MCP server ready. Project root: ${config.projectRoot}\n`);
-  process.stderr.write(`[jambavan] write_file/patch_file: ${allowWrite ? 'ENABLED' : 'disabled (set JAMBAVAN_ALLOW_WRITE=1)'} · bash: ${allowBash ? 'ENABLED' : 'disabled (set JAMBAVAN_ALLOW_BASH=1)'}\n`);
+  if (!injectedTransport) {
+    process.stderr.write(`[jambavan] MCP server ready. Project root: ${config.projectRoot}\n`);
+    process.stderr.write(`[jambavan] write_file/patch_file: ${allowWrite ? 'ENABLED' : 'disabled (set JAMBAVAN_ALLOW_WRITE=1)'} · bash: ${allowBash ? 'ENABLED' : 'disabled (set JAMBAVAN_ALLOW_BASH=1)'}\n`);
+  }
 }

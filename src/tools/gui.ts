@@ -196,7 +196,14 @@ export function startGuiServer(
 
     const nodeMatch = url.match(/^\/api\/node\/(.+)$/);
     if (nodeMatch) {
-      const id     = decodeURIComponent(nodeMatch[1]);
+      let id: string;
+      try {
+        id = decodeURIComponent(nodeMatch[1]);
+      } catch {
+        // Malformed percent-encoding (e.g. a truncated %E0) — reject rather than
+        // letting decodeURIComponent throw and crash the request handler.
+        res.writeHead(400); res.end('{"error":"malformed URL"}'); return;
+      }
       const detail = buildNodeDetail(id, cached, config);
       if (!detail) { res.writeHead(404); res.end('{}'); return; }
       res.writeHead(200, { 'Content-Type': 'application/json' });

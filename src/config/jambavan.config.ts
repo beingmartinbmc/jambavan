@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import { boundedInt } from '../tools/registry';
 
 // rin: host launch env only; add opt-in project config when users need persistent settings.
 // Auto-ingesting .env secrets into process.env is a leak vector for an MCP server.
@@ -62,7 +63,9 @@ export function loadConfig(overrides: Partial<JambavanConfig> = {}): JambavanCon
     projectRoot,
     indexDir,
     memoryDir: process.env.JAMBAVAN_MEMORY_HOME ?? path.join(indexDir, 'memory'),
-    contextTokenBudget: Number(process.env.JAMBAVAN_TOKEN_BUDGET ?? 8_000),
+    contextTokenBudget: boundedInt(process.env.JAMBAVAN_TOKEN_BUDGET, {
+      min: 100, max: 1_000_000, fallback: 8_000,
+    }),
     ignore: [
       'node_modules', '.git', 'dist', 'build', '.jambavan',
       '*.lock', '*.log', '.DS_Store', 'coverage', '.next', '.nuxt',

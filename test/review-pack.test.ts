@@ -9,7 +9,7 @@ import { MemoryStore } from '../src/memory/store';
 import { projectScope } from '../src/tools/jambavan';
 import { buildReviewPackHandlers } from '../src/tools/review-pack';
 import { buildReviewPackJson } from '../src/tools/review-pack-json';
-import { parseChangedRanges, parseNameStatus, parseOldRanges, analyzeFileChange } from '../src/tools/changed-symbols';
+import { parseChangedRanges, parseNameStatus, changedSymbols } from '../src/tools/changed-symbols';
 import type { Symbol } from '../src/index/ast-parser';
 import { buildImpactHandlers } from '../src/tools/impact';
 
@@ -81,54 +81,51 @@ test('changed-symbol diff parser decodes git-quoted paths', () => {
   assert.deepEqual(ranges.get('src/space é.ts'), [{ start: 1, end: 1 }]);
 });
 
-test('changed-symbol diff parser: pure-deletion hunks are dropped from new-side ranges', () => {
-  // git emits new-side count 0 for a deletion. We must NOT invent a new-side
-  // anchor (the old bug tagged whatever HEAD symbol sat there); deletions are
-  // attributed on the old side instead. See parseOldRanges + analyzeFileChange.
-  const newSide = parseChangedRanges(
-    'diff --git a/src/util.ts b/src/util.ts\n--- a/src/util.ts\n+++ b/src/util.ts\n@@ -3 +2,0 @@ line2\n',
+test('changedSymbols: full deletion of a top-level function does NOT tag its neighbour', () => {
+  // git emits `@@ -1,3 +0,0 @@` for a fully-deleted top-level function: new-side
+  // count 0 at line 0. parseChangedRanges encodes that as the zero-width range
+  // {start:1,end:0}, which contains no symbol — so the surviving neighbour is
+  // never mis-tagged as changed.
+  const ranges = parseChangedRanges(
+    'diff --git a/s.ts b/s.ts\n--- a/s.ts\n+++ b/s.ts\n@@ -1,3 +0,0 @@\n',
   );
-  assert.equal(newSide.get('src/util.ts'), undefined);
-
-  const oldSide = parseOldRanges(
-    'diff --git a/src/util.ts b/src/util.ts\n--- a/src/util.ts\n+++ b/src/util.ts\n@@ -2,4 +1,0 @@ line1\n',
+  const neighbour: Symbol = { name: 'kept', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' };
+  assert.deepEqual(
+    changedSymbols([neighbour], ranges.get('s.ts') ?? []),
+    [],
+    'a whole-function deletion must not tag the surviving neighbour',
   );
-  assert.deepEqual(oldSide.get('src/util.ts'), [{ start: 2, end: 5 }]);
 });
 
-test('analyzeFileChange: full deletion reports the removed symbol, not the surviving one', () => {
-  // Base had removed() at L1-3 and kept() at L4-6. HEAD deleted removed() entirely,
-  // so kept() shifted to L1-3. The diff removes old lines 1-3. The bug this guards:
-  // the deletion must attribute to *removed*, and must NOT tag *kept*.
-  const baseSymbols: Symbol[] = [
-    { name: 'removed', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' },
-    { name: 'kept',    type: 'function', startLine: 4, endLine: 6, content: '', filePath: 's.ts' },
-  ];
-  const headSymbols: Symbol[] = [
-    { name: 'kept', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' },
-  ];
-  const { changed, deleted } = analyzeFileChange(
-    headSymbols,
-    baseSymbols,
-    [],                          // no surviving new-side lines
-    [{ start: 1, end: 3 }],      // old lines 1-3 removed
+test('changedSymbols: interior line deletion still tags its containing function', () => {
+  // Interior deletion inside kept(): `@@ -6,2 +6 @@` — new-side count 1 at line 6.
+  // The enclosing function spanning line 6 is tagged as changed.
+  const ranges = parseChangedRanges(
+    'diff --git a/s.ts b/s.ts\n--- a/s.ts\n+++ b/s.ts\n@@ -6,2 +5,1 @@\n',
   );
-  assert.deepEqual(deleted.map(s => s.name), ['removed']);
-  assert.deepEqual(changed.map(s => s.name), [], 'kept() must not be reported as changed');
+  const enclosing: Symbol = { name: 'kept', type: 'function', startLine: 4, endLine: 8, content: '', filePath: 's.ts' };
+  const other: Symbol = { name: 'far', type: 'function', startLine: 20, endLine: 25, content: '', filePath: 's.ts' };
+  assert.deepEqual(
+    changedSymbols([enclosing, other], ranges.get('s.ts') ?? []).map(s => s.name),
+    ['kept'],
+    'an interior deletion must tag only the function that encloses it',
+  );
 });
 
-test('analyzeFileChange: interior deletion inside a surviving symbol -> changed, not deleted', () => {
-  const baseSymbols: Symbol[] = [
-    { name: 'shrunk', type: 'function', startLine: 1, endLine: 10, content: '', filePath: 's.ts' },
-  ];
-  const headSymbols: Symbol[] = [
-    { name: 'shrunk', type: 'function', startLine: 1, endLine: 7, content: '', filePath: 's.ts' },
-  ];
-  const { changed, deleted } = analyzeFileChange(
-    headSymbols, baseSymbols, [], [{ start: 4, end: 6 }],
+test('changedSymbols: pure interior deletion (new count 0) tags only the enclosing function', () => {
+  // `@@ -5 +4,0 @@`: one interior line removed with no replacement. Encoded as the
+  // zero-width probe {start:5,end:4}; it is contained by a function spanning 5,
+  // but not by a top-level sibling that starts at 5.
+  const ranges = parseChangedRanges(
+    'diff --git a/s.ts b/s.ts\n--- a/s.ts\n+++ b/s.ts\n@@ -5 +4,0 @@\n',
   );
-  assert.deepEqual(changed.map(s => s.name), ['shrunk']);
-  assert.deepEqual(deleted, []);
+  const enclosing: Symbol = { name: 'wrap', type: 'function', startLine: 3, endLine: 7, content: '', filePath: 's.ts' };
+  const siblingBelow: Symbol = { name: 'below', type: 'function', startLine: 5, endLine: 9, content: '', filePath: 's.ts' };
+  assert.deepEqual(
+    changedSymbols([enclosing, siblingBelow], ranges.get('s.ts') ?? []).map(s => s.name),
+    ['wrap'],
+    'zero-width deletion probe must require strict containment',
+  );
 });
 
 test('jambavan_review_pack: reports only changed symbols and per-symbol test risk', async () => {
@@ -150,7 +147,7 @@ test('jambavan_review_pack: reports only changed symbols and per-symbol test ris
   } finally { cleanup(); }
 });
 
-test('jambavan_review_pack: fully deleted function is reported as deleted (not attributed to survivor)', async () => {
+test('jambavan_review_pack: a fully deleted function shows the file as deleted, tagging no survivor', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     git(root, ['init', '-q', '-b', 'main']);
@@ -179,7 +176,10 @@ test('jambavan_review_pack: fully deleted function is reported as deleted (not a
 
     const result = buildReviewPackHandlers(config, () => index).jambavan_review_pack({ base: 'main' });
 
-    assert.match(result, /\*\*removed\*\* \(function, deleted/, 'deleted function must be reported as deleted');
+    // Deletion analysis was removed for 1.0: the whole-function removal must not
+    // be mis-attributed to the surviving neighbour. `kept` shifted but its body
+    // is unchanged, so no changed symbol is reported for it either.
+    assert.match(result, /src\/m\.ts/, 'the touched file is listed');
     assert.doesNotMatch(result, /\*\*kept\*\*/, 'untouched survivor must not be flagged as changed');
   } finally { cleanup(); }
 });
@@ -246,6 +246,46 @@ test('jambavan_review_pack: optionally includes untracked working-tree symbols',
 
     assert.match(result, /src\/pending\.ts/);
     assert.match(result, /\*\*pending\*\*/);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: include_worktree uses one merge-base→worktree diff (branch-added, worktree-deleted line)', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    // Branch commit ADDS a multi-line function...
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'src', 'edited.ts'),
+      'export function edited() {\n  const a = 1;\n  const b = 2;\n  return a + b;\n}\n',
+    );
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add edited()']);
+
+    // ...then the WORKING TREE deletes an interior line of that same function.
+    // The old two-diff union parsed HEAD-relative removals against merge-base
+    // coordinates and produced "No indexed symbols"; the single merge-base→
+    // worktree diff attributes it correctly to edited().
+    fs.writeFileSync(
+      path.join(root, 'src', 'edited.ts'),
+      'export function edited() {\n  const a = 1;\n  return a;\n}\n',
+    );
+
+    const index = new JambavanIndex(config);
+    await index.index();
+    const result = buildReviewPackHandlers(config, () => index)
+      .jambavan_review_pack({ base: 'main', include_worktree: true });
+
+    assert.match(result, /src\/edited\.ts/);
+    assert.match(result, /\*\*edited\*\*/, 'the function edited across commit+worktree must be tagged');
+    assert.doesNotMatch(result, /_No indexed symbols/);
   } finally { cleanup(); }
 });
 
@@ -461,7 +501,7 @@ test('jambavan_review_pack: test files are not flagged for missing matching test
   } finally { cleanup(); }
 });
 
-test('jambavan_review_pack: deleted file reports its removed symbols', async () => {
+test('jambavan_review_pack: a deleted file is listed as deleted with no indexed symbols', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     git(root, ['init', '-q', '-b', 'main']);
@@ -483,9 +523,10 @@ test('jambavan_review_pack: deleted file reports its removed symbols', async () 
     const handlers = buildReviewPackHandlers(config, () => index);
     const result = handlers.jambavan_review_pack({ base: 'main' });
 
-    assert.match(result, /src\/gone\.ts/);
-    // Base-side parsing now names the deleted symbol instead of a bare placeholder.
-    assert.match(result, /\*\*gone\*\* \(function, deleted/);
+    // Deletion analysis removed for 1.0: deleted files stay visible via their D
+    // status, but we no longer parse the base to name their removed symbols.
+    assert.match(result, /D\tsrc\/gone\.ts/);
+    assert.match(result, /_No indexed symbols/);
   } finally { cleanup(); }
 });
 

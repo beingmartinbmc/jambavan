@@ -641,23 +641,7 @@ export class ASTParser {
       return { filePath, symbols: [], language, reExports: [] };
     }
 
-    return this.parseContent(fs.readFileSync(filePath, 'utf-8'), filePath);
-  }
-
-  /**
-   * Parse source text that is not (or not yet) on disk — e.g. a merge-base
-   * revision fetched via `git show <base>:<path>`. Language is inferred from
-   * filePath's extension, exactly as parseFile does. Used by the review pack to
-   * attribute *deleted* symbols, which no longer exist in the working tree.
-   */
-  parseContent(source: string, filePath: string): ParsedFile {
-    const ext      = path.extname(filePath).toLowerCase();
-    const language = LANGUAGE_MAP[ext] ?? 'unknown';
-
-    if (language === 'unknown') {
-      return { filePath, symbols: [], language, reExports: [] };
-    }
-
+    const source = fs.readFileSync(filePath, 'utf-8');
     const parser = getParser(language);
     const { symbols, reExports } = parser
       ? extractWithTreeSitter(source, filePath, language, parser)

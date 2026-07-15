@@ -139,14 +139,6 @@ jobs:
                   } else {
                     lines.push('_No indexed symbols_');
                   }
-                  if (f.deleted?.length) {
-                    for (const sym of f.deleted) {
-                      lines.push(`- ~~**\`${sym.name}\`**~~ (${sym.type}, deleted)`);
-                      if (sym.callers?.length) {
-                        lines.push(`  - ⚠️ Still referenced by: ${sym.callers.slice(0, 5).join(', ')}${sym.callers.length > 5 ? ` +${sym.callers.length - 5} more` : ''}`);
-                      }
-                    }
-                  }
                   if (f.risks?.length) {
                     lines.push('');
                     lines.push(`**⚠ Risks:** ${f.risks.join('; ')}`);

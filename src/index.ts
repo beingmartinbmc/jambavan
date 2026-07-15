@@ -22,7 +22,6 @@
  *   npx -y jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]  → write interactive HTML handoff report
  *   npx -y jambavan bridge    → convert memories to/from a MemPalace-shaped markdown tree
  *   npx -y jambavan handoff --write-pr-template  → inject the session handoff card into a local PR template
- *   npx -y jambavan daemon start|stop|status  → run the file watcher standalone in a detached background process
  *   npx -y jambavan gui [--port <n>] [--no-open]  → local dependency-free graph/rin/failure visualizer
  */
 
@@ -41,7 +40,6 @@ import type { BenchmarkReport } from './benchmark';
 import { exportToMemPalace, importFromMemPalace } from './tools/memory-bridge';
 import { buildSessionHandoffHandlers } from './tools/session-handoff';
 import { injectHandoffBlock } from './tools/pr-handoff';
-import { startDaemon, stopDaemon, formatDaemonStatus } from './tools/daemon';
 import { startGuiServer, openBrowser } from './tools/gui';
 import { buildReviewPackJson } from './tools/review-pack-json';
 import { buildHtmlHandoff } from './tools/html-handoff';
@@ -171,29 +169,6 @@ if (args[0] === 'gui') {
       if (!args.includes('--no-open')) openBrowser(url);
     });
   });
-}
-
-if (args[0] === 'daemon') {
-  const config = loadConfig();
-  const sub = args[1];
-
-  if (sub === 'start') {
-    const result = startDaemon(config);
-    console.log(result.message);
-    process.exit(result.started ? 0 : 1);
-  }
-  if (sub === 'stop') {
-    const result = stopDaemon(config);
-    console.log(result.message);
-    process.exit(result.stopped ? 0 : 1);
-  }
-  if (sub === 'status') {
-    console.log(formatDaemonStatus(config));
-    process.exit(0);
-  }
-
-  console.error('Usage: jambavan daemon start|stop|status');
-  process.exit(1);
 }
 
 if (args[0] === 'handoff') {
@@ -389,7 +364,6 @@ Direct CLI commands
   jambavan doctor [--issue-report]
   jambavan review-pack [--base <branch>] [--format markdown|json] [--max-files <n>] [--include-worktree]
   jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]
-  jambavan daemon start|stop|status
   jambavan gui [--port <n>] [--no-open]
   jambavan badges
   jambavan evaluate --baseline <json> --jambavan <json> [--format json|markdown]
@@ -447,7 +421,7 @@ Environment:
 
 // All CLI sub-commands above schedule process.exit() before reaching here.
 // Only start the MCP server when no sub-command matched.
-const CLI_COMMANDS = new Set(['gui', 'evaluate', 'review-pack', 'html-handoff', 'daemon', 'bridge', 'badges', 'doctor', '--help', '-h', '--version']);
+const CLI_COMMANDS = new Set(['gui', 'evaluate', 'review-pack', 'html-handoff', 'bridge', 'badges', 'doctor', '--help', '-h', '--version']);
 if (!CLI_COMMANDS.has(args[0] ?? '')) {
   startServer().catch(err => {
     process.stderr.write(`[jambavan] Fatal: ${err}\n`);

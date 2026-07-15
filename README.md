@@ -258,7 +258,7 @@ Next check: run the focused auth test with fake timers enabled.
 
 ## Privacy And Safety
 
-**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, memory, failure records, and daemon state under `.jambavan/` by default. It creates `.jambavan/.gitignore` with `*` so generated state stays out of Git status without editing the repository's tracked `.gitignore`. Those operational writes still occur when source mutation is disabled.
+**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, memory, and failure records under `.jambavan/` by default. It creates `.jambavan/.gitignore` with `*` so generated state stays out of Git status without editing the repository's tracked `.gitignore`. Those operational writes still occur when source mutation is disabled.
 
 Source-mutating and shell MCP tools are not advertised unless you opt in:
 
@@ -369,7 +369,6 @@ Useful one-shot commands:
 npx jambavan doctor
 npx jambavan review-pack --base origin/main --format json --max-files 200
 npx jambavan html-handoff --out /tmp/handoff.html --share-safe
-npx jambavan daemon start
 npx jambavan gui
 npx jambavan badges
 npx jambavan evaluate --baseline baseline.json --jambavan jambavan.json --format markdown
@@ -409,17 +408,11 @@ npx jambavan handoff --write-pr-template --post
 
 `npx jambavan html-handoff` writes a self-contained HTML report for humans: memory timeline, rin debt, indexed-symbol stats, dirty files, recent commits, collapsible sections, and copy buttons.
 
-## Background Daemon
+## Live Index Watching
 
-`npx jambavan daemon start` runs the same watcher used by `jambavan_watch` in a detached background process. It writes `.jambavan/daemon.pid` and `.jambavan/daemon.log`. MCP opens a daemon-built SQLite index on demand. `jambavan_watch start` refuses to add an in-process watcher while a daemon PID is active; `stop` stops the in-process watcher first, otherwise the daemon.
+Use the `jambavan_watch` tool (`action: start|stop|status`) to keep the index live within an MCP session: supported source-file changes incrementally update the index while the session runs. Most MCP hosts restart the server per session, so there is nothing to manage between sessions.
 
-```bash
-npx jambavan daemon start
-npx jambavan daemon status
-npx jambavan daemon stop
-```
-
-This mainly helps long-lived terminal or CI workflows where no MCP host keeps the index warm between tool calls.
+> **Removed in 1.0:** the standalone background daemon (`jambavan daemon start|stop|status`). A PID file is discovery metadata, not proof of identity, so it could never be signalled safely. If a pre-1.0 daemon left a `.jambavan/daemon.pid` behind, `jambavan_watch` and awaken print a one-line notice telling you to stop that process manually and delete the file — Jambavan never signals it.
 
 ## GUI Visualizer
 

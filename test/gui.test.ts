@@ -162,6 +162,35 @@ test('buildGuiData: failuresByNode is populated when a failure record mentions a
   } finally { cleanup(); }
 });
 
+test('startGuiServer: malformed percent-encoded node id -> 400, and server stays healthy', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    fs.writeFileSync(path.join(root, 'e.ts'), 'export function ok() { return 1; }\n');
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const server = startGuiServer(config, index, 0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      // %E0%A4%A is a truncated UTF-8 sequence: decodeURIComponent throws on it.
+      // The handler must catch and return 400 instead of crashing the request.
+      const bad = await get(`http://127.0.0.1:${port}/api/node/%E0%A4%A`);
+      assert.equal(bad.status, 400);
+      assert.match(bad.body, /malformed/);
+
+      // Prove the server survived the bad request and still serves data.
+      const healthy = await get(`http://127.0.0.1:${port}/api/data`);
+      assert.equal(healthy.status, 200);
+      const data = JSON.parse(healthy.body) as GuiData;
+      assert.ok(data.graph.nodes.some(n => n.label === 'ok'));
+    } finally {
+      server.close();
+    }
+  } finally { cleanup(); }
+});
+
 test('openBrowser: does not throw in headless env (smoke)', () => {
   // openBrowser is best-effort; it swallows errors internally.
   // Just assert it does not throw or propagate.

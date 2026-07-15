@@ -46,6 +46,15 @@ test('boundedInt: numeric string coerces', () => {
   assert.equal(boundedInt('25', { min: 1, max: 100, fallback: 10 }), 25);
 });
 
+test('boundedInt: blank / whitespace-only string falls back (not clamped to min)', () => {
+  // Regression: Number('') and Number('   ') coerce to 0, which previously
+  // clamped to min instead of using the documented default. An empty env var
+  // (e.g. JAMBAVAN_TOKEN_BUDGET="") must yield the fallback.
+  assert.equal(boundedInt('', { min: 100, max: 1_000_000, fallback: 8_000 }), 8_000);
+  assert.equal(boundedInt('   ', { min: 100, max: 1_000_000, fallback: 8_000 }), 8_000);
+  assert.equal(boundedInt('\t\n', { min: 1, max: 100, fallback: 30 }), 30);
+});
+
 test('capOutput: short output is untouched', () => {
   assert.equal(capOutput('small output'), 'small output');
   assert.equal(capOutput(''), '');

@@ -80,6 +80,20 @@ test('changed-symbol diff parser decodes git-quoted paths', () => {
   assert.deepEqual(ranges.get('src/space é.ts'), [{ start: 1, end: 1 }]);
 });
 
+test('changed-symbol diff parser retains pure-deletion hunks as an anchored range', () => {
+  // git emits new-side count 0 for a deletion; the old code dropped these, so
+  // removing behavior from a still-existing symbol reported no changed symbol.
+  const interior = parseChangedRanges(
+    'diff --git a/src/util.ts b/src/util.ts\n--- a/src/util.ts\n+++ b/src/util.ts\n@@ -3 +2,0 @@ line2\n',
+  );
+  assert.deepEqual(interior.get('src/util.ts'), [{ start: 2, end: 3 }]);
+
+  const tail = parseChangedRanges(
+    'diff --git a/src/util.ts b/src/util.ts\n--- a/src/util.ts\n+++ b/src/util.ts\n@@ -2,4 +1,0 @@ line1\n',
+  );
+  assert.deepEqual(tail.get('src/util.ts'), [{ start: 1, end: 2 }]);
+});
+
 test('jambavan_review_pack: reports only changed symbols and per-symbol test risk', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {

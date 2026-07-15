@@ -5,7 +5,9 @@ import { boundedInt } from './registry';
 import { resolveInsideRoot } from './path-guard';
 
 /** Refuse to slurp files larger than this into memory (bytes). */
-export const MAX_READ_BYTES = Math.max(64 * 1024, Number(process.env.JAMBAVAN_MAX_READ_BYTES ?? 5 * 1024 * 1024));
+export const MAX_READ_BYTES = boundedInt(process.env.JAMBAVAN_MAX_READ_BYTES, {
+  min: 64 * 1024, max: 1024 * 1024 * 1024, fallback: 5 * 1024 * 1024,
+});
 
 export function createReadFileTool(config: JambavanConfig): RegisteredTool {
   return {

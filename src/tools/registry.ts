@@ -20,7 +20,9 @@ export interface ToolResult {
 export type ToolHandler = (input: Record<string, unknown>) => Promise<ToolResult>;
 
 /** Max characters any tool result may return to the host model (flood guard). */
-const MAX_OUTPUT_CHARS = Math.max(1_000, Number(process.env.JAMBAVAN_MAX_OUTPUT_CHARS ?? 100_000));
+const MAX_OUTPUT_CHARS = boundedInt(process.env.JAMBAVAN_MAX_OUTPUT_CHARS, {
+  min: 1_000, max: 10_000_000, fallback: 100_000,
+});
 
 /** Truncate oversized output so a single tool call can't blow the model's context. */
 export function capOutput(output: string): string {

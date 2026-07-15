@@ -11,9 +11,15 @@
 import { loadConfig } from './config/jambavan.config';
 import { JambavanIndex } from './index/indexer';
 import { FileWatcher } from './index/watcher';
+import { writeHeartbeat, HEARTBEAT_INTERVAL_MS } from './tools/daemon';
 
 async function main(): Promise<void> {
   const config = loadConfig();
+  const instanceId = process.env.JAMBAVAN_DAEMON_INSTANCE;
+  if (!instanceId) {
+    console.error('[jambavan:daemon] missing JAMBAVAN_DAEMON_INSTANCE; refusing to run (spawn via "jambavan daemon start").');
+    process.exit(1);
+  }
   const index = new JambavanIndex(config);
 
   const stats = await index.index();
@@ -26,8 +32,14 @@ async function main(): Promise<void> {
   watcher.start();
   console.log(`[jambavan:daemon] watching ${config.projectRoot} (pid ${process.pid})`);
 
+  // Prove liveness so a reused PID after a crash can't be mistaken for us (see daemon.ts).
+  writeHeartbeat(config, instanceId);
+  const heartbeat = setInterval(() => writeHeartbeat(config, instanceId), HEARTBEAT_INTERVAL_MS);
+  heartbeat.unref();
+
   const shutdown = (signal: string): void => {
     console.log(`[jambavan:daemon] received ${signal}, stopping watcher`);
+    clearInterval(heartbeat);
     watcher.stop();
     process.exit(0);
   };

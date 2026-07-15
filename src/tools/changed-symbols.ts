@@ -62,8 +62,21 @@ export function parseChangedRanges(raw: string): Map<string, ChangedRange[]> {
     if (!match) continue;
     const start = Number(match[1]);
     const count = match[2] === undefined ? 1 : Number(match[2]);
-    if (count === 0) continue;
     const fileRanges = ranges.get(currentPath) ?? [];
+    if (count === 0) {
+      // Pure deletion (git header e.g. `@@ -3 +2,0 @@`): no surviving new-side
+      // lines, but `start` is the new-side line the removal sits *after*. Anchor
+      // a range over that line and its successor so a deletion *inside or at the
+      // leading edge of a symbol that still exists in HEAD* still intersects it.
+      // Previously these hunks were dropped, so removing behavior from an existing
+      // function reported no changed symbol.
+      // rin: attributing a *fully deleted* symbol needs base-side parsing
+      // (git show <base>:<path>); deferred to the 0.7 review-pack rework.
+      const anchor = Math.max(1, start);
+      fileRanges.push({ start: anchor, end: anchor + 1 });
+      ranges.set(currentPath, fileRanges);
+      continue;
+    }
     fileRanges.push({ start, end: start + count - 1 });
     ranges.set(currentPath, fileRanges);
   }

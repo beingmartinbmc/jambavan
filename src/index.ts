@@ -420,9 +420,32 @@ Environment:
 }
 
 // All CLI sub-commands above schedule process.exit() before reaching here.
-// Only start the MCP server when no sub-command matched.
+// The MCP server is launched with NO sub-command (hosts run `npx -y jambavan`).
+// Any other first token is an unknown command and must be rejected — never
+// silently fall through to the server (that hid the removed `daemon` command).
 const CLI_COMMANDS = new Set(['gui', 'evaluate', 'review-pack', 'html-handoff', 'bridge', 'badges', 'doctor', '--help', '-h', '--version']);
-if (!CLI_COMMANDS.has(args[0] ?? '')) {
+const command = args[0];
+if (command !== undefined && !CLI_COMMANDS.has(command)) {
+  if (command === 'daemon') {
+    process.stderr.write(
+      'The background daemon was removed in 1.0. Use the `jambavan_watch` tool ' +
+      '(action=start) for a live index within an MCP session.\n' +
+      'If a pre-1.0 daemon is still running, stop that process yourself and delete ' +
+      '.jambavan/daemon.pid.\n',
+    );
+  } else {
+    process.stderr.write(`[jambavan] Unknown command: ${command}\nRun \`jambavan --help\` for usage.\n`);
+  }
+  process.exit(2);
+}
+
+// Only the no-subcommand invocation (`npx -y jambavan`) starts the MCP server.
+// Every CLI subcommand above owns its own lifecycle: the synchronous ones
+// already called process.exit(), and the async ones (review-pack, gui,
+// html-handoff) exit from inside their own promise. Falling through to
+// startServer() unconditionally would boot the MCP server alongside a valid
+// CLI command.
+if (command === undefined) {
   startServer().catch(err => {
     process.stderr.write(`[jambavan] Fatal: ${err}\n`);
     process.exit(1);

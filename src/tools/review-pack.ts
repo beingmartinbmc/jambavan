@@ -46,11 +46,21 @@ export function detectBaseBranch(root: string): string {
 }
 
 export function getChangedFiles(root: string, base: string, includeWorktree = false): ChangedFile[] {
-  // include_worktree: use ONE effective merge-base → working-tree diff so committed
-  // and uncommitted ranges share a single coordinate system (base...HEAD then a
-  // second HEAD-relative diff use incompatible line bases). `git diff <base>`
-  // (two-dot, no HEAD) compares the merge-base's tree to the working tree.
-  const range = includeWorktree ? [base] : [`${base}...HEAD`];
+  // Both modes diff from the merge-base so a file that only exists on the base
+  // branch is never reported as changed here.
+  //   committed-only: `base...HEAD` (three-dot) already means merge-base→HEAD.
+  //   include_worktree: resolve the merge-base commit explicitly and diff it
+  //     against the working tree (`git diff <merge-base>`), giving committed and
+  //     uncommitted ranges one shared coordinate system. Plain `git diff <base>`
+  //     would compare the base branch's *tip* to the working tree and mis-report
+  //     base-only files as deletions.
+  let range: string[];
+  if (includeWorktree) {
+    const mergeBase = git(root, ['merge-base', base, 'HEAD']).trim();
+    range = [mergeBase];
+  } else {
+    range = [`${base}...HEAD`];
+  }
   const touched = parseNameStatus(git(root, ['diff', '--find-renames', '--name-status', ...range]));
   const ranges = parseChangedRanges(git(root, ['diff', '--find-renames', '--unified=0', ...range]));
   const byPath = new Map(touched.map(file => [file.path, file]));

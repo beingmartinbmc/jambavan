@@ -18,6 +18,7 @@
 
 import { Server }               from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { Transport }       from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -675,7 +676,7 @@ function advertisedTools(): Tool[] {
 
 // ── Server ────────────────────────────────────────────────────────────────────
 
-export async function startServer(): Promise<void> {
+export async function startServer(injectedTransport?: Transport): Promise<void> {
   const server = new Server(
     { name: 'jambavan', version: pkg.version },
     {
@@ -828,9 +829,17 @@ export async function startServer(): Promise<void> {
         if (fileWatcher?.getStatus().running) {
           return { content: [{ type: 'text', text: 'Watcher already running.' }] };
         }
+        // Refuse to start a second indexer while a pre-1.0 daemon record is
+        // present: starting first and warning afterward still double-indexes.
+        const legacy = legacyDaemonNotice(config);
+        if (legacy) {
+          return {
+            content: [{ type: 'text', text: `⚠ ${legacy}` }],
+            isError: true,
+          };
+        }
         fileWatcher = new FileWatcher(index, config);
         fileWatcher.start();
-        const legacy = legacyDaemonNotice(config);
         return {
           content: [{
             type: 'text',
@@ -838,7 +847,6 @@ export async function startServer(): Promise<void> {
               'Watcher started.',
               `Watching: ${config.projectRoot}`,
               'Supported non-ignored source-file changes will incrementally update the index.',
-              ...(legacy ? ['', `⚠ ${legacy}`] : []),
             ].join('\n'),
           }],
         };
@@ -1133,10 +1141,15 @@ export async function startServer(): Promise<void> {
     return { content: [{ type: 'text', text: result.output }] };
   }
 
-  // ── stdio transport ────────────────────────────────────────────────────────
-  const transport = new StdioServerTransport();
+  // ── transport ──────────────────────────────────────────────────────────────
+  // Defaults to stdio (how every MCP host launches Jambavan). An injected
+  // transport lets an in-process test drive the real tools/call dispatch through
+  // the SDK without spawning a subprocess.
+  const transport = injectedTransport ?? new StdioServerTransport();
   await server.connect(transport);
 
-  process.stderr.write(`[jambavan] MCP server ready. Project root: ${config.projectRoot}\n`);
-  process.stderr.write(`[jambavan] write_file/patch_file: ${allowWrite ? 'ENABLED' : 'disabled (set JAMBAVAN_ALLOW_WRITE=1)'} · bash: ${allowBash ? 'ENABLED' : 'disabled (set JAMBAVAN_ALLOW_BASH=1)'}\n`);
+  if (!injectedTransport) {
+    process.stderr.write(`[jambavan] MCP server ready. Project root: ${config.projectRoot}\n`);
+    process.stderr.write(`[jambavan] write_file/patch_file: ${allowWrite ? 'ENABLED' : 'disabled (set JAMBAVAN_ALLOW_WRITE=1)'} · bash: ${allowBash ? 'ENABLED' : 'disabled (set JAMBAVAN_ALLOW_BASH=1)'}\n`);
+  }
 }

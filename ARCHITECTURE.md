@@ -23,6 +23,7 @@
                                                           │  jambavan_graph_report       │
                                                           │  jambavan_graph_query        │
                                                           │  jambavan_graph_path         │
+                                                          │  jambavan_impact             │
                                                           │  jambavan_sankshipta (opt-in)│
                                                           │                              │
                                                           │  ── Memory ──                │
@@ -197,7 +198,7 @@ Local, no-server helpers run as `npx jambavan <subcommand>`. None call an LLM. C
 | `jambavan handoff --write-pr-template [--scope <scope>] [--share-safe] [--post]` | Runs the `jambavan_session_export` handoff card and injects it as an HTML-comment-bounded block into `.github/pull_request_template.md` (see `src/tools/pr-handoff.ts` for the pure inject/replace transform); idempotent re-injection, no duplication. `--share-safe` redacts local paths/secrets and omits git-sensitive data. `--post` additionally shells to the caller's own authenticated `gh pr comment` |
 | `jambavan review-pack [--base <ref>] [--format markdown\|json] [--max-files <n>] [--include-worktree]` | Indexes the project, then writes a branch review pack to stdout. Markdown delegates to `jambavan_review_pack`; JSON uses `src/tools/review-pack-json.ts` for `{ base, touchedCount, analyzedCount, truncated, files[], rinMarkers[], failures[] }`, which is what the GitHub Action consumes |
 | `jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]` | Indexes the project and writes a self-contained HTML handoff report (`src/tools/html-handoff.ts`) with memory timeline, rin debt, indexed-symbol stats, git dirty files/recent commits, collapsible sections, and copy-to-clipboard. `--share-safe` redacts local paths/secrets and omits git-sensitive data. No external assets or network calls |
-| `jambavan daemon start\|stop\|status` | Spawns/stops/inspects a detached process (`src/daemon-worker.ts`, managed by `src/tools/daemon.ts`) using the same `FileWatcher`. PID/log files live under `.jambavan/`; liveness uses `process.kill(pid, 0)`. MCP opens its SQLite index on demand. `jambavan_watch start` refuses an in-process watcher while a daemon PID is active; `stop` stops in-process first, otherwise the daemon |
+| `jambavan daemon` (removed in 1.0) | The detached background daemon was removed. The command is now rejected with a migration message (`src/index.ts`); `src/tools/daemon.ts` retains only a signal-free, read-only guard (`detectLegacyDaemon`/`legacyDaemonNotice`) that surfaces a leftover pre-1.0 `.jambavan/daemon.pid` so `jambavan_watch start` can refuse to double-index. No process is ever spawned or signalled. Use the in-process `jambavan_watch` for a live index |
 | `jambavan gui [--port <n>] [--no-open]` | Indexes the project, then serves a dependency-free static page (`src/tools/gui.ts`) over Node's `http` module bound to `127.0.0.1` only — a force-directed graph view (from `buildSymbolGraph`, capped to the 400 highest-degree nodes), rin debt (`harvestRin`), and failure records (`MemoryStore`). `/api/data` serves the graph/sidebar data; `/api/node/:id` serves click-through source snippets, callers, callees, and heat counts. Opens the default browser unless `--no-open` is passed |
 
 `node dist/benchmark.js --json` (not a `jambavan` subcommand, run directly) emits the same benchmark data as `npm run bench` as one JSON object instead of tables.
@@ -256,7 +257,6 @@ So `/plugin install jambavan@jambavan` wires up the server and all five skills w
 ```
 src/
 ├── index.ts                  # Entrypoint — starts MCP server, shows --help, CLI subcommands
-├── daemon-worker.ts          # Standalone process spawned by `jambavan daemon start` (see tools/daemon.ts)
 │
 ├── mcp/
 │   └── server.ts             # MCP Server (stdio transport): tools/list + tools/call,
@@ -306,7 +306,7 @@ src/
 │   ├── html-handoff.ts      # `jambavan html-handoff` — self-contained browser handoff report
 │   ├── memory-bridge.ts     # `jambavan bridge` CLI — Jambavan <-> MemPalace markdown conversion
 │   ├── pr-handoff.ts        # `jambavan handoff` CLI — inject handoff card into a PR template
-│   ├── daemon.ts            # `jambavan daemon` CLI — spawn/stop/inspect the background watcher process
+│   ├── daemon.ts            # Legacy daemon migration guard (read-only PID detection, no signals)
 │   └── gui.ts               # `jambavan gui` CLI — local dependency-free graph/rin/failure visualizer
 │
 ├── config/
@@ -449,7 +449,7 @@ Jambavan bakes token-efficient computer use into its startup protocol and Vibhis
 
 Jambavan is driven by a host model, so source mutation and shell execution are granted explicitly:
 
-- **Source mutation and shell are off by default.** `read_file`, `search`, and `list_files` register without opt-in. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_sankshipta`; `JAMBAVAN_ALLOW_BASH=1` adds `bash`. Indexing, memory, failure tracking, handoff generation, and daemon operation still write local `.jambavan/` state, which self-ignores via `.jambavan/.gitignore`.
+- **Source mutation and shell are off by default.** `read_file`, `search`, and `list_files` register without opt-in. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_sankshipta`; `JAMBAVAN_ALLOW_BASH=1` adds `bash`. Indexing, memory, failure tracking, and handoff generation still write local `.jambavan/` state, which self-ignores via `.jambavan/.gitignore`.
 - **Unresolved root binding fails closed.** Launch-time `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from process cwd, and a supported single file-URI MCP `roots/list` result may replace that result. If the source remains `cwd-fallback`, stateful tools are blocked. `jambavan_awaken.root` or `jambavan_index.root` can bind an existing absolute directory inside that fallback root; they cannot override an already fixed `env`, `client-roots`, `cwd-project`, or `tool-input` binding.
 - **Path containment.** Direct file/search/list path arguments and the shell working directory resolve inside `JAMBAVAN_ROOT`; symlinks are checked via `realpath`. An enabled shell command is not path-sandboxed. `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` disables direct-path containment for trusted local use.
 - **Direct secret-path guard.** Known secret basenames/extensions and immediate parent directories are refused for direct file/search/list paths and shell working directories unless `JAMBAVAN_ALLOW_SECRETS=1`. This is not content scanning and does not stop an enabled shell command from opening a secret file.

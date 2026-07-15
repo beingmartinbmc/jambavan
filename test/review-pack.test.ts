@@ -289,6 +289,36 @@ test('jambavan_review_pack: include_worktree uses one merge-base→worktree diff
   } finally { cleanup(); }
 });
 
+test('jambavan_review_pack: include_worktree diffs from the merge-base, not the base tip', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'README.md'), 'hello\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    // Branch off, then let main advance with a file that exists ONLY on main.
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    git(root, ['checkout', '-q', 'main']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'base-only.ts'), 'export const x = 1;\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'main-only file']);
+    git(root, ['checkout', '-q', 'feature']);
+
+    // A plain `git diff main` (base tip → worktree) would report src/base-only.ts
+    // as DELETED on the feature branch. Diffing from the merge-base must not.
+    const index = new JambavanIndex(config);
+    await index.index();
+    const result = buildReviewPackHandlers(config, () => index)
+      .jambavan_review_pack({ base: 'main', include_worktree: true });
+
+    assert.doesNotMatch(result, /base-only\.ts/, 'a base-only file must not be reported as changed on the feature branch');
+  } finally { cleanup(); }
+});
+
 test('jambavan_review_pack: surfaces a clear error for an unresolvable base ref', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
@@ -616,6 +646,43 @@ test('review-pack CLI rejects invalid and unknown options before indexing', () =
     assert.equal(result.status, 1, `${args.join(' ')} should fail`);
     assert.match(result.stderr, error);
   }
+});
+
+test('CLI rejects the removed daemon command with a migration message instead of starting the server', () => {
+  const result = runCli(['daemon', 'status']);
+  assert.equal(result.status, 2, 'daemon must be rejected, not silently start the MCP server');
+  assert.match(result.stderr, /background daemon was removed in 1\.0/);
+  assert.match(result.stderr, /jambavan_watch/);
+  assert.doesNotMatch(result.stderr, /MCP server ready/);
+});
+
+test('CLI rejects an unknown command instead of starting the server', () => {
+  const result = runCli(['frobnicate']);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /Unknown command: frobnicate/);
+});
+
+test('CLI async commands (review-pack, html-handoff) do not start the MCP server', () => {
+  // These commands own their own lifecycle; falling through to startServer()
+  // was the P1 bug. Run them in an isolated temp root so they cannot index the
+  // repo or write artifacts into the working tree, then assert no MCP boot.
+  const { config, cleanup } = mkTempConfig();
+  try {
+    for (const cmd of ['review-pack', 'html-handoff']) {
+      const result = spawnSync(process.execPath, [
+        '--require', 'ts-node/register/transpile-only', 'src/index.ts', cmd,
+      ], {
+        cwd: path.resolve(__dirname, '..'),
+        encoding: 'utf-8',
+        env: { ...process.env, JAMBAVAN_ROOT: config.projectRoot },
+      });
+      assert.doesNotMatch(
+        result.stderr,
+        /MCP server ready/,
+        `"${cmd}" must not start the MCP server`,
+      );
+    }
+  } finally { cleanup(); }
 });
 
 test('CLI help reflects supported hosts, tools, commands, and safety gates', () => {

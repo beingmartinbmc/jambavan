@@ -196,7 +196,7 @@ The Ramayana names remain stable, but Jambavan also exposes English aliases for 
 
 ## Representative output shapes
 
-The examples below illustrate the current fields and layout. They are representative, not results from a claimed benchmark run.
+The examples below illustrate the current fields and layout; they are not measured results.
 
 `jambavan_context { "query": "review pack" }` returns focused code spans instead of whole files:
 
@@ -349,8 +349,6 @@ The plugin registers the same `npx -y jambavan` MCP server and bundles skills fo
 - [Codex CLI setup](https://github.com/beingmartinbmc/jambavan/blob/main/examples/codex.md)
 - [Continue setup](https://github.com/beingmartinbmc/jambavan/blob/main/examples/continue.md)
 - [Review pack output](https://github.com/beingmartinbmc/jambavan/blob/main/examples/review-pack.md)
-- [Shareable benchmark proof card](https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-proof-card.md)
-- [Offline outcome evaluation](https://github.com/beingmartinbmc/jambavan/blob/main/examples/outcome-evaluation.md)
 
 ## Direct CLI Commands
 
@@ -371,7 +369,6 @@ npx jambavan review-pack --base origin/main --format json --max-files 200
 npx jambavan html-handoff --out /tmp/handoff.html --share-safe
 npx jambavan gui
 npx jambavan badges
-npx jambavan evaluate --baseline baseline.json --jambavan jambavan.json --format markdown
 ```
 
 ## Badges Command
@@ -382,7 +379,7 @@ npx jambavan evaluate --baseline baseline.json --jambavan jambavan.json --format
 npx jambavan badges
 ```
 
-The lines summarize benchmark context-token savings for the current repo, Rin Ledger debt markers (`// rin:` comments), and Failure Memory (`FailureRecord` memories in the default project scope). The command makes no network calls. If you want rendered badge images, use a [shields.io static badge](https://shields.io/badges/static-badge) URL explicitly; README renders will then fetch from shields.io's CDN.
+The lines summarize context-token savings for the current repo, Rin Ledger debt markers (`// rin:` comments), and Failure Memory (`FailureRecord` memories in the default project scope). The command makes no network calls. If you want rendered badge images, use a [shields.io static badge](https://shields.io/badges/static-badge) URL explicitly; README renders will then fetch from shields.io's CDN.
 
 ## Memory Bridge
 
@@ -448,21 +445,6 @@ The page has three tabs: code graph, Rin Debt, and Failures. It includes search,
 | `JAMBAVAN_MAX_READ_BYTES` | `5242880` | Max file size `read_file` loads |
 
 `JAMBAVAN_SCOPE` controls the project scope used by awakening, context-memory enrichment, failure memory, and handoffs. Manual `jambavan_memory_store` and `jambavan_memory_mine_session` calls default to `general`; pass the project scope explicitly when those memories should be recalled with the project.
-
-## Benchmark
-
-`npm run bench` is a retrieval benchmark. It dogfoods the real pipeline: deterministic, local-only, no LLM calls, no embeddings, no external services. It derives queries from the repo's own symbols and measures index speed, context token savings, graph extraction, prompt compression, and MCP tool latency. It does not measure task correctness or completion. Results depend on the repository, machine, Node version, and cache state; they are measurements, not universal performance claims.
-
-Run it on your repo:
-
-```bash
-JAMBAVAN_ROOT=/path/to/your/repo npm run bench
-node dist/benchmark.js --json
-```
-
-Token counts are `cl100k_base` estimates. They are exact for that tokenizer, not for every host model. To publish aggregate results without leaking paths, symbol names, or tool output, use the [benchmark proof-card template and methodology](https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-proof-card.md).
-
-For outcome evidence, `jambavan evaluate` compares strict, paired JSON records from baseline and Jambavan runs. It reports completion, first-pass success, repeated failures, successful-task duration, and supplied input-token counts without calling an LLM or executing an agent. See the [input schema, metric definitions, and outcome proof card](https://github.com/beingmartinbmc/jambavan/blob/main/examples/outcome-evaluation.md).
 
 ## Community
 

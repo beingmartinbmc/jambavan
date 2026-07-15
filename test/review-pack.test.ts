@@ -9,7 +9,8 @@ import { MemoryStore } from '../src/memory/store';
 import { projectScope } from '../src/tools/jambavan';
 import { buildReviewPackHandlers } from '../src/tools/review-pack';
 import { buildReviewPackJson } from '../src/tools/review-pack-json';
-import { parseChangedRanges, parseNameStatus } from '../src/tools/changed-symbols';
+import { parseChangedRanges, parseNameStatus, parseOldRanges, analyzeFileChange } from '../src/tools/changed-symbols';
+import type { Symbol } from '../src/index/ast-parser';
 import { buildImpactHandlers } from '../src/tools/impact';
 
 function git(root: string, args: string[]): void {
@@ -80,18 +81,54 @@ test('changed-symbol diff parser decodes git-quoted paths', () => {
   assert.deepEqual(ranges.get('src/space é.ts'), [{ start: 1, end: 1 }]);
 });
 
-test('changed-symbol diff parser retains pure-deletion hunks as an anchored range', () => {
-  // git emits new-side count 0 for a deletion; the old code dropped these, so
-  // removing behavior from a still-existing symbol reported no changed symbol.
-  const interior = parseChangedRanges(
+test('changed-symbol diff parser: pure-deletion hunks are dropped from new-side ranges', () => {
+  // git emits new-side count 0 for a deletion. We must NOT invent a new-side
+  // anchor (the old bug tagged whatever HEAD symbol sat there); deletions are
+  // attributed on the old side instead. See parseOldRanges + analyzeFileChange.
+  const newSide = parseChangedRanges(
     'diff --git a/src/util.ts b/src/util.ts\n--- a/src/util.ts\n+++ b/src/util.ts\n@@ -3 +2,0 @@ line2\n',
   );
-  assert.deepEqual(interior.get('src/util.ts'), [{ start: 2, end: 3 }]);
+  assert.equal(newSide.get('src/util.ts'), undefined);
 
-  const tail = parseChangedRanges(
+  const oldSide = parseOldRanges(
     'diff --git a/src/util.ts b/src/util.ts\n--- a/src/util.ts\n+++ b/src/util.ts\n@@ -2,4 +1,0 @@ line1\n',
   );
-  assert.deepEqual(tail.get('src/util.ts'), [{ start: 1, end: 2 }]);
+  assert.deepEqual(oldSide.get('src/util.ts'), [{ start: 2, end: 5 }]);
+});
+
+test('analyzeFileChange: full deletion reports the removed symbol, not the surviving one', () => {
+  // Base had removed() at L1-3 and kept() at L4-6. HEAD deleted removed() entirely,
+  // so kept() shifted to L1-3. The diff removes old lines 1-3. The bug this guards:
+  // the deletion must attribute to *removed*, and must NOT tag *kept*.
+  const baseSymbols: Symbol[] = [
+    { name: 'removed', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' },
+    { name: 'kept',    type: 'function', startLine: 4, endLine: 6, content: '', filePath: 's.ts' },
+  ];
+  const headSymbols: Symbol[] = [
+    { name: 'kept', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' },
+  ];
+  const { changed, deleted } = analyzeFileChange(
+    headSymbols,
+    baseSymbols,
+    [],                          // no surviving new-side lines
+    [{ start: 1, end: 3 }],      // old lines 1-3 removed
+  );
+  assert.deepEqual(deleted.map(s => s.name), ['removed']);
+  assert.deepEqual(changed.map(s => s.name), [], 'kept() must not be reported as changed');
+});
+
+test('analyzeFileChange: interior deletion inside a surviving symbol -> changed, not deleted', () => {
+  const baseSymbols: Symbol[] = [
+    { name: 'shrunk', type: 'function', startLine: 1, endLine: 10, content: '', filePath: 's.ts' },
+  ];
+  const headSymbols: Symbol[] = [
+    { name: 'shrunk', type: 'function', startLine: 1, endLine: 7, content: '', filePath: 's.ts' },
+  ];
+  const { changed, deleted } = analyzeFileChange(
+    headSymbols, baseSymbols, [], [{ start: 4, end: 6 }],
+  );
+  assert.deepEqual(changed.map(s => s.name), ['shrunk']);
+  assert.deepEqual(deleted, []);
 });
 
 test('jambavan_review_pack: reports only changed symbols and per-symbol test risk', async () => {
@@ -110,6 +147,40 @@ test('jambavan_review_pack: reports only changed symbols and per-symbol test ris
     assert.doesNotMatch(result, /\*\*add\*\*/, 'unchanged add must not be labeled touched');
     assert.match(result, /\*\*subtract\*\*/, 'new subtract symbol should be reported');
     assert.match(result, /1 changed symbol\(s\) have no matching test/);
+  } finally { cleanup(); }
+});
+
+test('jambavan_review_pack: fully deleted function is reported as deleted (not attributed to survivor)', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    // Base: two functions. `removed` sits above `kept`.
+    fs.writeFileSync(
+      path.join(root, 'src', 'm.ts'),
+      'export function removed() {\n  return 1;\n}\n\nexport function kept() {\n  return 2;\n}\n',
+    );
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    // Feature: delete `removed` entirely; `kept` shifts up but is otherwise untouched.
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.writeFileSync(
+      path.join(root, 'src', 'm.ts'),
+      'export function kept() {\n  return 2;\n}\n',
+    );
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'delete removed()']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const result = buildReviewPackHandlers(config, () => index).jambavan_review_pack({ base: 'main' });
+
+    assert.match(result, /\*\*removed\*\* \(function, deleted/, 'deleted function must be reported as deleted');
+    assert.doesNotMatch(result, /\*\*kept\*\*/, 'untouched survivor must not be flagged as changed');
   } finally { cleanup(); }
 });
 
@@ -390,7 +461,7 @@ test('jambavan_review_pack: test files are not flagged for missing matching test
   } finally { cleanup(); }
 });
 
-test('jambavan_review_pack: deleted file shows "No indexed symbols" placeholder', async () => {
+test('jambavan_review_pack: deleted file reports its removed symbols', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     git(root, ['init', '-q', '-b', 'main']);
@@ -413,7 +484,8 @@ test('jambavan_review_pack: deleted file shows "No indexed symbols" placeholder'
     const result = handlers.jambavan_review_pack({ base: 'main' });
 
     assert.match(result, /src\/gone\.ts/);
-    assert.match(result, /No indexed symbols/);
+    // Base-side parsing now names the deleted symbol instead of a bare placeholder.
+    assert.match(result, /\*\*gone\*\* \(function, deleted/);
   } finally { cleanup(); }
 });
 

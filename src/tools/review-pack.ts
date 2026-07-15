@@ -12,12 +12,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 import type { JambavanIndex } from '../index/indexer';
+import type { Symbol } from '../index/ast-parser';
 import { buildSymbolGraph, type GraphNode } from '../knowledge/graph';
 import { buildTestMap, formatTestAssociations, isTestFile, testAssociationsFor } from '../index/test-map';
 import { harvestRin } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
 import { projectScope } from './jambavan';
-import { changedSymbols, parseChangedRanges, parseNameStatus, type ChangedFile } from './changed-symbols';
+import { analyzeFileChange, changedSymbols, parseChangedRanges, parseNameStatus, parseOldRanges, type ChangedFile, type FileChangeSymbols } from './changed-symbols';
+import { ASTParser } from '../index/ast-parser';
 import { MAX_READ_BYTES } from './read-file';
 
 const DEFAULT_MAX_FILES = 20;
@@ -48,6 +50,7 @@ export function detectBaseBranch(root: string): string {
 export function getChangedFiles(root: string, base: string, includeWorktree = false): ChangedFile[] {
   const touched = parseNameStatus(git(root, ['diff', '--find-renames', '--name-status', `${base}...HEAD`]));
   const ranges = parseChangedRanges(git(root, ['diff', '--find-renames', '--unified=0', `${base}...HEAD`]));
+  const oldRanges = parseOldRanges(git(root, ['diff', '--find-renames', '--unified=0', `${base}...HEAD`]));
   const byPath = new Map(touched.map(file => [file.path, file]));
 
   if (includeWorktree) {
@@ -61,6 +64,9 @@ export function getChangedFiles(root: string, base: string, includeWorktree = fa
     }
     for (const [file, additions] of parseChangedRanges(git(root, ['diff', '--find-renames', '--unified=0', 'HEAD']))) {
       ranges.set(file, [...(ranges.get(file) ?? []), ...additions]);
+    }
+    for (const [file, removals] of parseOldRanges(git(root, ['diff', '--find-renames', '--unified=0', 'HEAD']))) {
+      oldRanges.set(file, [...(oldRanges.get(file) ?? []), ...removals]);
     }
     for (const file of git(root, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean)) {
       let lineCount = 0;
@@ -81,7 +87,44 @@ export function getChangedFiles(root: string, base: string, includeWorktree = fa
     }
   }
 
-  return [...byPath.values()].map(file => ({ ...file, ranges: ranges.get(file.path) ?? file.ranges }));
+  return [...byPath.values()].map(file => ({
+    ...file,
+    ranges: ranges.get(file.path) ?? file.ranges,
+    oldRanges: oldRanges.get(file.oldPath ?? file.path) ?? [],
+  }));
+}
+
+/**
+ * Symbols deleted or modified-in-place for one file, using base-side parsing.
+ * Returns `{ changed, deleted }`. `deleted` names symbols that existed in the
+ * merge-base but are gone from HEAD — invisible to the HEAD-only index.
+ * `base` is the resolved ref getChangedFiles diffed against; worktree changes
+ * are attributed against HEAD.
+ */
+export function analyzeChange(
+  root: string,
+  base: string,
+  file: ChangedFile,
+  headSymbols: Symbol[],
+): FileChangeSymbols {
+  const oldRanges = file.oldRanges ?? [];
+  if (oldRanges.length === 0) {
+    return { changed: changedSymbols(headSymbols, file.ranges), deleted: [] };
+  }
+  // Base-side source: `git show <base>:<oldPath>`. Renames diff old→new, so the
+  // pre-image lives at oldPath. A worktree-only deletion has base === HEAD.
+  const basePath = file.oldPath ?? file.path;
+  const revPath = `${base}:${basePath}`;
+  let baseSymbols: Symbol[] = [];
+  try {
+    const source = git(root, ['show', revPath]);
+    baseSymbols = new ASTParser().parseContent(source, basePath).symbols;
+  } catch {
+    // Base revision unreadable (e.g. binary, or path absent at base): fall back
+    // to HEAD-only attribution — no deleted symbols, but modified ones survive.
+    return { changed: changedSymbols(headSymbols, file.ranges), deleted: [] };
+  }
+  return analyzeFileChange(headSymbols, baseSymbols, file.ranges, oldRanges);
 }
 
 export const REVIEW_PACK_TOOL_DEFS = [
@@ -168,13 +211,13 @@ export function buildReviewPackHandlers(config: JambavanConfig, getIndex: () => 
       for (const file of analyzed) {
         const absPath = path.join(root, file.path);
         const isTest = isTestFile(absPath);
-        const fileSymbols = file.status === 'D'
-          ? []
-          : changedSymbols(index.getFileSymbols(absPath), file.ranges);
+        const { changed: fileSymbols, deleted } = file.status.startsWith('D') || (file.oldRanges?.length ?? 0) > 0
+          ? analyzeChange(root, base, file, index.getFileSymbols(absPath))
+          : { changed: changedSymbols(index.getFileSymbols(absPath), file.ranges), deleted: [] as Symbol[] };
 
         sections.push(`## ${file.status}\t${file.path}`);
 
-        if (fileSymbols.length === 0) {
+        if (fileSymbols.length === 0 && deleted.length === 0) {
           sections.push('_No indexed symbols (deleted, unparsed, or non-code file)._');
         } else {
           for (const sym of fileSymbols) {
@@ -194,6 +237,21 @@ export function buildReviewPackHandlers(config: JambavanConfig, getIndex: () => 
             }
             const testNote = formatTestAssociations(testAssociationsFor(testMap, sym, config));
             if (testNote) sections.push(`  ${testNote.replace(/\n/g, '\n  ')}`);
+          }
+          for (const sym of deleted) {
+            // Deleted symbols carry callers that may now be broken — surface them
+            // from the HEAD graph (a caller still referencing a removed symbol is
+            // exactly the review risk worth flagging).
+            const callers = graph.edges
+              .filter(e => e.type !== 'contains' && e.confidence === 'EXTRACTED'
+                && nodeById.get(e.to)?.label === sym.name)
+              .map(e => nodeById.get(e.from))
+              .filter((n): n is GraphNode => n !== undefined);
+            sections.push(`- **${sym.name}** (${sym.type}, deleted — was L${sym.startLine})`);
+            if (callers.length > 0) {
+              const names = [...new Set(callers.map(c => c.label))].slice(0, 5);
+              sections.push(`  ⚠ Still referenced by: ${names.join(', ')}`);
+            }
           }
         }
 

@@ -39,11 +39,19 @@ export function capOutput(output: string): string {
  * Trust-boundary guard for host-supplied numeric params.
  */
 export function boundedInt(value: unknown, opts: { min: number; max: number; fallback: number }): number {
-  // Number('') and Number('   ') both coerce to 0, which would clamp to `min`
-  // instead of using the documented default. Treat blank/whitespace-only strings
-  // as "unset" so an empty env var (JAMBAVAN_TOKEN_BUDGET="") yields the fallback.
-  if (typeof value === 'string' && value.trim() === '') return opts.fallback;
-  const n = typeof value === 'number' ? value : Number(value);
+  // Trust boundary: accept only real numbers and trimmed numeric strings.
+  // Anything else coerces through Number() to a misleading value —
+  // null/[]/''→0 (clamps to min), [25]→25, true→1 — so reject by type first.
+  let n: number;
+  if (typeof value === 'number') {
+    n = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') return opts.fallback; // e.g. JAMBAVAN_TOKEN_BUDGET=""
+    n = Number(trimmed);
+  } else {
+    return opts.fallback;
+  }
   if (!Number.isFinite(n)) return opts.fallback;
   return Math.min(opts.max, Math.max(opts.min, Math.floor(n)));
 }

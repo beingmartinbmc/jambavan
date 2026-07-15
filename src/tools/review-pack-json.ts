@@ -15,7 +15,7 @@ import { harvestRin } from './vibhishana-niti';
 import { MemoryStore } from '../memory/store';
 import { projectScope } from './jambavan';
 import { changedSymbols, type ChangedFile } from './changed-symbols';
-import { detectBaseBranch, getChangedFiles } from './review-pack';
+import { analyzeChange, detectBaseBranch, getChangedFiles } from './review-pack';
 
 const DEFAULT_MAX_FILES = 30;
 
@@ -31,6 +31,8 @@ export interface ReviewPackFile {
   status:  string;
   path:    string;
   symbols: ReviewPackSymbol[];
+  /** Symbols present in the base but removed in this branch (fully deleted). */
+  deleted: { name: string; type: string; startLine: number; callers: string[] }[];
   risks:   string[];
 }
 
@@ -104,9 +106,10 @@ export function buildReviewPackJson(
   for (const file of analyzed) {
     const absPath = path.join(root, file.path);
     const isTest = isTestFile(absPath);
-    const fileSymbols = file.status.startsWith('D')
-      ? []
-      : changedSymbols(index.getFileSymbols(absPath), file.ranges);
+    const { changed: fileSymbols, deleted: deletedSymbols } =
+      file.status.startsWith('D') || (file.oldRanges?.length ?? 0) > 0
+        ? analyzeChange(root, resolvedBase, file, index.getFileSymbols(absPath))
+        : { changed: changedSymbols(index.getFileSymbols(absPath), file.ranges), deleted: [] };
 
     const symbols: ReviewPackSymbol[] = fileSymbols.map(sym => {
       const node = symbolNodeByKey.get(`${file.path}\0${sym.name}\0${sym.startLine}`);
@@ -122,6 +125,17 @@ export function buildReviewPackJson(
       return { name: sym.name, type: sym.type, startLine: sym.startLine, callers, tests };
     });
 
+    const deleted = deletedSymbols.map(sym => {
+      const callers = [...new Set(
+        graph.edges
+          .filter(e => e.type !== 'contains' && e.confidence === 'EXTRACTED'
+            && nodeById.get(e.to)?.label === sym.name)
+          .map(e => nodeById.get(e.from)?.label)
+          .filter((l): l is string => l !== undefined),
+      )].slice(0, 8);
+      return { name: sym.name, type: sym.type, startLine: sym.startLine, callers };
+    });
+
     const risks: string[] = [];
     if (rinByFile.has(file.path)) risks.push('has open rin debt marker(s)');
     const untested = symbols.filter(symbol => symbol.tests.length === 0);
@@ -131,7 +145,7 @@ export function buildReviewPackJson(
     const ff = allFailures.filter(d => d.body.includes(file.path));
     if (ff.length > 0) risks.push(`${ff.length} past failure record(s) mention this file`);
 
-    files.push({ status: file.status, path: file.path, symbols, risks });
+    files.push({ status: file.status, path: file.path, symbols, deleted, risks });
   }
 
   // Collect failure refs for files touched in this diff

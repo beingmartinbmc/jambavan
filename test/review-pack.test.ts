@@ -648,6 +648,30 @@ test('review-pack CLI rejects invalid and unknown options before indexing', () =
   }
 });
 
+test('memory migrate CLI is dry-run by default and applies only with --apply', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  const globalDir = path.join(root, 'global-memory');
+  try {
+    new MemoryStore(config.memoryDir).store({ title: 'Legacy CLI fact', body: 'copy me', scope: 'general' });
+    const env = { ...process.env, JAMBAVAN_MEMORY_HOME: globalDir };
+    const dry = spawnSync(process.execPath, [
+      '--require', 'ts-node/register/transpile-only', 'src/index.ts', 'memory', 'migrate', '--root', root,
+    ], { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', env });
+    assert.equal(dry.status, 0);
+    assert.match(dry.stdout, /dry run/);
+    assert.equal(fs.existsSync(globalDir), false);
+
+    const apply = spawnSync(process.execPath, [
+      '--require', 'ts-node/register/transpile-only', 'src/index.ts', 'memory', 'migrate', '--root', root, '--apply',
+    ], { cwd: path.resolve(__dirname, '..'), encoding: 'utf8', env });
+    assert.equal(apply.status, 0);
+    assert.match(apply.stdout, /migration applied/);
+    assert.equal(new MemoryStore(globalDir).list(undefined, { includeInvalidated: true }).length, 1);
+  } finally {
+    cleanup();
+  }
+});
+
 test('CLI rejects the removed daemon command with a migration message instead of starting the server', () => {
   const result = runCli(['daemon', 'status']);
   assert.equal(result.status, 2, 'daemon must be rejected, not silently start the MCP server');

@@ -28,6 +28,7 @@
                                                           │                              │
                                                           │  ── Memory ──                │
                                                           │  jambavan_memory_store       │
+                                                          │  jambavan_memory_get         │
                                                           │  jambavan_memory_search      │
                                                           │  jambavan_memory_recall      │
                                                           │  jambavan_memory_mine_session│
@@ -119,13 +120,16 @@ The mythological tool names are the canonical API. These English aliases are als
 
 | Tool | Purpose |
 |---|---|
-| `jambavan_memory_store` | Persist a memory as an OKF markdown document; requires `title` and `body` |
-| `jambavan_memory_search` | BM25 full-text search across stored memories |
-| `jambavan_memory_recall` | Recall up to `limit` active memories, newest first (default 20); omit scope to search across scopes |
+| `jambavan_memory_store` | Persist an OKF Markdown document in the global archive; accepts optional scope and collection |
+| `jambavan_memory_get` | Fetch one complete local memory, or one MemPalace drawer when explicitly requested |
+| `jambavan_memory_search` | BM25 local search by default; optional explicit `mempalace` or sectioned `all` provider |
+| `jambavan_memory_recall` | Recall active local memories by default; optional explicit MemPalace drawer listing |
 | `jambavan_memory_mine_session` | Deterministically mine durable items from required `text` |
 | `jambavan_memory_invalidate` | Mark a memory superseded without deleting history |
 | `jambavan_memory_delete` | Remove a memory by ID or wipe an entire scope |
-| `jambavan_memory_status` | Active-memory statistics by scope; invalidated documents are excluded |
+| `jambavan_memory_status` | Local scope/collection counts by default; optional explicit MemPalace taxonomy/status |
+
+All core memory tools are rootless. Repository-bound index, graph, impact, file, shell, failure-record, and handoff operations remain blocked while root resolution is an unsafe fallback. MemPalace never participates in automatic awakening or context enrichment: `provider` defaults to `jambavan` on every federated read.
 
 ### Failure memory & session handoff
 
@@ -138,7 +142,7 @@ Session-continuity tools let a fresh session (or a different host model) consult
 | `jambavan_session_export` | Produce a single portable markdown handoff document: recent memories, `rin:` debt markers, and git status |
 | `jambavan_session_import` | Parse required handoff `text` back into memories in the target scope; tolerant of light rewording of the memory heading, idempotent on exact re-import |
 
-Both are built on `MemoryStore` — a failure record is a memory with `type: 'FailureRecord'` and a title that includes a short content hash of `command + symptom`, which distinguishes ordinary same-command/different-symptom records without claiming collision-proof identity.
+Both are built on the writable side of `MemoryArchive` — a failure record is a memory with `type: 'FailureRecord'`, collection `failures`, and a title that includes a short content hash of `command + symptom`, which distinguishes ordinary same-command/different-symptom records without claiming collision-proof identity.
 
 ### Review pack
 
@@ -194,7 +198,8 @@ Local, no-server helpers run as `npx jambavan <subcommand>`. None call an LLM. C
 |---|---|
 | `jambavan doctor` | Thin CLI wrapper around `jambavan_doctor` (see above) — root source, parser backends, gates, index stats |
 | `jambavan badges` | Print three local markdown lines for a README: benchmark card (context-token estimate, via `node dist/benchmark.js --json`), Rin Ledger, Failure Memory count |
-| `jambavan bridge --to mempalace` / `--from mempalace` | Convert Jambavan memories to/from a MemPalace-shaped `wing/room/drawer.md` folder tree (see `src/tools/memory-bridge.ts`). MemPalace's real store is a Chroma vector index, not files, so this produces/consumes a portable interchange tree for a host model to walk with its own `mempalace_*` tools — Jambavan never calls MemPalace directly |
+| `jambavan memory migrate [--root <path>] [--apply]` | Dry-run by default; preflight and non-destructively copy the repository's legacy `.jambavan/memory` documents into the global archive, preserving IDs, metadata, timestamps, and invalidated history |
+| `jambavan bridge --to mempalace` / `--from mempalace` | Offline Markdown interchange using `scope → wing` and `collection → room`. This is separate from explicit read-only MCP federation |
 | `jambavan handoff --write-pr-template [--scope <scope>] [--share-safe] [--post]` | Runs the `jambavan_session_export` handoff card and injects it as an HTML-comment-bounded block into `.github/pull_request_template.md` (see `src/tools/pr-handoff.ts` for the pure inject/replace transform); idempotent re-injection, no duplication. `--share-safe` redacts local paths/secrets and omits git-sensitive data. `--post` additionally shells to the caller's own authenticated `gh pr comment` |
 | `jambavan review-pack [--base <ref>] [--format markdown\|json] [--max-files <n>] [--include-worktree]` | Indexes the project, then writes a branch review pack to stdout. Markdown delegates to `jambavan_review_pack`; JSON uses `src/tools/review-pack-json.ts` for `{ base, touchedCount, analyzedCount, truncated, files[], rinMarkers[], failures[] }`, which is what the GitHub Action consumes |
 | `jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]` | Indexes the project and writes a self-contained HTML handoff report (`src/tools/html-handoff.ts`) with memory timeline, rin debt, indexed-symbol stats, git dirty files/recent commits, collapsible sections, and copy-to-clipboard. `--share-safe` redacts local paths/secrets and omits git-sensitive data. No external assets or network calls |
@@ -262,6 +267,9 @@ src/
 │   └── server.ts             # MCP Server (stdio transport): tools/list + tools/call,
 │                             # opt-in gating of write/bash tools
 │
+├── integrations/
+│   └── mempalace.ts          # Lazy read-only MemPalace MCP subprocess adapter
+│
 ├── index/
 │   ├── indexer.ts            # SQLite symbol index, FTS5/LIKE search, full/incremental indexing
 │   ├── ast-parser.ts         # Symbol extractor (tree-sitter + regex fallback)
@@ -275,8 +283,10 @@ src/
 │                             # report / query / shortest-path
 │
 ├── memory/
-│   └── store.ts              # OKF bundle manager: read/write/search concept docs
-│                             # BM25 search, no vectors, no external services
+│   ├── store.ts              # OKF bundle manager: read/write/search concept docs
+│   ├── archive.ts            # Global archive + read-only legacy federation
+│   ├── migrate.ts            # Conflict-safe legacy migration + stale marker
+│   └── project-scope.ts      # Clone-stable, credential-free project identity
 │
 ├── context/
 │   ├── assembler.ts          # Ranks + packs symbols within token budget
@@ -356,36 +366,44 @@ Host model calls jambavan_context { "query": "auth middleware" }
 
 ## How `jambavan_memory_*` works
 
-Memories are stored as [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concept documents — markdown files with YAML frontmatter — inside `.jambavan/memory/`. No database, no embeddings, no external services. The generated state is Git-ignored by default; users can deliberately unignore memories if they want versioned project memory.
+Local memories are [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concept documents in the root-independent `~/.jambavan/memory` archive. No local memory database or embedding model is required. Physical IDs remain `<scope>/<slug>`; `collection` is frontmatter for logical organization and filtering.
 
 ```
-jambavan_memory_store { "title": "Why we use GraphQL", "body": "...", "scope": "my-project" }
+jambavan_memory_store { "title": "Why we use GraphQL", "body": "...", "collection": "decisions" }
          │
          ▼
   MemoryStore.store()
+  ├─ Choose explicit scope, active Git-derived scope, or rootless `global`
   ├─ slugify title → scope/why-we-use-graphql.md
-  ├─ Serialize YAML frontmatter (type, title, tags, timestamp, …)
+  ├─ Serialize YAML frontmatter (type, title, collection, tags, timestamp, …)
   ├─ Write markdown file
   ├─ Append to log.md
   └─ Rebuild scope index.md
          │
          ▼
-  .jambavan/memory/my-project/why-we-use-graphql.md
-  → Human-readable and portable; git-diffable when deliberately unignored
+  ~/.jambavan/memory/my-project/why-we-use-graphql.md
+  → Human-readable and portable
 
 jambavan_memory_search { "query": "graphql rationale", "scope": "my-project" }
          │
          ▼
-  MemoryStore.search()
-  ├─ Load all docs for scope (or all scopes)
-  ├─ Build BM25 corpus (title x3, tags x2, description x2, body x1)
+  MemoryArchive.search()
+  ├─ Load global docs plus eligible read-only legacy docs
+  ├─ Filter by optional scope and collection
+  ├─ Build BM25 corpus (title x3, tags x2, description x2, collection x2, body x1)
   └─ Rank and return top-k
 ```
 
-### OKF bundle layout
+Project scope identity is derived in this order: validated `JAMBAVAN_SCOPE`; normalized Git remote path plus the initial commit; initial commit plus repository basename when no remote exists; or the historical absolute-path hash for a non-Git directory. Only a sanitized basename and digest appear in the scope. Raw remotes, credentials, and absolute paths are never project identifiers.
+
+When the default global archive is active, `MemoryArchive` can read an active repository's legacy `.jambavan/memory` store without changing it. Legacy `general` and old path-derived project scopes are remapped in memory to the active project scope; explicitly named alternative scopes remain unchanged. Global documents win exact-content deduplication. `jambavan memory migrate` performs the same remap as a preflighted copy, aborts all writes on target ID/title conflicts, preserves invalidated documents and temporal metadata, never deletes the source, and records a path-hashed marker so diagnostics can detect later source changes.
+
+MemPalace federation is a separate explicit read path. A persistent `mempalace-mcp` child is started lazily only for `provider: "mempalace"` or `provider: "all"`. The adapter validates the documented v3.5.0 read tool set (`mempalace_search`, `mempalace_get_drawer`, `mempalace_list_drawers`, `mempalace_get_taxonomy`, `mempalace_status`), maps scope/collection to wing/room, applies a 60-second timeout, bounds output, sanitizes failures, and reconnects once only after transport closure. It exposes no generic proxy and no MemPalace mutations.
+
+### OKF archive layout
 
 ```
-.jambavan/memory/
+~/.jambavan/memory/
 ├── log.md                     # Chronological update history
 ├── general/
 │   ├── index.md               # Auto-generated directory listing
@@ -404,6 +422,7 @@ title: "Why we use GraphQL"
 description: "Why we use GraphQL"
 tags: ["architecture", "api"]
 scope: my-project
+collection: decisions
 timestamp: 2026-06-01T12:00:00.000Z
 ---
 
@@ -423,8 +442,9 @@ Jambavan keeps retrieval, storage, and deterministic transforms separate from th
 | Env var | Default | Description |
 |---|---|---|
 | `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
-| `JAMBAVAN_SCOPE` | path-derived slug + hash | Optional validated clone-independent scope override; when unset, Jambavan derives a slug and hash from the absolute project path |
-| `JAMBAVAN_MEMORY_HOME` | `<indexDir>/memory` | Where OKF memory docs live; point at a shared palace to reuse memory across projects |
+| `JAMBAVAN_SCOPE` | Git-derived scope | Optional validated clone-independent override; otherwise remote + initial commit, initial commit + basename, or a non-Git path hash |
+| `JAMBAVAN_MEMORY_HOME` | `~/.jambavan/memory` | Complete override for the root-independent OKF archive |
+| `JAMBAVAN_MEMPALACE_COMMAND` | `mempalace-mcp` | Executable for explicit read-only MemPalace provider calls |
 | `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max approximate `cl100k_base` tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite` / `full` / `ultra`) |
 | `JAMBAVAN_ALLOW_WRITE` | off | `1` registers `write_file` + `patch_file` + `jambavan_sankshipta` |
@@ -435,7 +455,7 @@ Jambavan keeps retrieval, storage, and deterministic transforms separate from th
 | `JAMBAVAN_MAX_OUTPUT_CHARS` | `100000` | Global cap on any tool's returned output |
 | `JAMBAVAN_MAX_READ_BYTES` | `5242880` | Max file size `read_file` will load |
 
-`JAMBAVAN_SCOPE` is used by project-scoped awakening, context-memory enrichment, failures, and handoffs. Manual memory store/mining calls default to `general` unless their `scope` argument is supplied.
+`JAMBAVAN_SCOPE` is used by project-scoped awakening, context-memory enrichment, failures, handoffs, and default memory writes. Rootless writes default to `global`; an explicit tool-level scope always wins. `JAMBAVAN_MEMORY_HOME` never follows project-root rebinding.
 
 ---
 

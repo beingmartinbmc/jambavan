@@ -20,10 +20,10 @@ test('memory bridge: round-trips memories between two Jambavan stores via a MemP
     assert.equal(exported.files, 3);
     assert.deepEqual(exported.wings, ['proj']);
 
-    // Files land under wing/room/*.md — verify the room split by type.
+    // Files land under wing/room/*.md — collection maps directly to room.
     assert.ok(fs.existsSync(path.join(bridgeDir, 'proj', 'decisions')));
-    assert.ok(fs.existsSync(path.join(bridgeDir, 'proj', 'problems')));
-    assert.ok(fs.existsSync(path.join(bridgeDir, 'proj', 'technical')));
+    assert.ok(fs.existsSync(path.join(bridgeDir, 'proj', 'failures')));
+    assert.ok(fs.existsSync(path.join(bridgeDir, 'proj', 'general')));
 
     const imported = importFromMemPalace(dest.config, bridgeDir);
     assert.equal(imported.imported, 3);
@@ -86,7 +86,7 @@ test('memory bridge: a stray non-frontmatter markdown file is skipped, not fatal
   }
 });
 
-test('memory bridge: exportToMemPalace uses the "technical" room for unknown memory types', () => {
+test('memory bridge: exportToMemPalace maps inferred general collection to room', () => {
   const source = mkTempConfig();
   const bridgeDir = fs.mkdtempSync(path.join(source.root, 'bridge-'));
   try {
@@ -94,13 +94,37 @@ test('memory bridge: exportToMemPalace uses the "technical" room for unknown mem
       title: 'A plain memory',
       body: 'Just a note.',
       scope: 'proj',
-      // type defaults to 'Memory' — not in TYPE_TO_ROOM → should land in 'technical'
+      // type defaults to 'Memory', whose inferred collection is general.
     });
 
     const result = exportToMemPalace(source.config, bridgeDir);
     assert.equal(result.files, 1);
-    assert.ok(fs.existsSync(path.join(bridgeDir, 'proj', 'technical')));
+    assert.ok(fs.existsSync(path.join(bridgeDir, 'proj', 'general')));
   } finally { source.cleanup(); }
+});
+
+test('memory bridge: imports a legacy document into its MemPalace room', () => {
+  const dest = mkTempConfig();
+  const bridgeDir = fs.mkdtempSync(path.join(dest.root, 'bridge-'));
+  try {
+    const roomDir = path.join(bridgeDir, 'proj', 'architecture');
+    fs.mkdirSync(roomDir, { recursive: true });
+    fs.writeFileSync(path.join(roomDir, 'choice.md'), [
+      '---',
+      'type: Memory',
+      'title: "Architecture choice"',
+      'description: "Architecture choice"',
+      'tags: []',
+      'scope: proj',
+      'timestamp: 2026-01-01T00:00:00.000Z',
+      '---',
+      '',
+      'Use the room as the collection.',
+    ].join('\n'));
+
+    assert.equal(importFromMemPalace(dest.config, bridgeDir).imported, 1);
+    assert.equal(new MemoryStore(dest.config.memoryDir).list('proj')[0].frontmatter.collection, 'architecture');
+  } finally { dest.cleanup(); }
 });
 
 test('memory bridge: exportToMemPalace with a scope filter only exports matching docs', () => {

@@ -1,22 +1,11 @@
-import * as crypto from 'crypto';
 import * as os from 'os';
 import * as path from 'path';
 import { vibhishanaNitiInstructions } from './vibhishana-niti';
-import { MemoryStore } from '../memory/store';
+import { MemoryArchive } from '../memory/archive';
 import { legacyDaemonNotice } from './daemon';
 import { isUnsafeFallbackRoot, type JambavanConfig } from '../config/jambavan.config';
-
-/**
- * Derive a memory scope from the project root path.
- * Includes a short hash of the full path so two repos with the same folder name
- * (e.g. ~/work/api and ~/side-project/api) never collide in a shared memory palace.
- */
-export function projectScope(config: JambavanConfig): string {
-  if (config.scope) return config.scope;
-  const base = path.basename(config.projectRoot).toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'project';
-  const hash = crypto.createHash('sha256').update(config.projectRoot).digest('hex').slice(0, 6);
-  return `${base}-${hash}`;
-}
+export { projectScope, legacyProjectScope, normalizedRemotePath } from '../memory/project-scope';
+import { projectScope } from '../memory/project-scope';
 
 /** Best-effort removal of local paths and common credential shapes before sharing. */
 export function redactForSharing(value: string, config: JambavanConfig): string {
@@ -47,8 +36,9 @@ export function jambavanInstructions(config: JambavanConfig): string {
       'JAMBAVAN PROTOCOL — project root required.',
       '',
       `Unresolved fallback root: ${config.projectRoot}`,
-      'Stateful MCP tools are blocked.',
-      'Pass an eligible root to jambavan_awaken or jambavan_index, or set JAMBAVAN_ROOT and reconnect.',
+      `Rootless memory archive: ${config.memoryDir}`,
+      'Memory tools remain available; code index, graph, impact, file, failure, and handoff tools are blocked.',
+      'Pass an eligible root to jambavan_awaken or jambavan_index when project context is needed.',
       '',
       vibhishanaNitiInstructions(process.env.JAMBAVAN_DEV_MODE),
     ].join('\n');
@@ -96,7 +86,7 @@ export function jambavanInstructions(config: JambavanConfig): string {
 }
 
 export function awakenReport(config: JambavanConfig, opts: { includeMemories?: boolean } = {}): string {
-  const scope = projectScope(config);
+  const scope = isUnsafeFallbackRoot(config) ? 'global' : projectScope(config);
   const parts = [jambavanInstructions(config)];
 
   const legacy = legacyDaemonNotice(config);
@@ -104,8 +94,8 @@ export function awakenReport(config: JambavanConfig, opts: { includeMemories?: b
     parts.push('', `⚠ ${legacy}`);
   }
 
-  if ((opts.includeMemories ?? true) && !isUnsafeFallbackRoot(config)) {
-    const docs = new MemoryStore(config.memoryDir).list(scope)
+  if (opts.includeMemories ?? true) {
+    const docs = new MemoryArchive(config).list(scope)
       .sort((a, b) => b.frontmatter.timestamp.localeCompare(a.frontmatter.timestamp))
       .slice(0, 10);
     parts.push('', `# Recalled memories: ${scope} (${docs.length})`);

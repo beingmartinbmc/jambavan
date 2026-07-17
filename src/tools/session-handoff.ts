@@ -12,7 +12,8 @@
 
 import { execFileSync } from 'child_process';
 import * as path from 'path';
-import { MemoryStore, type MemoryDoc } from '../memory/store';
+import type { MemoryDoc } from '../memory/store';
+import { MemoryArchive } from '../memory/archive';
 import type { JambavanConfig } from '../config/jambavan.config';
 import { projectScope, redactForSharing } from './jambavan';
 import { harvestRin } from './vibhishana-niti';
@@ -48,6 +49,7 @@ function renderMemoryBlock(doc: MemoryDoc, redact: (value: string) => string = v
     `### ${redact(doc.frontmatter.title)}`,
     `*${doc.frontmatter.timestamp.slice(0, 10)}*` +
     typeBadge +
+    ` · collection: ${redact(doc.frontmatter.collection)}` +
     (doc.frontmatter.tags.length ? ` · tags: ${redact(doc.frontmatter.tags.join(', '))}` : ''),
     '',
     redact(doc.body.trim()),
@@ -102,7 +104,7 @@ export const SESSION_HANDOFF_TOOL_DEFS = [
 export function buildSessionHandoffHandlers(config: JambavanConfig) {
   // Lazy per-call construction — see buildMemoryHandlers() in memory.ts for why
   // a build-time-captured store goes stale after roots/list root resolution.
-  const store = () => new MemoryStore(config.memoryDir);
+  const archive = () => new MemoryArchive(config);
   const scope = () => projectScope(config);
 
   return {
@@ -127,7 +129,7 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
       ];
 
       // ── Memories, split into Decisions / Failures / Other for scanability ──
-      const allDocs = store().list(targetScope)
+      const allDocs = archive().list(targetScope)
         .sort((a, b) => b.frontmatter.timestamp.localeCompare(a.frontmatter.timestamp));
 
       const decisions = allDocs.filter(d => d.frontmatter.type === 'Decision').slice(0, maxMemories);
@@ -285,12 +287,13 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
         const title = lines[0]?.trim();
         if (!title) continue;
         // Skip lines that are clearly section headings, not memory titles
-        if (/^memor/i.test(title)) continue;
+        if (/^memor/i.test(title) || /^none recorded\.?/i.test(title)) continue;
 
-        // Parse metadata line: *2024-01-01* [FailureRecord] · tags: failure, resolved
+        // Parse metadata line: *2024-01-01* [FailureRecord] · collection: failures · tags: failure, resolved
         const metaLine = lines[1] ?? '';
         const typeMatch = metaLine.match(/\[([A-Za-z]+)\]/);
         const docType = typeMatch?.[1] ?? 'Memory';
+        const collection = metaLine.match(/collection:\s*([^·]+?)(?:\s*·|$)/)?.[1]?.trim();
         const tagsMatch = metaLine.match(/tags:\s*(.+)$/);
         const tags = tagsMatch
           ? tagsMatch[1].split(',').map(t => t.trim()).filter(Boolean)
@@ -299,11 +302,12 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
         const body = lines.slice(2).join('\n').trim(); // skip title + metadata line
         if (!body) continue;
 
-        store().store({
+        archive().primary.store({
           title,
           body,
           scope: targetScope,
           type: docType,
+          collection,
           tags: [...new Set([...tags, 'imported', 'handoff'])],
           source: 'session-import',
         });

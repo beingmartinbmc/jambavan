@@ -7,7 +7,7 @@
  * makes no network/API calls of its own (see ARCHITECTURE.md). So this bridge
  * produces/consumes a portable "MemPalace-shaped" wing/room/drawer.md folder
  * tree using Jambavan's own frontmatter format unchanged (`scope` doubles as
- * MemPalace's "wing"; `type` picks the "room" subfolder).
+ * MemPalace's "wing"; `collection` picks the "room" subfolder).
  *
  * `jambavan bridge --to mempalace` writes that tree; a host model with real
  * mempalace_* tools then walks it and calls mempalace_add_drawer(wing, room,
@@ -18,7 +18,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { MemoryStore, parseFrontmatter, serializeFrontmatter } from '../memory/store';
+import { parseFrontmatter, serializeFrontmatter } from '../memory/store';
+import { MemoryArchive } from '../memory/archive';
 import type { JambavanConfig } from '../config/jambavan.config';
 
 const TYPE_TO_ROOM: Record<string, string> = {
@@ -46,13 +47,12 @@ export function exportToMemPalace(
   outDir: string,
   scope?: string,
 ): { files: number; wings: string[] } {
-  const store = new MemoryStore(config.memoryDir);
-  const docs = store.list(scope, { includeInvalidated: false });
+  const docs = new MemoryArchive(config).list(scope, { includeInvalidated: false });
   const wings = new Set<string>();
 
   for (const doc of docs) {
     const wing = doc.frontmatter.scope;
-    const room = roomForType(doc.frontmatter.type);
+    const room = doc.frontmatter.collection || roomForType(doc.frontmatter.type);
     wings.add(wing);
 
     const dir = path.join(outDir, wing, room);
@@ -72,7 +72,7 @@ export function importFromMemPalace(
   config: JambavanConfig,
   inDir: string,
 ): { imported: number; skipped: number } {
-  const store = new MemoryStore(config.memoryDir);
+  const store = new MemoryArchive(config).primary;
   let imported = 0;
   let skipped = 0;
 
@@ -83,6 +83,9 @@ export function importFromMemPalace(
     const parsed = parseFrontmatter(raw);
     if (!parsed) { skipped++; continue; }
 
+    const relative = path.relative(inDir, file).split(path.sep);
+    const room = relative.length >= 3 ? relative[relative.length - 2] : undefined;
+    const hasCollection = /^collection:\s*.+$/m.test(raw.match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? '');
     store.store({
       title:       parsed.frontmatter.title,
       body:        parsed.body,
@@ -90,6 +93,7 @@ export function importFromMemPalace(
       description: parsed.frontmatter.description,
       tags:        parsed.frontmatter.tags,
       scope:       parsed.frontmatter.scope,
+      collection:  hasCollection ? parsed.frontmatter.collection : room ?? roomForType(parsed.frontmatter.type),
       source:      parsed.frontmatter.source,
     });
     imported++;

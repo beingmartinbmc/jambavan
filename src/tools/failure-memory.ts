@@ -6,7 +6,7 @@
  */
 
 import * as crypto from 'crypto';
-import { MemoryStore } from '../memory/store';
+import { MemoryArchive } from '../memory/archive';
 import type { JambavanConfig } from '../config/jambavan.config';
 import { projectScope, redactForSharing } from './jambavan';
 
@@ -45,7 +45,7 @@ function doNotRetryAdvice(body: string): string | undefined {
 
 function findUnresolvedFailure(config: JambavanConfig, command: string): UnresolvedFailure | undefined {
   const tag = commandTag(command);
-  for (const doc of new MemoryStore(config.memoryDir).list(projectScope(config))) {
+  for (const doc of new MemoryArchive(config).list(projectScope(config))) {
     const unresolved = doc.frontmatter.tags.includes('unresolved')
       || /^\*\*Status:\*\* unresolved$/m.test(doc.body);
     if (doc.frontmatter.type !== 'FailureRecord' || !unresolved) continue;
@@ -75,7 +75,7 @@ export function knownFailureBlock(
 export function resolveBlockingFailure(config: JambavanConfig, command: string): string | undefined {
   const failure = findUnresolvedFailure(config, command);
   if (!failure) return undefined;
-  return new MemoryStore(config.memoryDir).invalidate(
+  return new MemoryArchive(config).primary.invalidate(
     failure.id,
     'Exact command succeeded on an explicit retry.',
   ) ? failure.id : undefined;
@@ -93,7 +93,7 @@ export function recordAutomaticBashFailure(
   const existing = findUnresolvedFailure(config, command);
   if (existing?.advice) return { id: existing.id, stored: false };
   if (existing) {
-    new MemoryStore(config.memoryDir).invalidate(existing.id, 'Same command failed again unchanged.');
+    new MemoryArchive(config).primary.invalidate(existing.id, 'Same command failed again unchanged.');
   }
 
   const redactedCommand = redactForSharing(command, config);
@@ -160,7 +160,7 @@ export const FAILURE_MEMORY_TOOL_DEFS = [
 export function buildFailureHandlers(config: JambavanConfig) {
   // Lazy per-call construction — see buildMemoryHandlers() in memory.ts for why
   // a build-time-captured store goes stale after roots/list root resolution.
-  const store = () => new MemoryStore(config.memoryDir);
+  const archive = () => new MemoryArchive(config);
 
   return {
     jambavan_failure_store(input: Record<string, unknown>): string {
@@ -197,7 +197,7 @@ export function buildFailureHandlers(config: JambavanConfig) {
       // would pollute BM25 scoring and cause false positives on any FailureRecord.
       // The type filter ensures only FailureRecords are returned; BM25 ranking
       // naturally pushes irrelevant results to the bottom.
-      const results = store().search(query, { scope, limit: limit * 2 })
+      const results = archive().search(query, { scope, limit: limit * 2 })
         .filter(r => r.doc.frontmatter.type === 'FailureRecord')
         .slice(0, limit);
 
@@ -224,11 +224,12 @@ function storeFailureRecord(
 ): string {
   const contentKey = `${record.command}\n${record.symptom}`;
   const hash = crypto.createHash('sha256').update(contentKey).digest('hex').slice(0, 8);
-  return new MemoryStore(config.memoryDir).store({
+  return new MemoryArchive(config).primary.store({
     title: `Failure: ${record.command.slice(0, 50)} [${hash}]`,
     body: formatFailureBody(record),
     scope,
     type: 'FailureRecord',
+    collection: 'failures',
     description: `${record.status}: ${record.symptom.slice(0, 100)}`,
     tags: ['failure', record.status, commandTag(commandIdentity)],
     source,

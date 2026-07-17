@@ -12,7 +12,8 @@ import { doctorIssueReport, doctorReport } from '../src/tools/doctor';
 import { buildMemoryHandlers } from '../src/tools/memory';
 import { buildFailureHandlers } from '../src/tools/failure-memory';
 import { buildSessionHandoffHandlers } from '../src/tools/session-handoff';
-import { RootResolutionGate, selectClientRoot } from '../src/mcp/server';
+import { isRootlessSafeTool, RootResolutionGate, selectClientRoot } from '../src/mcp/server';
+import { MEMORY_TOOL_DEFS } from '../src/tools/memory';
 
 // ── applyResolvedRoot ────────────────────────────────────────────────────────
 
@@ -49,14 +50,21 @@ test('selectClientRoot: rejects ambiguous or non-file workspaces', () => {
   assert.match(selectClientRoot([{ uri: 'file:///tmp/project' }])!, /tmp[\\/]project$/);
 });
 
-test('applyResolvedRoot: updates projectRoot/indexDir/memoryDir and marks source client-roots', async () => {
+test('rootless gate allows every core memory tool but blocks project-bound operations', () => {
+  for (const tool of MEMORY_TOOL_DEFS) assert.equal(isRootlessSafeTool(tool.name), true, tool.name);
+  for (const tool of ['jambavan_index', 'jambavan_context', 'jambavan_graph_query', 'jambavan_impact', 'read_file', 'bash', 'jambavan_failure_search', 'jambavan_session_export']) {
+    assert.equal(isRootlessSafeTool(tool), false, tool);
+  }
+});
+
+test('applyResolvedRoot: updates projectRoot/indexDir but never rebinds memoryDir', async () => {
   await withEnv({ JAMBAVAN_ROOT: undefined, JAMBAVAN_MEMORY_HOME: undefined }, () => {
     const { config } = mkTempConfig();
     const newRoot = '/tmp/some-other-project';
     applyResolvedRoot(config, newRoot);
     assert.equal(config.projectRoot, newRoot);
     assert.equal(config.indexDir, `${newRoot}/.jambavan`);
-    assert.equal(config.memoryDir, `${newRoot}/.jambavan/memory`);
+    assert.notEqual(config.memoryDir, `${newRoot}/.jambavan/memory`);
     assert.equal(config.rootSource, 'client-roots');
   });
 });
@@ -138,10 +146,10 @@ test('unsafe unresolved fallback is explicit and tool binding marks the resolved
 // A build-time-captured `new MemoryStore(config.memoryDir)` would keep writing
 // to the stale (pre-resolution) directory forever.
 
-test('buildMemoryHandlers: built before applyResolvedRoot still writes to the resolved memoryDir', async () => {
+test('buildMemoryHandlers: root rebinding keeps the configured archive and changes the default scope', async () => {
   await withEnv({ JAMBAVAN_ROOT: undefined, JAMBAVAN_MEMORY_HOME: undefined }, () => {
     const { config, cleanup } = mkTempConfig();
-    const staleMemoryDir = config.memoryDir;
+    const archiveDir = config.memoryDir;
     try {
       const memoryHandlers = buildMemoryHandlers(config); // built BEFORE resolution, like server.ts
       const { root: newRoot, cleanup: cleanupNewRoot } = mkTempConfig();
@@ -149,8 +157,8 @@ test('buildMemoryHandlers: built before applyResolvedRoot still writes to the re
         applyResolvedRoot(config, newRoot); // fires later, like server.oninitialized
         memoryHandlers.jambavan_memory_store({ title: 'post-resolution fact', body: 'stored after root fix' });
 
-        assert.ok(fs.existsSync(path.join(config.memoryDir, 'general')), 'memory should land under the resolved memoryDir');
-        assert.ok(!fs.existsSync(staleMemoryDir), 'nothing should be written to the pre-resolution memoryDir');
+        assert.equal(config.memoryDir, archiveDir);
+        assert.ok(fs.existsSync(archiveDir), 'memory should remain in the configured rootless archive');
       } finally {
         cleanupNewRoot();
       }

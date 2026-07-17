@@ -10,6 +10,7 @@ export function mkTempConfig(): { config: JambavanConfig; root: string; cleanup:
     projectRoot: root,
     indexDir: path.join(root, '.jambavan'),
     memoryDir: path.join(root, '.jambavan', 'memory'),
+    memorySource: 'override',
     contextTokenBudget: 8000,
     ignore: [],
     rootSource: 'env',

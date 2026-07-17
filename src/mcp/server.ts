@@ -77,9 +77,40 @@ import { yuktiProtocol } from '../tools/yukti';
 import { vibhaajanProtocol } from '../tools/vibhaajan';
 import { getRecentSymbolChanges, formatRecentChanges } from '../context/diff-enricher';
 import { buildTestMap, formatTestAssociations, testAssociationsFor } from '../index/test-map';
-import { MemoryStore } from '../memory/store';
+import { MemoryArchive } from '../memory/archive';
+import { MemPalaceError } from '../integrations/mempalace';
 
 let rootResolutionIssue: string | undefined;
+
+const ROOTLESS_SAFE_TOOLS = new Set([
+  'jambavan_awaken',
+  'jambavan_diagnostics',
+  'jambavan_doctor',
+  'jambavan_vibhishana_niti',
+  'jambavan_mool_kaaran',
+  'jambavan_praman',
+  'jambavan_yukti',
+  'jambavan_vibhaajan',
+  ...MEMORY_TOOL_DEFS.map(def => def.name),
+]);
+
+export function isRootlessSafeTool(name: string): boolean {
+  return ROOTLESS_SAFE_TOOLS.has(name);
+}
+
+async function memoryReadResult(read: () => Promise<string>): Promise<{
+  content: { type: 'text'; text: string }[];
+  isError?: boolean;
+}> {
+  try {
+    return { content: [{ type: 'text', text: await read() }] };
+  } catch (error) {
+    return {
+      content: [{ type: 'text', text: error instanceof MemPalaceError ? error.message : 'Memory provider failed.' }],
+      isError: true,
+    };
+  }
+}
 
 /**
  * Ask the MCP host for its real workspace root via roots/list, if it supports
@@ -169,7 +200,7 @@ export function projectMemoryContext(
   budget: number,
 ): string {
   if (budget <= 0) return '';
-  const matches = new MemoryStore(config.memoryDir).search(query, {
+  const matches = new MemoryArchive(config).search(query, {
     scope: projectScope(config),
     limit: 3,
   });
@@ -738,17 +769,7 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
     }
 
     if (isUnsafeFallbackRoot(config)) {
-      const safeWithoutRoot = new Set([
-        'jambavan_awaken',
-        'jambavan_diagnostics',
-        'jambavan_doctor',
-        'jambavan_vibhishana_niti',
-        'jambavan_mool_kaaran',
-        'jambavan_praman',
-        'jambavan_yukti',
-        'jambavan_vibhaajan',
-      ]);
-      if (!safeWithoutRoot.has(name)) {
+      if (!isRootlessSafeTool(name)) {
         return {
           content: [{
             type: 'text',
@@ -1027,11 +1048,14 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
     if (name === 'jambavan_memory_store') {
       return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_store(input) }] };
     }
+    if (name === 'jambavan_memory_get') {
+      return memoryReadResult(() => memoryHandlers.jambavan_memory_get(input));
+    }
     if (name === 'jambavan_memory_search') {
-      return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_search(input) }] };
+      return memoryReadResult(() => memoryHandlers.jambavan_memory_search(input));
     }
     if (name === 'jambavan_memory_recall') {
-      return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_recall(input) }] };
+      return memoryReadResult(() => memoryHandlers.jambavan_memory_recall(input));
     }
     if (name === 'jambavan_memory_mine_session') {
       return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_mine_session(input) }] };
@@ -1043,7 +1067,7 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
       return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_delete(input) }] };
     }
     if (name === 'jambavan_memory_status') {
-      return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_status(input) }] };
+      return memoryReadResult(() => memoryHandlers.jambavan_memory_status(input));
     }
 
     // ── Failure memory tools ─────────────────────────────────────────────────

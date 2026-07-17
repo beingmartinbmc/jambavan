@@ -56,6 +56,7 @@ async function main(): Promise<void> {
   // tool-check exercises the mutating tools, which are off by default now.
   env.JAMBAVAN_ALLOW_WRITE = '1';
   env.JAMBAVAN_ALLOW_BASH  = '1';
+  env.JAMBAVAN_MEMORY_HOME = path.join(proj, 'global-memory');
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -118,6 +119,7 @@ async function main(): Promise<void> {
 
   const stored = await call('jambavan_memory_store', { title: 'Test fact', body: 'The sky is blue.', scope: 'toolcheck' });
   const id = stored.match(/ID:\s*(\S+)/)?.[1] ?? 'toolcheck/test-fact';
+  await call('jambavan_memory_get', { id });
   await call('jambavan_memory_status', {});
   await call('jambavan_memory_search', { query: 'sky' });
   await call('jambavan_memory_recall', { scope: 'toolcheck' });

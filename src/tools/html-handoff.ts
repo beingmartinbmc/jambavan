@@ -16,7 +16,8 @@ import * as fs   from 'fs';
 import * as path from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 import type { JambavanIndex }  from '../index/indexer';
-import { MemoryStore, type MemoryDoc } from '../memory/store';
+import type { MemoryDoc } from '../memory/store';
+import { MemoryArchive } from '../memory/archive';
 import { harvestRin } from './vibhishana-niti';
 import { projectScope, redactForSharing } from './jambavan';
 
@@ -50,8 +51,8 @@ export function buildHtmlHandoff(
 ): string {
   const scope    = opts.scope ?? projectScope(config);
   const redact   = (value: string) => opts.shareSafe ? redactForSharing(value, config) : value;
-  const store    = new MemoryStore(config.memoryDir);
-  const allDocs  = store.list(scope).sort((a, b) => b.frontmatter.timestamp.localeCompare(a.frontmatter.timestamp));
+  const allDocs  = new MemoryArchive(config).list(scope)
+    .sort((a, b) => b.frontmatter.timestamp.localeCompare(a.frontmatter.timestamp));
 
   const decisions  = allDocs.filter(d => d.frontmatter.type === 'Decision');
   const failures   = allDocs.filter(d => d.frontmatter.type === 'FailureRecord');

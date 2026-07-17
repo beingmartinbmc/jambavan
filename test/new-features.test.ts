@@ -52,17 +52,16 @@ test('MemoryStore: default project memory self-ignores generated Jambavan state'
   }
 });
 
-test('awakenReport: unsafe home fallback blocks memory recall and asks for a root', () => {
-  const { config, cleanup } = mkTempConfig();
+test('awakenReport: unsafe home fallback keeps rootless memory available and blocks code tools', () => {
+  const { config, root, cleanup } = mkTempConfig();
   try {
     config.projectRoot = require('os').homedir();
     config.indexDir = path.join(config.projectRoot, '.jambavan');
-    config.memoryDir = path.join(config.indexDir, 'memory');
+    config.memoryDir = path.join(root, 'global-memory');
     config.rootSource = 'cwd-fallback';
     const report = awakenReport(config, { includeMemories: true });
-    assert.match(report, /project root required/i);
-    assert.match(report, /Stateful MCP tools are blocked/);
-    assert.doesNotMatch(report, /Recalled memories/);
+    assert.match(report, /rootless memory/i);
+    assert.match(report, /code index, graph, impact, file, failure, and handoff tools are blocked/i);
   } finally {
     cleanup();
   }
@@ -305,6 +304,26 @@ test('session handoff round-trip preserves FailureRecord type for failure_search
       assert.match(searchResult, /Do NOT retry/);
     } finally { cleanup2(); }
   } finally { cleanup(); }
+});
+
+test('session handoff round-trip preserves logical collections', () => {
+  const source = mkTempConfig();
+  const destination = mkTempConfig();
+  try {
+    new MemoryStore(source.config.memoryDir).store({
+      title: 'Release checklist',
+      body: 'sign and publish',
+      scope: projectScope(source.config),
+      collection: 'releases',
+    });
+    const handoff = buildSessionHandoffHandlers(source.config).jambavan_session_export({ include_git: false, include_rin: false });
+    buildSessionHandoffHandlers(destination.config).jambavan_session_import({ text: handoff, scope: 'destination' });
+    const imported = new MemoryStore(destination.config.memoryDir).findByTitle('destination', 'Release checklist');
+    assert.equal(imported?.frontmatter.collection, 'releases');
+  } finally {
+    source.cleanup();
+    destination.cleanup();
+  }
 });
 
 test('jambavan_session_export: dirty file list preserves full first-file path (no leading-char truncation)', () => {

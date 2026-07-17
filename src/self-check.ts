@@ -45,18 +45,18 @@ async function main(): Promise<void> {
   });
   assert.match(mined, /Stored 2 mined memories/);
   // Context window keeps the preceding rationale line, not just the keyword line.
-  assert.match(memory.jambavan_memory_recall({ scope: projectScope(config) }), /weighed Postgres vs Mongo/);
-  assert.match(memory.jambavan_memory_recall({ scope: projectScope(config) }), /keep checks tiny/);
+  assert.match(await memory.jambavan_memory_recall({ scope: projectScope(config) }), /weighed Postgres vs Mongo/);
+  assert.match(await memory.jambavan_memory_recall({ scope: projectScope(config) }), /keep checks tiny/);
   assert.match(awakenReport(config), /keep checks tiny/);
   assert.match(awakenReport(config), /Every tool byte spends context/);
   const id = memory.jambavan_memory_store({ scope: 'self-check', title: 'Old fact', body: 'stale' }).match(/ID: (.+)$/)?.[1] ?? '';
   assert.match(memory.jambavan_memory_invalidate({ id, reason: 'newer fact' }), /Invalidated/);
-  assert.doesNotMatch(memory.jambavan_memory_recall({ scope: 'self-check' }), /Old fact/);
-  assert.doesNotMatch(memory.jambavan_memory_search({ query: 'stale', scope: 'self-check' }), /Old fact/);
+  assert.doesNotMatch(await memory.jambavan_memory_recall({ scope: 'self-check' }), /Old fact/);
+  assert.doesNotMatch(await memory.jambavan_memory_search({ query: 'stale', scope: 'self-check' }), /Old fact/);
   // Frontmatter must survive tricky values (colon + embedded quote) via JSON round-trip.
   const trickyTitle = 'GraphQL: "why" and trade-offs';
   memory.jambavan_memory_store({ scope: 'self-check', title: trickyTitle, body: 'x' });
-  assert.match(memory.jambavan_memory_recall({ scope: 'self-check' }), /GraphQL: "why" and trade-offs/);
+  assert.match(await memory.jambavan_memory_recall({ scope: 'self-check' }), /GraphQL: "why" and trade-offs/);
   assert.equal(harvestRin(config).markers.length, 1);
   assert.match(vibhishanaNitiInstructions('full'), /Sankshipta tool use/);
   assert.match(vibhishanaNitiInstructions('full'), /git diff --stat/);

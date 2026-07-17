@@ -110,6 +110,7 @@ async function benchTools(): Promise<ToolTiming[]> {
   env.JAMBAVAN_ROOT = proj;
   env.JAMBAVAN_ALLOW_WRITE = '1';
   env.JAMBAVAN_ALLOW_BASH = '1';
+  env.JAMBAVAN_MEMORY_HOME = path.join(proj, 'global-memory');
 
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -174,6 +175,7 @@ async function benchTools(): Promise<ToolTiming[]> {
 
   const stored = await benchOnce('jambavan_memory_store', { title: 'Bench fact', body: 'The sky is blue.', scope: 'bench' });
   const id = stored.match(/ID:\s*(\S+)/)?.[1] ?? 'bench/bench-fact';
+  await bench('jambavan_memory_get', { id });
   await bench('jambavan_memory_status', {});
   await bench('jambavan_memory_search', { query: 'sky' });
   await bench('jambavan_memory_recall', { scope: 'bench' });

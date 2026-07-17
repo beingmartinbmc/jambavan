@@ -12,7 +12,7 @@ import type { JambavanIndex } from '../index/indexer';
 import { buildSymbolGraph, type GraphNode } from '../knowledge/graph';
 import { buildTestMap, isTestFile, testAssociationsFor } from '../index/test-map';
 import { harvestRin } from './vibhishana-niti';
-import { MemoryStore } from '../memory/store';
+import { MemoryArchive } from '../memory/archive';
 import { projectScope } from './jambavan';
 import { changedSymbols, type ChangedFile } from './changed-symbols';
 import { detectBaseBranch, getChangedFiles } from './review-pack';
@@ -96,8 +96,8 @@ export function buildReviewPackJson(
     }
   }
 
-  const store = new MemoryStore(config.memoryDir);
-  const allFailures = store.list(projectScope(config)).filter(d => d.frontmatter.type === 'FailureRecord');
+  const allFailures = new MemoryArchive(config).list(projectScope(config))
+    .filter(d => d.frontmatter.type === 'FailureRecord');
 
   const files: ReviewPackFile[] = [];
 

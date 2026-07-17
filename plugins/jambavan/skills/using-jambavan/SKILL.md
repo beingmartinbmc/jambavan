@@ -65,10 +65,10 @@ Before refactoring a symbol, use `jambavan_graph_query` to inspect a bounded nei
 
 ### Memory (decisions survive sessions)
 
-Store decisions, architectural choices, and resolved ambiguities as memories. They persist as markdown files under `.jambavan/memory/` by default — human-readable, no memory database. Generated `.jambavan/` state self-ignores in Git unless a user deliberately changes its nested `.gitignore`.
+Store decisions, architectural choices, and resolved ambiguities as memories. They persist as human-readable Markdown in the rootless `~/.jambavan/memory` archive by default; repository code indexes remain under `.jambavan/`. Both generated-state roots self-ignore in Git unless a user deliberately changes their nested `.gitignore`.
 
-- Use `jambavan_memory_store` after making a non-obvious decision. Pass the project scope reported by `jambavan_awaken`; the tool otherwise defaults to `general`.
-- Use `jambavan_memory_mine_session` at session end to distill durable facts, with the same explicit project scope.
+- Use `jambavan_memory_store` after making a non-obvious decision. It defaults to the active Git-derived project scope, or `global` without a root; use `collection` for logical grouping.
+- Use `jambavan_memory_mine_session` at session end to distill durable facts. MemPalace reads require an explicit `provider`; ordinary recall remains Jambavan-only.
 - Use `jambavan_memory_recall` at session start (or rely on `jambavan_awaken`).
 
 ### Failure Memory (check prior dead ends)

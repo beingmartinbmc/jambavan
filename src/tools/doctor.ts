@@ -14,6 +14,7 @@ import * as os from 'os';
 import { ASTParser } from '../index/ast-parser';
 import type { JambavanConfig } from '../config/jambavan.config';
 import { redactForSharing } from './jambavan';
+import { isLegacyMigrationCurrent, legacyManifest, legacyMemoryDir } from '../memory/archive';
 
 const ISSUE_URL = 'https://github.com/beingmartinbmc/jambavan/issues/new';
 
@@ -77,6 +78,15 @@ function checkMemoryDir(config: JambavanConfig): string[] {
   }
 }
 
+function checkLegacyMemory(config: JambavanConfig): string[] {
+  const legacyDir = legacyMemoryDir(config);
+  if (!legacyDir) return [];
+  const count = legacyManifest(legacyDir).count;
+  return isLegacyMigrationCurrent(config, legacyDir)
+    ? [`Legacy memory:    migration current (${count} documents)`]
+    : [`Legacy memory:    ${count} document(s) available read-only; run \`jambavan memory migrate\``];
+}
+
 function checkIgnoreAndCI(config: JambavanConfig): string[] {
   const hasGitignore = fs.existsSync(path.join(config.projectRoot, '.gitignore'));
   const hasCI = fs.existsSync(path.join(config.projectRoot, '.github', 'workflows'));
@@ -93,6 +103,7 @@ export function doctorReport(config: JambavanConfig, ctx: DoctorContext): string
     checkGates(ctx),
     [`Token budget:     ${config.contextTokenBudget} tokens`],
     checkMemoryDir(config),
+    checkLegacyMemory(config),
     checkIgnoreAndCI(config),
   ];
 

@@ -34,7 +34,7 @@ import { loadConfig } from './config/jambavan.config';
 import { detectHost, doctorIssueReport, doctorReport } from './tools/doctor';
 import { JambavanIndex } from './index/indexer';
 import { harvestRin } from './tools/vibhishana-niti';
-import { MemoryStore } from './memory/store';
+import { MemoryArchive } from './memory/archive';
 import { projectScope } from './tools/jambavan';
 import type { BenchmarkReport } from './benchmark';
 import { exportToMemPalace, importFromMemPalace } from './tools/memory-bridge';
@@ -44,6 +44,7 @@ import { startGuiServer, openBrowser } from './tools/gui';
 import { buildReviewPackJson } from './tools/review-pack-json';
 import { buildHtmlHandoff } from './tools/html-handoff';
 import { runEvaluationCommand } from './evaluation';
+import { formatMigrationReport, migrateLegacyMemory } from './memory/migrate';
 import pkg from '../package.json';
 
 const args = process.argv.slice(2);
@@ -57,6 +58,41 @@ if (args[0] === 'evaluate') {
   try {
     process.stdout.write(runEvaluationCommand(args.slice(1)));
     process.exit(0);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
+    process.exit(1);
+  }
+}
+
+if (args[0] === 'memory') {
+  if (args[1] !== 'migrate') {
+    process.stderr.write('Usage: jambavan memory migrate [--root <path>] [--apply]\n');
+    process.exit(2);
+  }
+  try {
+    let root = process.cwd();
+    let apply = false;
+    for (let i = 2; i < args.length; i++) {
+      if (args[i] === '--apply') {
+        if (apply) throw new Error('--apply may be provided only once');
+        apply = true;
+      } else if (args[i] === '--root') {
+        const value = args[++i];
+        if (!value) throw new Error('--root requires a path');
+        root = fs.realpathSync(path.resolve(value));
+        if (!fs.statSync(root).isDirectory()) throw new Error('--root must be a directory');
+      } else {
+        throw new Error(`Unknown memory migrate option: ${args[i]}`);
+      }
+    }
+    const config = loadConfig({
+      projectRoot: root,
+      indexDir: path.join(root, '.jambavan'),
+      rootSource: 'tool-input',
+    });
+    const report = migrateLegacyMemory(config, apply);
+    process.stdout.write(`${formatMigrationReport(report)}\n`);
+    process.exit(report.conflicts.length ? 1 : 0);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : err}\n`);
     process.exit(1);
@@ -267,8 +303,8 @@ if (args[0] === 'badges') {
     ? '🪶 **Rin Ledger:** clean — no tracked debt.'
     : `🪶 **Rin Ledger:** ${markers.length} debt marker${markers.length === 1 ? '' : 's'} tracked, ${noTrigger} with no upgrade trigger.`;
 
-  const store = new MemoryStore(config.memoryDir);
-  const failureCount = store.list(projectScope(config)).filter(d => d.frontmatter.type === 'FailureRecord').length;
+  const failureCount = new MemoryArchive(config).list(projectScope(config))
+    .filter(d => d.frontmatter.type === 'FailureRecord').length;
   const failureMemory = `🛡️ **Failure Memory:** ${failureCount} stored failure record${failureCount === 1 ? '' : 's'}.`;
 
   console.log([benchmarkCard, rinLedger, failureMemory].join('\n'));
@@ -324,6 +360,7 @@ Jambavan exposes these MCP tools to the host model:
   jambavan_impact        Trace changed symbols to inbound callers and associated tests
 
   jambavan_memory_store  Persist a memory as an OKF markdown document
+  jambavan_memory_get    Fetch one complete local memory or MemPalace drawer
   jambavan_memory_search BM25 search across stored memories
   jambavan_memory_recall Load up to 20 active memories by default (session wake-up)
   jambavan_memory_mine_session  Mine durable facts from pasted transcript/log text
@@ -369,6 +406,7 @@ Direct CLI commands
   jambavan evaluate --baseline <json> --jambavan <json> [--format json|markdown]
   jambavan bridge --to mempalace [--out <dir>] [--scope <scope>]
   jambavan bridge --from mempalace [--in <dir>]
+  jambavan memory migrate [--root <path>] [--apply]
   jambavan handoff --write-pr-template [--scope <scope>] [--share-safe] [--post]
   jambavan --version
 
@@ -406,7 +444,7 @@ Environment:
   JAMBAVAN_ROOT=<path>         Override project root (default: auto-detected)
   JAMBAVAN_SCOPE=<slug>        Clone-independent shared memory scope (lowercase letters, numbers, hyphens)
   JAMBAVAN_TOKEN_BUDGET=<n>    Max tokens in jambavan_context results (default: 8000)
-  JAMBAVAN_MEMORY_HOME=<path>  Shared memory palace path (default: .jambavan/memory)
+  JAMBAVAN_MEMORY_HOME=<path>  Root-independent memory archive (default: ~/.jambavan/memory)
   JAMBAVAN_DEV_MODE=<level>    Default Vibhishana Niti level: lite | full | ultra (default: full)
   JAMBAVAN_ALLOW_WRITE=1       Advertise write_file, patch_file, and jambavan_sankshipta
   JAMBAVAN_ALLOW_BASH=1        Advertise bash
@@ -423,7 +461,7 @@ Environment:
 // The MCP server is launched with NO sub-command (hosts run `npx -y jambavan`).
 // Any other first token is an unknown command and must be rejected — never
 // silently fall through to the server (that hid the removed `daemon` command).
-const CLI_COMMANDS = new Set(['gui', 'evaluate', 'review-pack', 'html-handoff', 'bridge', 'badges', 'doctor', '--help', '-h', '--version']);
+const CLI_COMMANDS = new Set(['gui', 'evaluate', 'review-pack', 'html-handoff', 'bridge', 'memory', 'badges', 'doctor', '--help', '-h', '--version']);
 const command = args[0];
 if (command !== undefined && !CLI_COMMANDS.has(command)) {
   if (command === 'daemon') {

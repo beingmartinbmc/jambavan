@@ -127,3 +127,19 @@ test('MemoryStore: concurrent stores produce distinct log entries without corrup
     }
   } finally { cleanup(); }
 });
+
+test('MemoryStore: read-only instances reject every mutation', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    const writable = new MemoryStore(config.memoryDir);
+    const id = writable.store({ title: 'Keep', body: 'unchanged', scope: 'proj' });
+    const readOnly = new MemoryStore(config.memoryDir, { readOnly: true });
+    assert.throws(() => readOnly.store({ title: 'No', body: 'write', scope: 'proj' }), /read-only/);
+    assert.throws(() => readOnly.invalidate(id), /read-only/);
+    assert.throws(() => readOnly.delete(id), /read-only/);
+    assert.throws(() => readOnly.deleteByScope('proj'), /read-only/);
+    assert.equal(writable.get(id)?.body.trim(), 'unchanged');
+  } finally {
+    cleanup();
+  }
+});

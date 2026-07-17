@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { boundedInt } from '../tools/registry';
 
 // rin: host launch env only; add opt-in project config when users need persistent settings.
@@ -25,14 +26,17 @@ function findProjectRoot(): { root: string; foundProject: boolean } {
 
 /** Where projectRoot came from — surfaced by jambavan_doctor to explain root confusion. */
 export type RootSource = 'env' | 'client-roots' | 'tool-input' | 'cwd-project' | 'cwd-fallback';
+export type MemorySource = 'default' | 'env' | 'override';
 
 export interface JambavanConfig {
   /** Absolute path to the project being indexed/served */
   projectRoot: string;
   /** Where the .jambavan/ index directory lives */
   indexDir: string;
-  /** Where OKF memory documents live (defaults to <indexDir>/memory; set JAMBAVAN_MEMORY_HOME for shared palace) */
+  /** Root-independent OKF archive (defaults to ~/.jambavan/memory). */
   memoryDir: string;
+  /** Where memoryDir came from; omitted only by older programmatic callers. */
+  memorySource?: MemorySource;
   /** Token budget for context assembly (injected into tool results) */
   contextTokenBudget: number;
   /** File / directory patterns to skip during indexing */
@@ -58,11 +62,17 @@ export function loadConfig(overrides: Partial<JambavanConfig> = {}): JambavanCon
   const scope = overrides.scope ?? process.env.JAMBAVAN_SCOPE;
 
   const indexDir = path.join(projectRoot, '.jambavan');
+  const envMemoryDir = process.env.JAMBAVAN_MEMORY_HOME;
+  const memoryDir = overrides.memoryDir ?? envMemoryDir ?? defaultMemoryDir();
+  const memorySource: MemorySource = overrides.memoryDir !== undefined
+    ? 'override'
+    : envMemoryDir !== undefined ? 'env' : 'default';
 
   return {
     projectRoot,
     indexDir,
-    memoryDir: process.env.JAMBAVAN_MEMORY_HOME ?? path.join(indexDir, 'memory'),
+    memoryDir,
+    memorySource,
     contextTokenBudget: boundedInt(process.env.JAMBAVAN_TOKEN_BUDGET, {
       min: 100, max: 1_000_000, fallback: 8_000,
     }),
@@ -97,11 +107,12 @@ export function applyResolvedRoot(
 
   config.projectRoot = newRoot;
   config.indexDir = path.join(newRoot, '.jambavan');
-  if (!process.env.JAMBAVAN_MEMORY_HOME) {
-    config.memoryDir = path.join(config.indexDir, 'memory');
-  }
   config.rootSource = source;
   return true;
+}
+
+export function defaultMemoryDir(): string {
+  return path.join(os.homedir(), '.jambavan', 'memory');
 }
 
 export function isUnsafeFallbackRoot(config: JambavanConfig): boolean {

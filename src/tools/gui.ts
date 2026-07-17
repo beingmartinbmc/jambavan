@@ -20,7 +20,7 @@ import type { JambavanConfig } from '../config/jambavan.config';
 import type { JambavanIndex }  from '../index/indexer';
 import { buildSymbolGraph, type KnowledgeGraph, type GraphNode } from '../knowledge/graph';
 import { harvestRin } from './vibhishana-niti';
-import { MemoryStore } from '../memory/store';
+import { MemoryArchive } from '../memory/archive';
 import { projectScope } from './jambavan';
 
 export interface GuiFailure {
@@ -83,7 +83,7 @@ export function buildGuiData(config: JambavanConfig, index: JambavanIndex): GuiD
   const rin = markers.map(m => ({ file: m.file, line: m.line, comment: m.comment, hasUpgrade: m.hasUpgrade }));
 
   const scope    = projectScope(config);
-  const allDocs  = new MemoryStore(config.memoryDir).list(scope);
+  const allDocs  = new MemoryArchive(config).list(scope);
   const failures: GuiFailure[] = allDocs
     .filter(d => d.frontmatter.type === 'FailureRecord')
     .map(d => ({

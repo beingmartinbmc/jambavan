@@ -7,7 +7,7 @@
  *
  * OKF spec: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
  *
- * Bundle layout (inside .jambavan/memory/):
+ * Bundle layout (inside the configured archive, ~/.jambavan/memory by default):
  *   <scope>/             ← scope is a slug (project name, "general", etc.)
  *     <id>.md            ← one OKF concept document per memory
  *   index.md             ← auto-generated bundle directory
@@ -29,6 +29,7 @@ export interface MemoryFrontmatter {
   description: string;
   tags:        string[];
   scope:       string;           // maps to bundle subdirectory
+  collection:  string;           // logical room within a scope
   timestamp:   string;           // ISO 8601
   source?:     string;           // optional: which file/session this came from
   supersedes?: string;           // optional: older OKF concept ID this memory replaces
@@ -55,6 +56,7 @@ export function serializeFrontmatter(fm: MemoryFrontmatter): string {
     `description: ${JSON.stringify(fm.description)}`,
     `tags: ${tags}`,
     `scope: ${fm.scope}`,
+    `collection: ${fm.collection}`,
     `timestamp: ${fm.timestamp}`,
   ];
   if (fm.source) lines.push(`source: ${JSON.stringify(fm.source)}`);
@@ -94,6 +96,7 @@ export function parseFrontmatter(raw: string): { frontmatter: MemoryFrontmatter;
   const title       = get('title') ?? '';
   const description = get('description') ?? '';
   const scope       = get('scope') ?? 'general';
+  const collection  = slugify(get('collection') ?? '', collectionForType(type ?? 'Memory'));
   const timestamp   = get('timestamp') ?? new Date().toISOString();
   const source      = get('source');
   const supersedes  = get('supersedes');
@@ -103,7 +106,7 @@ export function parseFrontmatter(raw: string): { frontmatter: MemoryFrontmatter;
 
   return {
     frontmatter: {
-      type, title, description, tags, scope, timestamp,
+      type, title, description, tags, scope, collection, timestamp,
       ...(source ? { source } : {}),
       ...(supersedes ? { supersedes } : {}),
       ...(invalidated ? { invalidated } : {}),
@@ -143,17 +146,60 @@ function bm25Score(
   return score;
 }
 
+export function collectionForType(type: string): string {
+  if (type === 'Decision') return 'decisions';
+  if (type === 'FailureRecord') return 'failures';
+  return 'general';
+}
+
+export function searchMemoryDocs(
+  query: string,
+  docs: MemoryDoc[],
+  limit = 10,
+): Array<{ doc: MemoryDoc; score: number }> {
+  if (docs.length === 0) return [];
+  const qTerms = tokenize(query);
+  if (qTerms.length === 0) return docs.slice(0, limit).map(doc => ({ doc, score: 0 }));
+
+  const corpus = docs.map(doc => {
+    const { frontmatter: fm, body } = doc;
+    return tokenize([
+      ...Array(3).fill(fm.title),
+      ...Array(2).fill(fm.tags.join(' ')),
+      ...Array(2).fill(fm.description),
+      ...Array(2).fill(fm.collection),
+      body,
+    ].join(' '));
+  });
+  const n = corpus.length;
+  const avgL = corpus.reduce((sum, tokens) => sum + tokens.length, 0) / n || 1;
+  const df = new Map<string, number>();
+  for (const tokens of corpus) {
+    for (const term of new Set(tokens)) df.set(term, (df.get(term) ?? 0) + 1);
+  }
+
+  return docs.map((doc, i) => ({
+    doc,
+    score: bm25Score(qTerms, corpus[i], avgL, df, n),
+  }))
+    .filter(result => result.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 export class MemoryStore {
   private bundleRoot: string;
+  private readonly readOnly: boolean;
 
-  constructor(memoryDir: string) {
+  constructor(memoryDir: string, opts: { readOnly?: boolean } = {}) {
     this.bundleRoot = memoryDir;
-    if (path.basename(memoryDir) === 'memory' && path.basename(path.dirname(memoryDir)) === '.jambavan') {
+    this.readOnly = opts.readOnly === true;
+    if (!opts.readOnly && path.basename(memoryDir) === 'memory' && path.basename(path.dirname(memoryDir)) === '.jambavan') {
       ensureGeneratedStateDir(path.dirname(memoryDir));
     }
-    fs.mkdirSync(this.bundleRoot, { recursive: true });
+    if (!opts.readOnly) fs.mkdirSync(this.bundleRoot, { recursive: true });
   }
 
   // ── Write ───────────────────────────────────────────────────────────────────
@@ -170,9 +216,11 @@ export class MemoryStore {
     description?: string;
     tags?:       string[];
     scope?:      string;
+    collection?: string;
     source?:     string;
     supersedes?: string;
   }): string {
+    this.assertWritable();
     const scope = slugify(opts.scope ?? 'general');
     let slug  = slugify(opts.title);
 
@@ -205,6 +253,7 @@ export class MemoryStore {
       description: opts.description ?? opts.title,
       tags:        opts.tags        ?? [],
       scope,
+      collection:  slugify(opts.collection ?? '', collectionForType(opts.type ?? 'Memory')),
       timestamp:   new Date().toISOString(),
       ...(opts.source ? { source: opts.source } : {}),
       ...(opts.supersedes ? { supersedes: opts.supersedes } : {}),
@@ -217,15 +266,50 @@ export class MemoryStore {
     return id;
   }
 
+  /** Import an already-parsed document without losing temporal metadata. */
+  importDoc(doc: MemoryDoc, targetScope = doc.frontmatter.scope): string {
+    this.assertWritable();
+    const scope = slugify(targetScope);
+    const sourceSlug = doc.id.slice(doc.id.lastIndexOf('/') + 1);
+    const slug = slugify(sourceSlug);
+    const scopeDir = path.join(this.bundleRoot, scope);
+    fs.mkdirSync(scopeDir, { recursive: true });
+
+    const filePath = path.join(scopeDir, `${slug}.md`);
+    if (fs.existsSync(filePath)) {
+      const existing = this.readDoc(filePath);
+      if (existing && existing.frontmatter.title !== doc.frontmatter.title) {
+        throw new Error(`Cannot import ${scope}/${slug}: target ID belongs to a different title.`);
+      }
+    }
+
+    const id = `${scope}/${slug}`;
+    const frontmatter: MemoryFrontmatter = {
+      ...doc.frontmatter,
+      scope,
+      collection: slugify(doc.frontmatter.collection, collectionForType(doc.frontmatter.type)),
+    };
+    const tmpPath = `${filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmpPath, `${serializeFrontmatter(frontmatter)}\n\n${doc.body.trimEnd()}\n`, 'utf8');
+    fs.renameSync(tmpPath, filePath);
+    this.appendLog({ action: 'migrate', id, title: frontmatter.title });
+    this.rebuildScopeIndex(scope);
+    return id;
+  }
+
+  findByTitle(scope: string, title: string): MemoryDoc | undefined {
+    return this.list(scope, { includeInvalidated: true }).find(doc => doc.frontmatter.title === title);
+  }
+
   // ── Read ────────────────────────────────────────────────────────────────────
 
   get(id: string): MemoryDoc | null {
-    const safeId = id.split('/').map(slugify).join('/');
+    const safeId = id.split('/').map(part => slugify(part)).join('/');
     const filePath = path.join(this.bundleRoot, `${safeId}.md`);
     return this.readDoc(filePath);
   }
 
-  list(scope?: string, opts: { includeInvalidated?: boolean } = {}): MemoryDoc[] {
+  list(scope?: string, opts: { includeInvalidated?: boolean; collection?: string } = {}): MemoryDoc[] {
     if (scope) {
       const scopeDir = path.join(this.bundleRoot, slugify(scope));
       if (!fs.existsSync(scopeDir)) return [];
@@ -244,49 +328,18 @@ export class MemoryStore {
 
   // ── Search ──────────────────────────────────────────────────────────────────
 
-  search(query: string, opts: { scope?: string; limit?: number; includeInvalidated?: boolean } = {}): Array<{ doc: MemoryDoc; score: number }> {
-    const all = this.list(opts.scope, { includeInvalidated: opts.includeInvalidated });
-    if (all.length === 0) return [];
-
-    const limit = opts.limit ?? 10;
-    const qTerms = tokenize(query);
-    if (qTerms.length === 0) return all.slice(0, limit).map(doc => ({ doc, score: 0 }));
-
-    // Build corpus: title (x3 weight) + tags (x2) + description (x2) + body
-    const corpus = all.map(doc => {
-      const { frontmatter: fm, body } = doc;
-      const text = [
-        ...Array(3).fill(fm.title),
-        ...Array(2).fill(fm.tags.join(' ')),
-        ...Array(2).fill(fm.description),
-        body,
-      ].join(' ');
-      return tokenize(text);
+  search(query: string, opts: { scope?: string; collection?: string; limit?: number; includeInvalidated?: boolean } = {}): Array<{ doc: MemoryDoc; score: number }> {
+    const all = this.list(opts.scope, {
+      includeInvalidated: opts.includeInvalidated,
+      collection: opts.collection,
     });
-
-    const n    = corpus.length;
-    const avgL = corpus.reduce((s, t) => s + t.length, 0) / n || 1;
-
-    // Document-frequency map
-    const df = new Map<string, number>();
-    for (const tokens of corpus) {
-      for (const term of new Set(tokens)) df.set(term, (df.get(term) ?? 0) + 1);
-    }
-
-    const scored = all.map((doc, i) => ({
-      doc,
-      score: bm25Score(qTerms, corpus[i], avgL, df, n),
-    }));
-
-    return scored
-      .filter(x => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+    return searchMemoryDocs(query, all, opts.limit ?? 10);
   }
 
   // ── Invalidate / delete ─────────────────────────────────────────────────────
 
   invalidate(id: string, reason?: string): boolean {
+    this.assertWritable();
     const doc = this.get(id);
     if (!doc) return false;
     doc.frontmatter.invalidated = true;
@@ -298,7 +351,8 @@ export class MemoryStore {
   }
 
   delete(id: string): boolean {
-    const safeId = id.split('/').map(slugify).join('/');
+    this.assertWritable();
+    const safeId = id.split('/').map(part => slugify(part)).join('/');
     const filePath = path.join(this.bundleRoot, `${safeId}.md`);
     if (!fs.existsSync(filePath)) return false;
     const doc = this.readDoc(filePath);
@@ -311,6 +365,7 @@ export class MemoryStore {
   }
 
   deleteByScope(scope: string): number {
+    this.assertWritable();
     const scopeDir = path.join(this.bundleRoot, slugify(scope));
     if (!fs.existsSync(scopeDir)) return 0;
     const docs = this.docsInDir(scopeDir, { includeInvalidated: true });
@@ -321,16 +376,22 @@ export class MemoryStore {
 
   // ── Status ──────────────────────────────────────────────────────────────────
 
-  status(): { totalMemories: number; scopes: Array<{ scope: string; count: number }> } {
+  status(): { totalMemories: number; scopes: Array<{ scope: string; count: number; collections: Array<{ collection: string; count: number }> }> } {
     if (!fs.existsSync(this.bundleRoot)) return { totalMemories: 0, scopes: [] };
 
-    const scopes: Array<{ scope: string; count: number }> = [];
+    const scopes: Array<{ scope: string; count: number; collections: Array<{ collection: string; count: number }> }> = [];
     let total = 0;
 
     for (const entry of fs.readdirSync(this.bundleRoot, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const count = this.docsInDir(path.join(this.bundleRoot, entry.name)).length;
-      scopes.push({ scope: entry.name, count });
+      const docs = this.docsInDir(path.join(this.bundleRoot, entry.name));
+      const count = docs.length;
+      const grouped = new Map<string, number>();
+      for (const doc of docs) grouped.set(doc.frontmatter.collection, (grouped.get(doc.frontmatter.collection) ?? 0) + 1);
+      const collections = [...grouped.entries()]
+        .map(([collection, collectionCount]) => ({ collection, count: collectionCount }))
+        .sort((a, b) => a.collection.localeCompare(b.collection));
+      scopes.push({ scope: entry.name, count, collections });
       total += count;
     }
 
@@ -383,22 +444,27 @@ export class MemoryStore {
     return { id, frontmatter: parsed.frontmatter, body: parsed.body, filePath };
   }
 
-  private docsInDir(dir: string, opts: { includeInvalidated?: boolean } = {}): MemoryDoc[] {
+  private assertWritable(): void {
+    if (this.readOnly) throw new Error('Memory store is read-only.');
+  }
+
+  private docsInDir(dir: string, opts: { includeInvalidated?: boolean; collection?: string } = {}): MemoryDoc[] {
     if (!fs.existsSync(dir)) return [];
     return fs.readdirSync(dir)
       .filter(f => f.endsWith('.md') && f !== 'index.md')
       .map(f => this.readDoc(path.join(dir, f)))
       .filter((d): d is MemoryDoc => d !== null)
-      .filter(d => opts.includeInvalidated || !d.frontmatter.invalidated);
+      .filter(d => opts.includeInvalidated || !d.frontmatter.invalidated)
+      .filter(d => !opts.collection || d.frontmatter.collection === slugify(opts.collection));
   }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function slugify(text: string): string {
+function slugify(text: string, fallback?: string): string {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || crypto.randomBytes(4).toString('hex');
+    .slice(0, 80) || fallback || crypto.randomBytes(4).toString('hex');
 }

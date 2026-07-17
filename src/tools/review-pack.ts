@@ -15,7 +15,7 @@ import type { JambavanIndex } from '../index/indexer';
 import { buildSymbolGraph, type GraphNode } from '../knowledge/graph';
 import { buildTestMap, formatTestAssociations, isTestFile, testAssociationsFor } from '../index/test-map';
 import { harvestRin } from './vibhishana-niti';
-import { MemoryStore } from '../memory/store';
+import { MemoryArchive } from '../memory/archive';
 import { projectScope } from './jambavan';
 import { changedSymbols, parseChangedRanges, parseNameStatus, type ChangedFile } from './changed-symbols';
 import { MAX_READ_BYTES } from './read-file';
@@ -162,8 +162,8 @@ export function buildReviewPackHandlers(config: JambavanConfig, getIndex: () => 
       const { markers: rinMarkers } = harvestRin(config);
       const rinByFile = new Set(rinMarkers.map(m => m.file.replace(/^\.\//, '')));
 
-      const store = new MemoryStore(config.memoryDir);
-      const failures = store.list(projectScope(config)).filter(d => d.frontmatter.type === 'FailureRecord');
+      const failures = new MemoryArchive(config).list(projectScope(config))
+        .filter(d => d.frontmatter.type === 'FailureRecord');
 
       const nodeById = new Map(graph.nodes.map(n => [n.id, n]));
       const symbolNodeKey = (n: GraphNode) => `${n.filePath}\0${n.label}\0${n.line}`;

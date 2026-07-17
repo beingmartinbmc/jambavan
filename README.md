@@ -23,7 +23,7 @@ Jambavan is a local-first [Model Context Protocol](https://modelcontextprotocol.
 - failure records plus a repeat-failure guard for the opt-in shell tool
 - branch review context with explicit limits
 
-It makes no LLM calls, sends no telemetry, and uploads no code. It does write its index, cache, memories, and failure records to local `.jambavan/` state. Source-mutating and shell MCP tools are off by default.
+It makes no LLM calls, sends no telemetry, and uploads no code. Code indexes stay in each repository's `.jambavan/`; the rootless memory archive defaults to `~/.jambavan/memory`. Source-mutating and shell MCP tools are off by default.
 
 ## Quick start
 
@@ -57,7 +57,7 @@ In the Ramayana, before Hanuman's leap across the ocean to Lanka, Jambavan remin
 Jambavan gives a host model a local project state layer:
 
 - **Codebase awareness** - AST-aware symbols, FTS5/BM25-ranked context with a LIKE fallback, optional tests/recent diff, and a lightweight code graph.
-- **Durable memory** - human-readable project memories under `.jambavan/memory/`.
+- **Durable memory** - human-readable OKF Markdown under the rootless `~/.jambavan/memory` archive, organized as scope → collection → memory.
 - **Failure memory** - searchable failure records; the opt-in `bash` tool records redacted failures and can guard an exact unresolved repeat.
 - **Review packs** - branch-aware review context: touched files, symbols, callers, tests, `rin` debt, and past failures.
 - **Prompt compression** - deterministic prose shortening that protects fenced/inline code, URLs, paths, versions, and environment-variable tokens.
@@ -147,7 +147,7 @@ jambavan_watch { "action": "start" }
 jambavan_context { "query": "<task-specific identifier or question>" }
 ```
 
-`jambavan_doctor` checks project-root detection, parser backends, gates, memory paths, CI hints, and index/watcher status. When root resolution remains at `cwd-fallback`, stateful tools fail closed. `jambavan_awaken.root` or `jambavan_index.root` can bind an existing absolute directory inside that fallback root. Use `JAMBAVAN_ROOT` and reconnect when the repository is outside it or another source already fixed the root.
+`jambavan_doctor` checks project-root detection, parser backends, gates, archive/legacy-memory state, CI hints, and index/watcher status. When root resolution remains at `cwd-fallback`, all `jambavan_memory_*` tools still work; repository-bound index, graph, impact, file, failure-record, shell, and handoff operations fail closed. `jambavan_awaken.root` or `jambavan_index.root` can bind an existing absolute directory inside that fallback root.
 
 ## Activate, Update, And Uninstall
 
@@ -170,7 +170,7 @@ To uninstall, run `claude mcp remove jambavan` or `codex mcp remove jambavan`; f
 |---|---|---|
 | **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_diagnostics`, `jambavan_doctor` | AST-backed symbol index, token-budgeted context, bounded extracted call neighbors, tests, recent diff, root health, and live watching. |
 | **Bridge** | `jambavan_graph_report`, `jambavan_graph_query`, `jambavan_graph_path`, `jambavan_impact` | Focused code graph navigation plus changed-symbol inbound impact and test analysis. |
-| **Memory** | `jambavan_memory_store`, `jambavan_memory_search`, `jambavan_memory_recall`, `jambavan_memory_mine_session`, `jambavan_memory_invalidate`, `jambavan_memory_delete`, `jambavan_memory_status` | Durable local markdown memory. Decisions survive across sessions and hosts. |
+| **Memory** | `jambavan_memory_store`, `jambavan_memory_get`, `jambavan_memory_search`, `jambavan_memory_recall`, `jambavan_memory_mine_session`, `jambavan_memory_invalidate`, `jambavan_memory_delete`, `jambavan_memory_status` | Rootless local Markdown memory, logical collections, and explicit read-only MemPalace federation. |
 | **Failure memory** | `jambavan_failure_store`, `jambavan_failure_search` | Structured failure records plus an exact-command repeat guard in the opt-in `bash` tool. |
 | **Session continuity** | `jambavan_session_export`, `jambavan_session_import` | Portable handoff docs for new chats, new tools, or teammates. |
 | **Review pack** | `jambavan_review_pack` | Bounded branch review context: touched symbols, extracted caller candidates, tests, `rin` debt, and past failures. |
@@ -252,13 +252,15 @@ Next check: run the focused auth test with fake timers enabled.
 5. `jambavan_context { "query": "<task-specific query>" }` - pull ranked, token-budgeted context before touching unfamiliar code.
 6. `root_cause` / `verify_gate` / `strategy_plan` when debugging, claiming completion, or planning multi-step work.
 7. Run the smallest relevant check.
-8. `jambavan_memory_store { "title": "...", "body": "...", "scope": "<project scope>" }` or `jambavan_memory_mine_session { "text": "...", "scope": "<project scope>" }` - persist durable context under the scope reported by `jambavan_awaken`.
+8. `jambavan_memory_store { "title": "...", "body": "...", "collection": "decisions" }` - persist durable context. Scope defaults to the active Git-derived project scope, or `global` in a rootless session.
 9. `jambavan_failure_store` - record dead ends with root cause and do-not-retry advice.
 10. `jambavan_session_export {}` - hand off; import with `jambavan_session_import { "text": "..." }`.
 
 ## Privacy And Safety
 
-**No LLM calls. No telemetry. No code upload.** Jambavan stores indexes, cache, memory, and failure records under `.jambavan/` by default. It creates `.jambavan/.gitignore` with `*` so generated state stays out of Git status without editing the repository's tracked `.gitignore`. Those operational writes still occur when source mutation is disabled.
+**No LLM calls. No telemetry. No code upload.** Jambavan stores code indexes and caches in the active repository's `.jambavan/`, and stores memory/failure documents in `~/.jambavan/memory` by default. Both generated-state roots receive a nested `.gitignore` with `*`. These operational writes still occur when source mutation is disabled.
+
+MemPalace is never contacted during ordinary Jambavan recall, automatic context enrichment, or awakening. It is started only when a memory read explicitly sets `provider: "mempalace"` or `provider: "all"`. Jambavan exposes only five validated MemPalace read capabilities, filters the child environment, and never installs MemPalace, initializes a palace, downloads a model, or exposes its write/update/delete tools. MemPalace itself remains separately installed software with its own local configuration.
 
 Source-mutating and shell MCP tools are not advertised unless you opt in:
 
@@ -327,7 +329,7 @@ In Claude Code this can show up as `-32000` / `failed to reconnect` because the 
 
 ### Root Confusion
 
-At startup, `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from the server process cwd, and a supported single file-URI MCP `roots/list` result may replace that cwd result. When the resulting source is `cwd-fallback`, stateful tools fail closed. `jambavan_awaken.root` or `jambavan_index.root` may then bind an existing absolute directory inside the current fallback root; use `JAMBAVAN_ROOT` and reconnect when the repository is outside it. A tool root cannot override an already fixed `env`, `client-roots`, `cwd-project`, or `tool-input` root.
+At startup, `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from the server process cwd, and a supported single file-URI MCP `roots/list` result may replace that cwd result. When the resulting source is `cwd-fallback`, memory tools remain available against the global archive while repository-bound tools fail closed. `jambavan_awaken.root` or `jambavan_index.root` may then bind an existing absolute directory inside the current fallback root; use `JAMBAVAN_ROOT` and reconnect when the repository is outside it. Root rebinding never moves or changes the memory archive.
 
 Run `jambavan_doctor` or `npx jambavan doctor`. Healthy MCP output should show the target repo with `source: env`, `source: client-roots`, `source: tool-input`, or `source: cwd-project`.
 
@@ -369,6 +371,7 @@ npx jambavan review-pack --base origin/main --format json --max-files 200
 npx jambavan html-handoff --out /tmp/handoff.html --share-safe
 npx jambavan gui
 npx jambavan badges
+npx jambavan memory migrate --root /path/to/repository
 ```
 
 ## Badges Command
@@ -381,16 +384,44 @@ npx jambavan badges
 
 The lines summarize context-token savings for the current repo, Rin Ledger debt markers (`// rin:` comments), and Failure Memory (`FailureRecord` memories in the default project scope). The command makes no network calls. If you want rendered badge images, use a [shields.io static badge](https://shields.io/badges/static-badge) URL explicitly; README renders will then fetch from shields.io's CDN.
 
-## Memory Bridge
+## Rootless Memory And MemPalace
 
-`jambavan bridge` converts Jambavan memories to or from a portable MemPalace-shaped markdown folder tree. The bridge itself makes no network call.
+The default archive is `~/.jambavan/memory/<scope>/<slug>.md`. `scope` identifies a project or topic; `collection` is frontmatter used as a logical room without changing the physical `scope/slug` ID layout. Missing collections in older documents are inferred as `decisions` for `Decision`, `failures` for `FailureRecord`, and `general` otherwise.
+
+With a repository root, the default scope is derived without exposing its raw remote or path: validated `JAMBAVAN_SCOPE`, otherwise normalized Git remote path plus the repository's initial commit, otherwise initial commit plus basename, otherwise a path hash for non-Git directories. Without a root, writes default to `global`.
+
+Pre-global archives remain readable at `<repo>/.jambavan/memory` when the default archive is active. Legacy `general` and old path-derived project scopes appear under the active Git-derived scope, results are labelled `storage: legacy`, global duplicates win, and the legacy documents are never edited. Migrate explicitly and non-destructively:
+
+```bash
+# Preview only
+npx jambavan memory migrate --root /path/to/repository
+
+# Copy after a conflict-free preview; the legacy store is retained
+npx jambavan memory migrate --root /path/to/repository --apply
+```
+
+For direct MemPalace reads, install the official package separately (Jambavan does not install it):
+
+```bash
+uv tool install mempalace==3.5.0
+```
+
+Then opt in per call. Jambavan maps `scope → wing` and `collection → room`; `provider: "all"` keeps BM25 and vector results in separate sections rather than comparing their scores.
+
+```text
+jambavan_memory_search { "query": "release decision", "provider": "mempalace", "scope": "project", "collection": "decisions" }
+jambavan_memory_get { "id": "drawer-id", "provider": "mempalace" }
+jambavan_memory_status { "provider": "all" }
+```
+
+The older portable bridge remains available for offline interchange and makes no network call:
 
 ```bash
 npx jambavan bridge --to mempalace [--out <dir>] [--scope <scope>]
 npx jambavan bridge --from mempalace [--in <dir>]
 ```
 
-`--to mempalace` writes one file per memory under `<dir>/<wing>/<room>/<title>.md`. Hand that tree to a host model and ask it to file drawers with MemPalace tools. `--from mempalace` imports the same shape back into Jambavan.
+`--to mempalace` writes one file per memory under `<dir>/<wing>/<room>/<title>.md`, mapping collection to room. `--from mempalace` imports the same shape back into Jambavan.
 
 ## PR And Session Handoffs
 
@@ -432,8 +463,9 @@ The page has three tabs: code graph, Rin Debt, and Failures. It includes search,
 | Env var | Default | Description |
 |---|---|---|
 | `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
-| `JAMBAVAN_SCOPE` | path-derived slug + hash | Optional validated clone-independent scope override; when unset, Jambavan derives a slug and hash from the absolute project path |
-| `JAMBAVAN_MEMORY_HOME` | `<indexDir>/memory` | Where memory docs live |
+| `JAMBAVAN_SCOPE` | Git-derived scope | Validated clone-independent override; otherwise remote path + initial commit, initial commit + basename, or a non-Git path hash |
+| `JAMBAVAN_MEMORY_HOME` | `~/.jambavan/memory` | Complete override for the root-independent OKF archive |
+| `JAMBAVAN_MEMPALACE_COMMAND` | `mempalace-mcp` | Executable used only for explicit read-only MemPalace provider calls |
 | `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max approximate `cl100k_base` tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite`, `full`, `ultra`) |
 | `JAMBAVAN_ALLOW_WRITE` | off | Registers `write_file`, `patch_file`, and `jambavan_sankshipta` |
@@ -444,7 +476,7 @@ The page has three tabs: code graph, Rin Debt, and Failures. It includes search,
 | `JAMBAVAN_MAX_OUTPUT_CHARS` | `100000` | Global cap on tool output |
 | `JAMBAVAN_MAX_READ_BYTES` | `5242880` | Max file size `read_file` loads |
 
-`JAMBAVAN_SCOPE` controls the project scope used by awakening, context-memory enrichment, failure memory, and handoffs. Manual `jambavan_memory_store` and `jambavan_memory_mine_session` calls default to `general`; pass the project scope explicitly when those memories should be recalled with the project.
+`JAMBAVAN_SCOPE` controls the active project scope used by awakening, automatic context enrichment, failure memory, handoffs, and default memory writes. In a rootless session, default writes use `global`. Any explicit tool-level `scope` wins.
 
 ## Community
 

@@ -17,6 +17,7 @@ import { execFileSync } from 'child_process';
 // Isolated project root, created and exported before the server module loads.
 const proj = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'jambavan-dispatch-')));
 process.env.JAMBAVAN_ROOT = proj;
+process.env.JAMBAVAN_MEMORY_HOME = path.join(proj, 'global-memory');
 delete process.env.JAMBAVAN_ALLOW_WRITE;
 delete process.env.JAMBAVAN_ALLOW_BASH;
 
@@ -107,7 +108,9 @@ test('memory tools store, search, recall, status, and delete through the dispatc
   });
   assert.equal(store.isError, false);
   assert.match(store.text, /Stored.*dispatch\//);
+  const id = store.text.match(/ID:\s*(\S+)/)?.[1] ?? 'dispatch/dispatch-decision';
 
+  assert.match((await callText('jambavan_memory_get', { id })).text, /Dispatch decision/);
   assert.match((await callText('jambavan_memory_search', { query: 'synchronous', scope: 'dispatch' })).text, /Dispatch decision/);
   assert.match((await callText('jambavan_memory_recall', { scope: 'dispatch' })).text, /Dispatch decision/);
   assert.match((await callText('jambavan_memory_status', {})).text, /Total memories/);

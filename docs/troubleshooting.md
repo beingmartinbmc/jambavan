@@ -58,6 +58,10 @@ At startup, `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from the server pr
 
 Run `jambavan_doctor` or `npx jambavan doctor`. Healthy MCP output should show the target repo with `source: env`, `source: client-roots`, `source: tool-input`, or `source: cwd-project`.
 
+### One server, many workspaces
+
+Some hosts — Cursor among them — run a single MCP server process for every open window, so the root is shared rather than per-workspace. A root bound through `jambavan_awaken.root` or `jambavan_index.root` can therefore be re-pointed to another directory inside the same fallback root, which lets a second workspace claim the server; rebinding stops the watcher and closes the open index first. A root from `JAMBAVAN_ROOT`, `roots/list`, or the server's own cwd is a real signal and stays fixed, so `root is already fixed by ...` means the answer is `JAMBAVAN_ROOT` on a per-project MCP entry (giving each repo its own server), not a retry.
+
 ## Degraded parsers
 
 `jambavan_doctor` reports each language as `tree-sitter` or `regex fallback`. A regex fallback that carries an error means a native binding failed to load (usually an ABI mismatch after a Node upgrade) and AST accuracy is reduced. Run `npm rebuild`, then re-check.

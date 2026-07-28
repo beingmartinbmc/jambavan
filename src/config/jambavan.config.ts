@@ -43,6 +43,8 @@ export interface JambavanConfig {
   ignore: string[];
   /** How projectRoot was determined. Mutated in place by applyResolvedRoot(). */
   rootSource: RootSource;
+  /** The original cwd-fallback root, kept so a tool-input root stays re-pointable within it. */
+  fallbackRoot?: string;
   /** Optional clone-independent memory scope from JAMBAVAN_SCOPE. */
   scope?: string;
 }
@@ -81,6 +83,7 @@ export function loadConfig(overrides: Partial<JambavanConfig> = {}): JambavanCon
       '*.lock', '*.log', '.DS_Store', 'coverage', '.next', '.nuxt',
     ],
     rootSource,
+    ...(rootSource === 'cwd-fallback' ? { fallbackRoot: projectRoot } : {}),
     ...overrides,
     ...(scope !== undefined ? { scope: validateScope(scope) } : {}),
   };
@@ -136,12 +139,18 @@ export function resolveToolRoot(config: JambavanConfig, value: unknown): string 
   if (!fs.statSync(resolved).isDirectory()) {
     throw new Error(`root is not a directory: ${value}`);
   }
-  if (config.rootSource !== 'cwd-fallback' && resolved !== config.projectRoot) {
+  // A tool-input root is only as trustworthy as the model that supplied it, so
+  // re-pointing it is no weaker than the first bind — and hosts that share one
+  // server across every workspace (Cursor) are unusable without it. env,
+  // client-roots, and cwd-project are real signals and stay immutable.
+  const repointable = config.rootSource === 'cwd-fallback' || config.rootSource === 'tool-input';
+  if (!repointable && resolved !== config.projectRoot) {
     throw new Error(`root is already fixed by ${config.rootSource}: ${config.projectRoot}`);
   }
-  const relative = path.relative(config.projectRoot, resolved);
+  const boundary = config.fallbackRoot ?? config.projectRoot;
+  const relative = path.relative(boundary, resolved);
   if (relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error(`root must be inside the current fallback root: ${config.projectRoot}`);
+    throw new Error(`root must be inside the current fallback root: ${boundary}`);
   }
   return resolved;
 }

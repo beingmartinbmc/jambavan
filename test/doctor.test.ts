@@ -120,6 +120,41 @@ test('resolveToolRoot: accepts only an existing directory inside an unresolved f
   }
 });
 
+// Cursor hosts one server process for every workspace, so a model-supplied root
+// must stay re-pointable or the first project to bind locks out all the others.
+test('resolveToolRoot: re-points a tool-input root inside the fallback root, but never overrides a host signal', async () => {
+  await withEnv({ JAMBAVAN_ROOT: undefined }, () => {
+    const { config, root, cleanup } = mkTempConfig();
+    try {
+      const projectA = path.join(root, 'project-a');
+      const projectB = path.join(root, 'project-b');
+      fs.mkdirSync(projectA);
+      fs.mkdirSync(projectB);
+
+      config.rootSource = 'cwd-fallback';
+      config.fallbackRoot = root;
+      assert.equal(applyResolvedRoot(config, resolveToolRoot(config, projectA), 'tool-input'), true);
+      assert.equal(config.projectRoot, projectA);
+
+      // A second workspace sharing this process must be able to claim project B.
+      assert.equal(applyResolvedRoot(config, resolveToolRoot(config, projectB), 'tool-input'), true);
+      assert.equal(config.projectRoot, projectB);
+      assert.equal(config.indexDir, path.join(projectB, '.jambavan'));
+
+      // Re-pointing still cannot escape the original fallback root.
+      assert.throws(() => resolveToolRoot(config, path.dirname(root)), /inside the current fallback root/);
+
+      // Roots that came from a real host signal remain immutable.
+      for (const source of ['env', 'client-roots', 'cwd-project'] as const) {
+        config.rootSource = source;
+        assert.throws(() => resolveToolRoot(config, projectA), /already fixed by/);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 test('unsafe unresolved fallback is explicit and tool binding marks the resolved source', async () => {
   await withEnv({ JAMBAVAN_ROOT: undefined, JAMBAVAN_MEMORY_HOME: undefined }, () => {
     const { config, root, cleanup } = mkTempConfig();

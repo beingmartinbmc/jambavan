@@ -402,7 +402,7 @@ const NATIVE_TOOLS: Tool[] = [
       type:       'object' as const,
       properties: {
         include_memories: { type: 'boolean', description: 'Include recent memories for this project scope (default: true).' },
-        root: { type: 'string', description: 'Existing absolute directory inside the current unresolved fallback root. Cannot override an already fixed env, client-roots, cwd-project, or tool-input binding.' },
+        root: { type: 'string', description: 'Existing absolute directory inside the current fallback root. Re-points a previous tool-input root (needed by hosts that share one server across workspaces); cannot override an env, client-roots, or cwd-project binding.' },
       },
       required: [],
     },
@@ -418,7 +418,7 @@ const NATIVE_TOOLS: Tool[] = [
     inputSchema: {
       type:       'object' as const,
       properties: {
-        root: { type: 'string', description: 'Existing absolute directory inside the current unresolved fallback root. Cannot override an already fixed env, client-roots, cwd-project, or tool-input binding.' },
+        root: { type: 'string', description: 'Existing absolute directory inside the current fallback root. Re-points a previous tool-input root (needed by hosts that share one server across workspaces); cannot override an env, client-roots, or cwd-project binding.' },
       },
       required:   [],
     },

@@ -131,7 +131,7 @@ silently degrade into a delete.
 | `jambavan_memory_store` | Persist an OKF Markdown document in the global archive; accepts optional scope and collection |
 | `jambavan_memory_read` | One read path: `id` fetches one document, `query` runs BM25 search, neither recalls the most recent. Local by default; optional explicit `mempalace` or sectioned `all` provider |
 | `jambavan_memory_mine_session` | Deterministically mine durable items from required `text` |
-| `jambavan_memory_forget` | `mode: invalidate` marks a memory superseded and keeps history; `mode: delete` (default) removes it, or wipes a scope with `delete_scope` |
+| `jambavan_memory_forget` | `mode: invalidate` (default) marks a memory superseded and keeps history; `mode: delete` permanently removes it, or wipes a scope with `delete_scope`. The default is deliberately the reversible one, so a caller that omits `mode` cannot destroy a document |
 | `jambavan_memory_status` | Local scope/collection counts by default; optional explicit MemPalace taxonomy/status |
 
 All core memory tools are rootless. Repository-bound index, graph, impact, file, shell, failure-record, and handoff operations remain blocked while root resolution is an unsafe fallback. MemPalace never participates in automatic awakening or context enrichment: `provider` defaults to `jambavan` on every federated read.

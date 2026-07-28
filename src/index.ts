@@ -358,7 +358,7 @@ Jambavan exposes these MCP tools to the host model:
   jambavan_memory_store  Persist a memory as an OKF markdown document
   jambavan_memory_read   Fetch by id, BM25 search by query, or recall the most recent
   jambavan_memory_mine_session  Mine durable facts from pasted transcript/log text
-  jambavan_memory_forget Invalidate (keeps history) or delete a memory, or wipe a scope
+  jambavan_memory_forget Invalidate a memory (default, keeps history), or delete with mode=delete
   jambavan_memory_status Active-memory statistics by scope
 
   jambavan_failure_store Store a failure record; bash failures are also recorded automatically

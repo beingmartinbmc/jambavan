@@ -34,7 +34,7 @@ Use this sequence for a new project session:
 | Fetch one memory by ID | `jambavan_memory_read` | `id` |
 | Wake up with active memories | `jambavan_memory_read` | optional `scope`, `limit` (default 20) |
 | Distill session into memories | `jambavan_memory_mine_session` | `text`, optional `scope` |
-| Retire a memory | `jambavan_memory_forget` | `id`, `mode: invalidate` or `delete` |
+| Retire a memory | `jambavan_memory_forget` | `id`; `mode` defaults to the reversible `invalidate`, pass `delete` to destroy |
 | Record a dead end | `jambavan_failure_store` | `command`, `symptom`, optional `root_cause` |
 | Check before retrying | `jambavan_failure_search` | `query`, optional `scope` |
 | Hand off to next session | `jambavan_session_handoff` | optional `scope`, `share_safe` |

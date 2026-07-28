@@ -97,14 +97,14 @@ export const MEMORY_TOOL_DEFS = [
   {
     name: 'jambavan_memory_forget',
     description: [
-      'Retire a memory. mode=invalidate marks it superseded but keeps the document for temporal history;',
-      'mode=delete (the default) removes it. Provide id for one memory, or scope with delete_scope: true to wipe a scope.',
+      'Retire a memory. mode=invalidate (the default) marks it superseded but keeps the document for temporal history;',
+      'mode=delete permanently removes it. Provide id for one memory, or scope with delete_scope: true to wipe a scope.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
         id:           { type: 'string',  description: 'OKF concept ID, e.g. "general/old-decision".' },
-        mode:         { type: 'string',  enum: ['delete', 'invalidate'], description: 'Defaults to delete.' },
+        mode:         { type: 'string',  enum: ['delete', 'invalidate'], description: 'Defaults to invalidate, which is reversible. Pass delete only to destroy the document.' },
         reason:       { type: 'string',  description: 'Reason appended to the body when mode=invalidate.' },
         scope:        { type: 'string',  description: 'Scope to wipe (requires delete_scope: true).' },
         delete_scope: { type: 'boolean', description: 'Set true to delete all memories in scope.' },
@@ -403,7 +403,10 @@ export function buildMemoryHandlers(config: JambavanConfig, mempalace = new MemP
     },
 
     jambavan_memory_forget(input: Record<string, unknown>): string {
-      const mode = String(input['mode'] ?? 'delete');
+      // Defaults to the reversible mode: a caller who omits `mode` gets an
+      // invalidate, never an irreversible delete. `delete_scope` is a wipe, so
+      // it only ever means delete.
+      const mode = String(input['mode'] ?? (input['delete_scope'] === true ? 'delete' : 'invalidate'));
       if (mode === 'invalidate') return handlers.jambavan_memory_invalidate(input);
       if (mode !== 'delete') return `Error: unknown mode "${mode}". Use delete or invalidate.`;
       return handlers.jambavan_memory_delete(input);

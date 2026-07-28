@@ -21,6 +21,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { Transport }       from '@modelcontextprotocol/sdk/shared/transport.js';
 import {
   CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
   ListToolsRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -35,7 +37,8 @@ import {
   isUnsafeFallbackRoot,
   resolveToolRoot,
 } from '../config/jambavan.config';
-import { aliasToolsFor, resolveToolAlias } from './tool-aliases';
+import { resolveToolCall } from './tool-aliases';
+import { PROMPTS, PROMPT_TOOL_HANDLERS, getPrompt } from './prompts';
 import { detectHost, doctorIssueReport, doctorReport } from '../tools/doctor';
 import { ToolRegistry, boundedInt, capOutput } from '../tools/registry';
 import { createReadFileTool }            from '../tools/read-file';
@@ -44,11 +47,10 @@ import { createBashTool }                from '../tools/bash';
 import { createSearchTool, createListFilesTool } from '../tools/search';
 import { JambavanIndex, type SymbolSearchResult } from '../index/indexer';
 import { FileWatcher }                   from '../index/watcher';
-import { ASTParser }                     from '../index/ast-parser';
 import { ContextAssembler }              from '../context/assembler';
 import type { ContextChunk }             from '../context/assembler';
 import { countTokens, truncateToTokenBudget } from '../context/token-counter';
-import { vibhishanaNitiInstructions, harvestRin, formatRinReport } from '../tools/vibhishana-niti';
+import { harvestRin, formatRinReport }   from '../tools/vibhishana-niti';
 import { MEMORY_TOOL_DEFS, buildMemoryHandlers } from '../tools/memory';
 import {
   FAILURE_MEMORY_TOOL_DEFS,
@@ -71,10 +73,6 @@ import {
   graphQuery,
   graphReport,
 } from '../knowledge/graph';
-import { moolKaaranProtocol } from '../tools/mool-kaaran';
-import { pramanProtocol } from '../tools/praman';
-import { yuktiProtocol } from '../tools/yukti';
-import { vibhaajanProtocol } from '../tools/vibhaajan';
 import { getRecentSymbolChanges, formatRecentChanges } from '../context/diff-enricher';
 import { buildTestMap, formatTestAssociations, testAssociationsFor } from '../index/test-map';
 import { MemoryArchive } from '../memory/archive';
@@ -84,13 +82,10 @@ let rootResolutionIssue: string | undefined;
 
 const ROOTLESS_SAFE_TOOLS = new Set([
   'jambavan_awaken',
-  'jambavan_diagnostics',
   'jambavan_doctor',
-  'jambavan_vibhishana_niti',
-  'jambavan_mool_kaaran',
-  'jambavan_praman',
-  'jambavan_yukti',
-  'jambavan_vibhaajan',
+  // Counsel protocols are static text with no repository access, so they stay
+  // available when the project root is unresolved.
+  ...Object.keys(PROMPT_TOOL_HANDLERS),
   ...MEMORY_TOOL_DEFS.map(def => def.name),
 ]);
 
@@ -165,6 +160,27 @@ export class RootResolutionGate {
     await this.ready;
     if (this.error) throw this.error;
   }
+}
+
+/**
+ * Resolve which graph operation a call wants. An explicit `action` wins (a
+ * deprecated graph_* alias always pins one); otherwise the arguments decide,
+ * so `{ from, to }` means path and `{ query }` means query without ceremony.
+ * Returns undefined for an unrecognised explicit action so the caller can
+ * fail loudly instead of silently running a report.
+ */
+export function graphAction(
+  input: Record<string, unknown>,
+): 'report' | 'query' | 'path' | undefined {
+  const explicit = String(input['action'] ?? '');
+  if (explicit) {
+    return explicit === 'report' || explicit === 'query' || explicit === 'path'
+      ? explicit
+      : undefined;
+  }
+  if (input['from'] && input['to']) return 'path';
+  if (input['query']) return 'query';
+  return 'report';
 }
 
 function graphTruncationNote(totalSymbols: number, symbolLimit: number): string {
@@ -465,27 +481,7 @@ const NATIVE_TOOLS: Tool[] = [
     },
   },
   {
-    name: 'jambavan_vibhishana_niti',
-    description: [
-      'Activate Vibhishana Niti in the current session: efficient, truthful senior-dev rules.',
-      'Returns a concise ruleset: YAGNI-first, stdlib before dependencies, shortest working diff, root-cause fixes.',
-      'Levels: "lite" — build what\'s asked, name the leaner option; "full" — the default ladder; "ultra" — deletion extremist.',
-      'Inject the returned text into your system prompt or next message.',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {
-        mode: {
-          type:        'string',
-          enum:        ['lite', 'full', 'ultra'],
-          description: 'Intensity level. Defaults to "full".',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'jambavan_rin_mochan',
+    name: 'jambavan_debt_ledger',
     description: [
       'Harvest every rin marker (lines marked with a ceiling and upgrade path) from the project into a debt ledger.',
       'Groups findings by file and flags any marker with no upgrade trigger — those are the ones that silently rot.',
@@ -498,9 +494,9 @@ const NATIVE_TOOLS: Tool[] = [
     },
   },
   {
-    name: 'jambavan_sankshipta',
+    name: 'jambavan_compress_prompt',
     description: [
-      'Compress markdown/prose into sankshipta (concise) form for fewer prompt tokens.',
+      'Compress a markdown/prose file into a shorter form for fewer prompt tokens.',
       'Preserves fenced code, inline code, URLs, file paths, commands-ish tokens, versions, and env vars verbatim.',
       'Defaults to in-place write with <file>.original.md backup; set in_place=false to preview only.',
     ].join(' '),
@@ -515,75 +511,34 @@ const NATIVE_TOOLS: Tool[] = [
     },
   },
   {
-    name: 'jambavan_graph_report',
+    name: 'jambavan_graph',
     description: [
-      'Build a lightweight knowledge graph from the current code index and return hub nodes plus edge confidence notes.',
-      'Call jambavan_index first. Inferred ambiguous-name edges are excluded unless include_inferred=true.',
-      'Defaults to the first 5000 indexed symbols; higher symbol_limit costs more.',
+      'Navigate the code graph built from the current index. Call jambavan_index first.',
+      'action=report lists hub nodes and edge-confidence notes; action=query finds matching nodes and their BFS neighbors;',
+      'action=path finds the shortest route between two symbols. Action is inferred from the arguments when omitted.',
+      'Ambiguous same-name edges are excluded unless include_inferred=true.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
-        max_nodes:    { type: 'number', description: 'Max hub nodes to show (default: 10).' },
-        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000; higher values cost more).' },
+        action:       { type: 'string', enum: ['report', 'query', 'path'], description: 'Inferred from arguments when omitted.' },
+        query:        { type: 'string', description: 'action=query: symbol/file text to find.' },
+        from:         { type: 'string', description: 'action=path: start symbol/file.' },
+        to:           { type: 'string', description: 'action=path: end symbol/file.' },
+        direction:    { type: 'string', enum: ['inbound', 'outbound', 'both'], description: 'action=query: traverse callers, callees, or both (default: both).' },
+        max_nodes:    { type: 'number', description: 'action=report: max hub nodes (default: 10).' },
+        budget:       { type: 'number', description: 'action=query: max output tokens (default: 2000).' },
+        symbol_limit: { type: 'number', description: 'Max indexed symbols to graph (default: 5000; higher costs more).' },
         include_inferred: { type: 'boolean', description: 'Include ambiguous same-name inferred edges (default: false).' },
       },
       required: [],
     },
   },
   {
-    name: 'jambavan_graph_query',
-    description: [
-      'Query the current knowledge graph: find matching nodes and BFS neighbors within a token budget.',
-      'Call jambavan_index first. Uses extracted edges by default; set include_inferred=true to include ambiguous same-name candidates.',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {
-        query:        { type: 'string', description: 'Symbol/file text to find in the graph.' },
-        budget:       { type: 'number', description: 'Max output tokens (default: 2000).' },
-        symbol_limit: { type: 'number', description: 'Max symbols in the query-focused graph neighborhood (default: 5000).' },
-        direction:    { type: 'string', enum: ['inbound', 'outbound', 'both'], description: 'Traverse callers, callees, or both (default: both).' },
-        include_inferred: { type: 'boolean', description: 'Include ambiguous same-name inferred edges (default: false).' },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'jambavan_graph_path',
-    description: [
-      'Find the shortest path between two graph nodes/symbols using BFS over extracted edges.',
-      'Call jambavan_index first. Set include_inferred=true to opt into ambiguous same-name edges.',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {
-        from:         { type: 'string', description: 'Start symbol/file query.' },
-        to:           { type: 'string', description: 'End symbol/file query.' },
-        symbol_limit: { type: 'number', description: 'Max symbols in the query-focused graph neighborhood (default: 5000).' },
-        include_inferred: { type: 'boolean', description: 'Include ambiguous same-name inferred edges (default: false).' },
-      },
-      required: ['from', 'to'],
-    },
-  },
-  {
-    name: 'jambavan_diagnostics',
-    description: [
-      'Show which languages are backed by tree-sitter (full AST) vs regex fallback,',
-      'plus current index statistics.',
-      'Useful for verifying the parser setup after a fresh install.',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {},
-      required:   [],
-    },
-  },
-  {
     name: 'jambavan_doctor',
     description: [
-      'One-shot environment health check: root detection source, parser backends, write/bash tool gates,',
-      'token budget, memory dir writability, .gitignore/CI presence, and index/watcher status.',
+      'One-shot environment health check: root detection source, tree-sitter vs regex parser backends,',
+      'write/bash tool gates, token budget, memory dir writability, .gitignore/CI presence, and index/watcher status.',
       'Call this first when something feels off (e.g. context results look like the wrong project) —',
       'it catches the most common cause: the MCP host resolving the wrong project root.',
     ].join(' '),
@@ -624,85 +579,18 @@ const NATIVE_TOOLS: Tool[] = [
     description: def.description,
     inputSchema: def.inputSchema,
   })) as unknown as Tool[]),
-  // ── Counsel tools (discipline protocols) ─────────────────────────────────
-  {
-    name: 'jambavan_mool_kaaran',
-    description: [
-      'Return a structured root-cause investigation protocol.',
-      'Call BEFORE attempting to fix any bug, test failure, or unexpected behavior.',
-      'Prevents guess-and-check thrashing by enforcing observe → compare → hypothesize → fix phases.',
-      'If attempts_so_far >= 3, returns an escalation protocol (architecture problem likely).',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {
-        symptom:          { type: 'string', description: 'What went wrong — the error message, unexpected behavior, or test failure.' },
-        context:          { type: 'string', description: 'Additional context: file paths, recent changes, what you were doing.' },
-        attempts_so_far:  { type: 'number', description: 'How many fix attempts have already failed (triggers escalation at 3+).' },
-      },
-      required: ['symptom'],
-    },
-  },
-  {
-    name: 'jambavan_praman',
-    description: [
-      'Return a verification gate protocol demanding fresh evidence before claiming completion.',
-      'Call BEFORE asserting that tests pass, a build succeeds, a bug is fixed, or requirements are met.',
-      'Forces: identify proof command → run it → paste output → only then make the claim.',
-      'Types: tests, build, fix, requirements, general.',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {
-        claim: { type: 'string', description: 'What you are about to assert is done or passing.' },
-        type:  { type: 'string', enum: ['tests', 'build', 'fix', 'requirements', 'general'], description: 'Kind of verification needed (default: general).' },
-      },
-      required: ['claim'],
-    },
-  },
-  {
-    name: 'jambavan_yukti',
-    description: [
-      'Return a strategic approach protocol for planning multi-step work.',
-      'Call BEFORE starting implementation of any non-trivial task.',
-      'Returns phased instructions scaled to task size: small (just do it), medium (2-3 approaches + sequence), large (decompose + checkpoint).',
-      'Auto-infers scale from task description if not provided.',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {
-        task:        { type: 'string', description: 'What you need to accomplish.' },
-        constraints: { type: 'string', description: 'Known constraints: time, compatibility, dependencies, scope limits.' },
-        scale:       { type: 'string', enum: ['small', 'medium', 'large'], description: 'Task scale. If omitted, auto-inferred from task description.' },
-      },
-      required: ['task'],
-    },
-  },
-  {
-    name: 'jambavan_vibhaajan',
-    description: [
-      'Return a parallel work decomposition protocol for splitting a task into independent units.',
-      'Call when a task has sub-units that can proceed independently (different files, no shared state).',
-      'Returns: boundary identification, independence verification, contract definition, merge sequencing.',
-      'Works for both multi-agent parallelism and solo context-switching with clean commits.',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {
-        task:        { type: 'string', description: 'What you need to decompose into parallel work units.' },
-        units:       { type: 'number', description: 'Target number of parallel units (optional — protocol helps you find the right number).' },
-        constraints: { type: 'string', description: 'Known constraints: shared state, file overlap, ordering requirements.' },
-      },
-      required: ['task'],
-    },
-  },
 ];
 
+// The counsel protocols (root_cause, verify_gate, strategy_plan,
+// decompose_task, dev_rules) are deliberately absent: they are static text
+// with no repository access, so they ship as MCP prompts instead of tools.
+// They remain dispatchable by name for hosts and skills that call them
+// directly — see PROMPT_TOOL_HANDLERS and tool-aliases.ts.
 function advertisedTools(): Tool[] {
   const native = allowWrite
     ? NATIVE_TOOLS
-    : NATIVE_TOOLS.filter(tool => tool.name !== 'jambavan_sankshipta');
-  return [...native, ...aliasToolsFor(native), ...registry.definitions().map(toMcpTool)];
+    : NATIVE_TOOLS.filter(tool => tool.name !== 'jambavan_compress_prompt');
+  return [...native, ...registry.definitions().map(toMcpTool)];
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -711,7 +599,7 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
   const server = new Server(
     { name: 'jambavan', version: pkg.version },
     {
-      capabilities: { tools: {} },
+      capabilities: { tools: {}, prompts: {} },
       instructions: 'Call jambavan_awaken first; it reports the resolved project root and current operating protocol.',
     },
   );
@@ -722,9 +610,28 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
   // ── tools/list ─────────────────────────────────────────────────────────────
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    // jambavan_sankshipta mutates files in-place by default, so it is a write
-    // tool: keep it off the advertised list unless writes are explicitly enabled.
+    // jambavan_compress_prompt mutates files in-place by default, so it is a
+    // write tool: keep it off the advertised list unless writes are enabled.
     return { tools: advertisedTools() };
+  });
+
+  // ── prompts/list + prompts/get ─────────────────────────────────────────────
+  // The counsel protocols live here rather than in tools/list so they cost the
+  // host nothing per request. They need no project root and no index.
+
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({ prompts: PROMPTS }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const def = getPrompt(request.params.name);
+    if (!def) throw new Error(`Unknown prompt: ${request.params.name}`);
+    const args = (request.params.arguments ?? {}) as Record<string, string>;
+    return {
+      description: def.prompt.description,
+      messages: [{
+        role: 'user' as const,
+        content: { type: 'text' as const, text: capOutput(def.render(args)) },
+      }],
+    };
   });
 
   // ── tools/call ─────────────────────────────────────────────────────────────
@@ -754,8 +661,9 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
     request: { params: { name: string; arguments?: Record<string, unknown> } },
   ): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }> {
     const { name: requestedName, arguments: args = {} } = request.params;
-    const name = resolveToolAlias(requestedName);
-    const input = args as Record<string, unknown>;
+    // Retired pre-2.0 names still dispatch here; they carry any action/mode the
+    // merged tool cannot infer from arguments alone.
+    const { name, input } = resolveToolCall(requestedName, args as Record<string, unknown>);
 
     if (name === 'jambavan_awaken' || name === 'jambavan_index') {
       try {
@@ -911,117 +819,85 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
       };
     }
 
-    // ── jambavan_vibhishana_niti ──────────────────────────────────────────────
-    if (name === 'jambavan_vibhishana_niti') {
-      const mode = input['mode'] as string | undefined;
-      return { content: [{ type: 'text', text: vibhishanaNitiInstructions(mode) }] };
+    // ── Counsel protocols (also exposed as MCP prompts) ───────────────────────
+    const counsel = PROMPT_TOOL_HANDLERS[name];
+    if (counsel) {
+      return { content: [{ type: 'text', text: counsel(input) }] };
     }
 
-    // ── jambavan_rin_mochan ───────────────────────────────────────────────────
-    if (name === 'jambavan_rin_mochan') {
+    // ── jambavan_debt_ledger ──────────────────────────────────────────────────
+    if (name === 'jambavan_debt_ledger') {
       const { markers } = harvestRin(config);
       return { content: [{ type: 'text', text: formatRinReport(markers, config.projectRoot) }] };
     }
 
-    // ── jambavan_sankshipta ────────────────────────────────────────────────────
-    if (name === 'jambavan_sankshipta') {
+    // ── jambavan_compress_prompt ──────────────────────────────────────────────
+    if (name === 'jambavan_compress_prompt') {
       // Mutating tool: refuse unless writes are enabled, even if the name is guessed.
       if (!allowWrite) {
         return {
-          content: [{ type: 'text', text: 'jambavan_sankshipta writes files and is disabled. Set JAMBAVAN_ALLOW_WRITE=1 to enable it.' }],
+          content: [{ type: 'text', text: 'jambavan_compress_prompt writes files and is disabled. Set JAMBAVAN_ALLOW_WRITE=1 to enable it.' }],
           isError: true,
         };
       }
       try {
         return { content: [{ type: 'text', text: sankshiptaFile(input, config) }] };
       } catch (err) {
-        return { content: [{ type: 'text', text: `Sankshipta failed: ${err}` }], isError: true };
+        return { content: [{ type: 'text', text: `Prompt compression failed: ${err}` }], isError: true };
       }
     }
 
-    // ── jambavan_graph_report ─────────────────────────────────────────────────
-    if (name === 'jambavan_graph_report') {
+    // ── jambavan_graph (report | query | path) ────────────────────────────────
+    if (name === 'jambavan_graph') {
       const index = loadExistingIndex();
       if (!index) {
         return { content: [{ type: 'text', text: 'Index not built yet. Call jambavan_index first.' }], isError: true };
       }
-      const max = boundedInt(input['max_nodes'], { min: 1, max: 100, fallback: 10 });
-      const symbolLimit = boundedInt(input['symbol_limit'], { min: 100, max: 20_000, fallback: 5000 });
-      const graph = buildSymbolGraph(index.getAllSymbols(symbolLimit), config, index.getAllReExports());
-      const stats = index.stats();
-      return {
-        content: [{
-          type: 'text',
-          text: graphReport(graph, max, input['include_inferred'] === true)
-            + graphTruncationNote(stats.symbols, symbolLimit),
-        }],
-      };
-    }
-
-    // ── jambavan_graph_query / jambavan_graph_path ───────────────────────────────
-    if (name === 'jambavan_graph_query' || name === 'jambavan_graph_path') {
-      const index = loadExistingIndex();
-      if (!index) {
-        return { content: [{ type: 'text', text: 'Index not built yet. Call jambavan_index first.' }], isError: true };
+      const action = graphAction(input);
+      if (!action) {
+        return {
+          content: [{ type: 'text', text: 'Error: unknown action. Use report, query (with query), or path (with from and to).' }],
+          isError: true,
+        };
       }
       const symbolLimit = boundedInt(input['symbol_limit'], { min: 100, max: 20_000, fallback: 5000 });
-      const queries = name === 'jambavan_graph_query'
+      const includeInferred = input['include_inferred'] === true;
+
+      if (action === 'report') {
+        const max = boundedInt(input['max_nodes'], { min: 1, max: 100, fallback: 10 });
+        const graph = buildSymbolGraph(index.getAllSymbols(symbolLimit), config, index.getAllReExports());
+        return {
+          content: [{
+            type: 'text',
+            text: graphReport(graph, max, includeInferred)
+              + graphTruncationNote(index.stats().symbols, symbolLimit),
+          }],
+        };
+      }
+
+      const queries = action === 'query'
         ? [String(input['query'] ?? '')]
         : [String(input['from'] ?? ''), String(input['to'] ?? '')];
       const neighborhood = buildGraphNeighborhood(index, config, queries, symbolLimit);
-      const graph = neighborhood.graph;
       const direction = ['inbound', 'outbound', 'both'].includes(String(input['direction']))
         ? String(input['direction']) as 'inbound' | 'outbound' | 'both'
         : 'both';
-      const includeInferred = input['include_inferred'] === true;
-      const text = name === 'jambavan_graph_query'
+      const text = action === 'query'
         ? graphQuery(
-            graph,
+            neighborhood.graph,
             String(input['query'] ?? ''),
             boundedInt(input['budget'], { min: 100, max: 20_000, fallback: 2000 }),
             direction,
             includeInferred,
           )
-        : graphPath(graph, String(input['from'] ?? ''), String(input['to'] ?? ''), includeInferred);
+        : graphPath(neighborhood.graph, String(input['from'] ?? ''), String(input['to'] ?? ''), includeInferred);
       const note = neighborhood.truncated
         ? `\n\nWarning: focused graph expansion stopped at ${neighborhood.symbolCount} symbols. Results may be incomplete.`
         : `\n\nFocused graph neighborhood: ${neighborhood.symbolCount} symbols.`;
       return { content: [{ type: 'text', text: text + note }] };
     }
 
-    // ── jambavan_diagnostics ───────────────────────────────────────────────────
-    if (name === 'jambavan_diagnostics') {
-      const backends = ASTParser.diagnostics();
-      const tsBackends    = backends.filter(b => b.backend === 'tree-sitter').map(b => b.language);
-      const regexBackends = backends.filter(b => b.backend === 'regex').map(b => b.language);
-      // A regex fallback that carries an error means a native binding failed to
-      // load (e.g. ABI mismatch) — that silently degrades AST accuracy, so make
-      // it loud here instead of letting it masquerade as a healthy fallback.
-      const degraded = backends.filter(b => b.error);
-
-      const indexStats = loadExistingIndex()?.stats();
-      const lines = [
-        '## Jambavan Diagnostics',
-        '',
-        `Tree-sitter (${tsBackends.length}): ${tsBackends.join(', ') || 'none'}`,
-        `Regex fallback (${regexBackends.length}): ${regexBackends.join(', ') || 'none'}`,
-        ...(degraded.length
-          ? ['', '⚠ Native parser DEGRADED to regex — AST accuracy reduced (run `npm rebuild`):',
-             ...degraded.map(b => `  ${b.language}: ${b.error}`)]
-          : []),
-        '',
-        indexStats
-          ? `Index: ${indexStats.files.totalFiles} files · ${indexStats.symbols} symbols · ${indexStats.failures.length} failures`
-          : 'Index: not built (call jambavan_index)',
-        ...(indexStats?.failures.map(f => `  ⚠ ${f.filePath}: ${f.error}`) ?? []),
-        `Watcher: ${fileWatcher?.getStatus().running ? 'running' : 'stopped'} (in-process)`,
-        `Project root: ${config.projectRoot} (source: ${config.rootSource})`,
-      ];
-
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
-    }
-
-    // ── jambavan_doctor ────────────────────────────────────────────────────────
+    // ── jambavan_doctor (absorbed jambavan_diagnostics in 2.0) ────────────────
     if (name === 'jambavan_doctor') {
       const index = loadExistingIndex();
       const context = {
@@ -1048,23 +924,14 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
     if (name === 'jambavan_memory_store') {
       return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_store(input) }] };
     }
-    if (name === 'jambavan_memory_get') {
-      return memoryReadResult(() => memoryHandlers.jambavan_memory_get(input));
+    if (name === 'jambavan_memory_read') {
+      return memoryReadResult(() => memoryHandlers.jambavan_memory_read(input));
     }
-    if (name === 'jambavan_memory_search') {
-      return memoryReadResult(() => memoryHandlers.jambavan_memory_search(input));
-    }
-    if (name === 'jambavan_memory_recall') {
-      return memoryReadResult(() => memoryHandlers.jambavan_memory_recall(input));
+    if (name === 'jambavan_memory_forget') {
+      return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_forget(input) }] };
     }
     if (name === 'jambavan_memory_mine_session') {
       return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_mine_session(input) }] };
-    }
-    if (name === 'jambavan_memory_invalidate') {
-      return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_invalidate(input) }] };
-    }
-    if (name === 'jambavan_memory_delete') {
-      return { content: [{ type: 'text', text: memoryHandlers.jambavan_memory_delete(input) }] };
     }
     if (name === 'jambavan_memory_status') {
       return memoryReadResult(() => memoryHandlers.jambavan_memory_status(input));
@@ -1078,12 +945,9 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
       return { content: [{ type: 'text', text: failureHandlers.jambavan_failure_search(input) }] };
     }
 
-    // ── Session handoff tools ────────────────────────────────────────────────
-    if (name === 'jambavan_session_export') {
-      return { content: [{ type: 'text', text: sessionHandoffHandlers.jambavan_session_export(input) }] };
-    }
-    if (name === 'jambavan_session_import') {
-      return { content: [{ type: 'text', text: sessionHandoffHandlers.jambavan_session_import(input) }] };
+    // ── Session handoff tool ─────────────────────────────────────────────────
+    if (name === 'jambavan_session_handoff') {
+      return { content: [{ type: 'text', text: sessionHandoffHandlers.jambavan_session_handoff(input) }] };
     }
 
     // ── Review pack tool ─────────────────────────────────────────────────────
@@ -1092,20 +956,6 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
     }
     if (name === 'jambavan_impact') {
       return { content: [{ type: 'text', text: impactHandlers.jambavan_impact(input) }] };
-    }
-
-    // ── Counsel tools (discipline protocols) ─────────────────────────────────
-    if (name === 'jambavan_mool_kaaran') {
-      return { content: [{ type: 'text', text: moolKaaranProtocol(input) }] };
-    }
-    if (name === 'jambavan_praman') {
-      return { content: [{ type: 'text', text: pramanProtocol(input) }] };
-    }
-    if (name === 'jambavan_yukti') {
-      return { content: [{ type: 'text', text: yuktiProtocol(input) }] };
-    }
-    if (name === 'jambavan_vibhaajan') {
-      return { content: [{ type: 'text', text: vibhaajanProtocol(input) }] };
     }
 
     // ── Delegated: registry tools ────────────────────────────────────────────

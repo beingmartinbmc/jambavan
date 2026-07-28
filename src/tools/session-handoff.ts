@@ -64,39 +64,23 @@ function extractNextPath(doc: MemoryDoc): string | undefined {
 
 export const SESSION_HANDOFF_TOOL_DEFS = [
   {
-    name: 'jambavan_session_export',
+    name: 'jambavan_session_handoff',
     description: [
-      'Export current session context as a portable handoff document.',
-      'Contains: recent memories, rin debt markers, and git status.',
-      'Use to transfer context to a new session, different host, or a colleague.',
-      'The output is self-contained markdown — paste it into a new session to resume.',
+      'Move session context between sessions, hosts, or people as one self-contained markdown document',
+      'containing recent memories, rin debt markers, and git status.',
+      'Omit text to export; pass text to import it back (idempotent — re-importing creates no duplicates).',
     ].join(' '),
     inputSchema: {
       type: 'object' as const,
       properties: {
-        scope:         { type: 'string',  description: 'Memory scope to export. Defaults to project scope.' },
-        include_rin:   { type: 'boolean', description: 'Include rin debt markers (default: true).' },
-        include_git:   { type: 'boolean', description: 'Include git status/recent commits (default: true).' },
-        max_memories:  { type: 'number',  description: 'Max memories to include (default: 15).' },
-        share_safe:     { type: 'boolean', description: 'Redact local paths/secrets and omit git-sensitive data for sharing (default: false).' },
+        text:          { type: 'string',  description: 'Handoff markdown to import. Omit to export instead.' },
+        scope:         { type: 'string',  description: 'Memory scope. Defaults to project scope.' },
+        include_rin:   { type: 'boolean', description: 'Export: include rin debt markers (default: true).' },
+        include_git:   { type: 'boolean', description: 'Export: include git status/recent commits (default: true).' },
+        max_memories:  { type: 'number',  description: 'Export: max memories to include (default: 15).' },
+        share_safe:    { type: 'boolean', description: 'Export: redact local paths/secrets and omit git-sensitive data (default: false).' },
       },
       required: [],
-    },
-  },
-  {
-    name: 'jambavan_session_import',
-    description: [
-      'Import a session handoff document into the memory store.',
-      'Parses the handoff markdown and stores key items as memories if they are not already present.',
-      'Idempotent — re-importing the same document does not create duplicates.',
-    ].join(' '),
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        text:  { type: 'string', description: 'The handoff document markdown to import.' },
-        scope: { type: 'string', description: 'Target memory scope. Defaults to project scope.' },
-      },
-      required: ['text'],
     },
   },
 ] as const;
@@ -107,7 +91,7 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
   const archive = () => new MemoryArchive(config);
   const scope = () => projectScope(config);
 
-  return {
+  const handlers = {
     jambavan_session_export(input: Record<string, unknown>): string {
       const targetScope  = input['scope'] ? String(input['scope']) : scope();
       const includeRin   = input['include_rin'] !== false;
@@ -318,6 +302,24 @@ export function buildSessionHandoffHandlers(config: JambavanConfig) {
         return `Imported 0 memories into scope "${targetScope}". Warning: no heading matching "## …Memories…" found — document may not be a valid handoff format.`;
       }
       return `Imported ${imported} memories into scope "${targetScope}".`;
+    },
+  };
+
+  return {
+    ...handlers,
+
+    // Export and import were separate tools before 2.0. `text` is the only
+    // argument that distinguishes them, so direction is inferable; a deprecated
+    // alias may still pin `action` explicitly.
+    jambavan_session_handoff(input: Record<string, unknown>): string {
+      const action = String(input['action'] ?? '');
+      if (action === 'import' || (!action && input['text'] !== undefined)) {
+        return handlers.jambavan_session_import(input);
+      }
+      if (action && action !== 'export') {
+        return `Error: unknown action "${action}". Use export or import.`;
+      }
+      return handlers.jambavan_session_export(input);
     },
   };
 }

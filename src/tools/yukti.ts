@@ -54,7 +54,7 @@ const PROTOCOL_MEDIUM = `
 ## Completion:
 
 - Re-read the original goal.
-- Verify each acceptance criterion with evidence (jambavan_praman).
+- Verify each acceptance criterion with evidence (verify_gate).
 - Only then claim done.
 `.trim();
 
@@ -92,7 +92,7 @@ Each unit is a checkpoint. After each: full build, full test suite, review.
 For each unit:
 1. Write the failing test(s).
 2. Implement the minimum to pass.
-3. Verify (jambavan_praman).
+3. Verify (verify_gate).
 4. Commit.
 
 If 3+ attempts on any unit fail, question the decomposition.

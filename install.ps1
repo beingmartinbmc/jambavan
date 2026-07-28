@@ -33,7 +33,7 @@ $allowWrite = $false
 $allowBash  = $false
 if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
   Write-Host "`nEnable opt-in tools?" -ForegroundColor White
-  Write-Host "  write_file / patch_file / jambavan_sankshipta  (JAMBAVAN_ALLOW_WRITE=1)"
+  Write-Host "  write_file / patch_file / jambavan_compress_prompt  (JAMBAVAN_ALLOW_WRITE=1)"
   Write-Host "  bash                                           (JAMBAVAN_ALLOW_BASH=1)"
   Write-Host "These are disabled by default for safety. You can change this later by"
   Write-Host "editing the 'env' block in your agent's MCP config.`n"
@@ -43,7 +43,7 @@ if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
   $allowBash  = $ansBash  -match '^[Yy]$'
   Write-Host ""
 } else {
-  Write-Host "  [!] Non-interactive run: write_file, patch_file, bash, and jambavan_sankshipta are disabled by default." -ForegroundColor Yellow
+  Write-Host "  [!] Non-interactive run: write_file, patch_file, bash, and jambavan_compress_prompt are disabled by default." -ForegroundColor Yellow
   Write-Host "  [!] Re-run the installer in a terminal to enable them, or set JAMBAVAN_ALLOW_WRITE=1 / JAMBAVAN_ALLOW_BASH=1" -ForegroundColor Yellow
   Write-Host "  [!] in your agent's MCP server env config.`n" -ForegroundColor Yellow
 }

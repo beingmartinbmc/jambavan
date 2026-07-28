@@ -46,5 +46,5 @@ Don't write "LGTM" or "looks fine" as a substitute for checking. If you approve,
 ## Jambavan workflow
 
 - `jambavan_review_pack` — primary input for step 1.
-- `jambavan_rin_mochan` — cross-check any new `// rin:` markers introduced by this diff have a real trigger, not a vague "later."
+- `jambavan_debt_ledger` — cross-check any new `// rin:` markers introduced by this diff have a real trigger, not a vague "later."
 - `jambavan_failure_search` — check whether this diff's approach was already tried and failed in a prior session.

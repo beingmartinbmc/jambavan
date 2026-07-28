@@ -5,7 +5,7 @@ description: Use when investigating a bug, test failure, or unexpected behavior 
 
 # Root Cause Debugger
 
-If the `jambavan_mool_kaaran` MCP tool is available, call it with the symptom (and `attempts_so_far` if this is not the first try) and use its output as an investigation checklist. Otherwise, follow the protocol below directly.
+If the `root_cause` MCP tool is available, call it with the symptom (and `attempts_so_far` if this is not the first try) and use its output as an investigation checklist. Otherwise, follow the protocol below directly.
 
 ## Evidence before fixes
 

@@ -5,7 +5,7 @@ description: Use before claiming tests pass, a build succeeds, a bug is fixed, r
 
 # Release Checker
 
-If the `jambavan_praman` MCP tool is available, call it with your claim (and `type`: tests/build/fix/requirements/general) and use its output as a verification checklist. Otherwise, follow the protocol below directly.
+If the `verify_gate` MCP tool is available, call it with your claim (and `type`: tests/build/fix/requirements/general) and use its output as a verification checklist. Otherwise, follow the protocol below directly.
 
 ## Evidence rule
 
@@ -47,5 +47,5 @@ Do not imply that an unrun check passed.
 ## Jambavan workflow (pre-release checklist)
 
 - `jambavan_review_pack` — touched files, bounded extracted caller candidates, related tests, past failures on those files, and risk flags (open rin debt, no matching test) vs. the base branch.
-- `jambavan_rin_mochan` — any `// rin:` markers with no upgrade trigger should be resolved or justified before release, not silently shipped.
+- `jambavan_debt_ledger` — any `// rin:` markers with no upgrade trigger should be resolved or justified before release, not silently shipped.
 - `jambavan_failure_search` — search relevant prior failures for regression risks; the search alone does not prove absence.

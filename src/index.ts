@@ -348,53 +348,41 @@ Jambavan exposes these MCP tools to the host model:
   jambavan_index         Build / refresh the codebase index (tree-sitter, incremental)
   jambavan_context       Return budgeted symbols, project memories, and extracted callers/callees
   jambavan_watch         Start / stop live file watcher (incremental re-index on save)
-  jambavan_graph_report  Report graph hubs; inferred ambiguous edges are opt-in
-  jambavan_graph_query   Query graph nodes + nearby extracted edges
-  jambavan_graph_path    Shortest path over extracted graph edges
-  jambavan_sankshipta    Compress markdown/prose into fewer prompt tokens (write-gated)
-  jambavan_vibhishana_niti  Activate efficient senior-dev mode (lite / full / ultra)
-  jambavan_rin_mochan    Harvest rin comments into a tracked debt ledger
-  jambavan_diagnostics   Show parser backends (tree-sitter vs regex) and index stats
-  jambavan_doctor        One-shot health check: root source, parsers, gates, memory dir, CI
+  jambavan_graph         Graph report / query / shortest path; inferred edges are opt-in
+  jambavan_compress_prompt  Compress markdown/prose into fewer prompt tokens (write-gated)
+  jambavan_debt_ledger   Harvest rin comments into a tracked debt ledger
+  jambavan_doctor        One-shot health check: root, parsers, gates, memory dir, index, CI
   jambavan_review_pack   Review pack for the current branch: touched symbols/callers/tests/failures/risk
   jambavan_impact        Trace changed symbols to inbound callers and associated tests
 
   jambavan_memory_store  Persist a memory as an OKF markdown document
-  jambavan_memory_get    Fetch one complete local memory or MemPalace drawer
-  jambavan_memory_search BM25 search across stored memories
-  jambavan_memory_recall Load up to 20 active memories by default (session wake-up)
+  jambavan_memory_read   Fetch by id, BM25 search by query, or recall the most recent
   jambavan_memory_mine_session  Mine durable facts from pasted transcript/log text
-  jambavan_memory_invalidate Mark a memory superseded/obsolete
-  jambavan_memory_delete Remove a memory by ID or wipe a scope
+  jambavan_memory_forget Invalidate (keeps history) or delete a memory, or wipe a scope
   jambavan_memory_status Active-memory statistics by scope
 
   jambavan_failure_store Store a failure record; bash failures are also recorded automatically
   jambavan_failure_search Search failures; exact unresolved bash retries are blocked by default
 
-  jambavan_session_export Export session context as a portable handoff document
-  jambavan_session_import Import a handoff document into memory
-
-  jambavan_mool_kaaran   Root-cause investigation protocol (call before debugging)
-  jambavan_praman        Verification gate (call before claiming completion)
-  jambavan_yukti         Approach strategy protocol (call before multi-step tasks)
-  jambavan_vibhaajan     Parallel work decomposition (call when task has independent units)
-
-  Functional aliases:
-  root_cause       Alias for jambavan_mool_kaaran
-  verify_gate      Alias for jambavan_praman
-  strategy_plan    Alias for jambavan_yukti
-  decompose_task   Alias for jambavan_vibhaajan
-  dev_rules        Alias for jambavan_vibhishana_niti
-  debt_ledger      Alias for jambavan_rin_mochan
-  compress_prompt  Alias for jambavan_sankshipta (write-gated)
+  jambavan_session_handoff Export a portable handoff document, or import one by passing text
 
   read_file            Read a file (with optional line range)
   search               Ripgrep-powered code search
   list_files           List directory contents
 
   Opt-in tools:
-  write_file, patch_file, jambavan_sankshipta  Require JAMBAVAN_ALLOW_WRITE=1
-  bash                                           Requires JAMBAVAN_ALLOW_BASH=1
+  write_file, patch_file, jambavan_compress_prompt  Require JAMBAVAN_ALLOW_WRITE=1
+  bash                                              Requires JAMBAVAN_ALLOW_BASH=1
+
+MCP prompts (discipline protocols — no repo access, so they cost no tool schema):
+
+  root_cause       Root-cause investigation protocol (before debugging)
+  verify_gate      Verification gate (before claiming completion)
+  strategy_plan    Approach strategy protocol (before multi-step tasks)
+  decompose_task   Parallel work decomposition (when units are independent)
+  dev_rules        Efficient senior-dev mode (lite / full / ultra)
+
+All pre-2.0 tool names still work; they are resolved internally, just not advertised.
 
 Direct CLI commands
 -------------------
@@ -417,7 +405,7 @@ Typical workflow
   3. jambavan_watch start        ← keep index live while you edit
   4. jambavan_context            ← get relevant context on demand
   5. jambavan_memory_store       ← persist key decisions / facts
-  6. jambavan_memory_recall      ← restore context at session start
+  6. jambavan_memory_read        ← restore context at session start
 
 Registration
 ------------
@@ -446,7 +434,7 @@ Environment:
   JAMBAVAN_TOKEN_BUDGET=<n>    Max tokens in jambavan_context results (default: 8000)
   JAMBAVAN_MEMORY_HOME=<path>  Root-independent memory archive (default: ~/.jambavan/memory)
   JAMBAVAN_DEV_MODE=<level>    Default Vibhishana Niti level: lite | full | ultra (default: full)
-  JAMBAVAN_ALLOW_WRITE=1       Advertise write_file, patch_file, and jambavan_sankshipta
+  JAMBAVAN_ALLOW_WRITE=1       Advertise write_file, patch_file, and jambavan_compress_prompt
   JAMBAVAN_ALLOW_BASH=1        Advertise bash
   JAMBAVAN_ALLOW_OUTSIDE_ROOT=1  Disable project-root sandbox for local trusted use only
   JAMBAVAN_ALLOW_SECRETS=1     Allow file tools to access secret-looking files

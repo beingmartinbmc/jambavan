@@ -77,18 +77,15 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 | `jambavan_index` | Optionally bind an existing absolute directory inside an unresolved fallback root, then build / refresh the AST-aware codebase index |
 | `jambavan_context` | Return lexical symbols plus bounded extracted callers/callees and top project-memory matches. Optional diff/test enrichments; everything shares one token budget |
 | `jambavan_watch` | Start / stop the active watcher backend and report persistent index totals (incremental per-file re-index) |
-| `jambavan_diagnostics` | Show tree-sitter vs regex parser backends + index stats |
-| `jambavan_doctor` | One-shot environment health check: root source, parser backends, write/bash gates, token budget, memory dir, `.gitignore`/CI, and index/watcher status |
+| `jambavan_doctor` | One-shot environment health check: root source, tree-sitter vs regex parser backends, write/bash gates, token budget, memory dir, `.gitignore`/CI, and index/watcher status |
 
 ### Knowledge graph & compression
 
 | Tool | Purpose |
 |---|---|
-| `jambavan_graph_report` | Summarize the lightweight inferred code graph (symbols, edges, hotspots) |
-| `jambavan_graph_query` | Build a query-focused neighborhood, then traverse callers, callees, or both (BFS, token-budgeted) |
-| `jambavan_graph_path` | Shortest relationship path between two symbols |
+| `jambavan_graph` | One tool, three actions. `report` summarizes the lightweight inferred code graph (symbols, edges, hotspots); `query` builds a query-focused neighborhood and traverses callers, callees, or both (BFS, token-budgeted); `path` finds the shortest relationship path between two symbols. Action is inferred from the arguments when omitted |
 | `jambavan_impact` | Map diff-hunk symbols to bounded inbound callers and associated tests, with explicit completeness metadata |
-| `jambavan_sankshipta` | Compress prose/prompts while protecting fenced/inline code, URLs, paths, versions, and environment-variable tokens |
+| `jambavan_compress_prompt` | Compress prose/prompts while protecting fenced/inline code, URLs, paths, versions, and environment-variable tokens |
 
 > **Graph scope.** This is a **lightweight inferred graph**, not full resolver-backed
 > program analysis. The AST extracts references (`call` / `import` / `implements`)
@@ -102,31 +99,39 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 > `EXTRACTED` edges by default; `include_inferred=true` explicitly opts into
 > ambiguous candidates. Treat inferred edges as navigation hints, not ground truth.
 
-### Functional aliases
+### Deprecated names (pre-2.0)
 
-The mythological tool names are the canonical API. These English aliases are also advertised as real MCP tools for easier discovery and model recall:
+2.0 replaced the Sanskrit tool names with English ones and merged near-duplicate
+tools, taking the advertised surface from 38 tools to 20. Retired names are still
+resolved by `src/mcp/tool-aliases.ts` and dispatch normally — they are simply not
+returned from `tools/list`, so they cost the host no schema tokens. Where a merged
+tool cannot infer the caller's intent from arguments alone, the alias pins it:
+`jambavan_memory_invalidate` carries `mode: 'invalidate'` so it can never
+silently degrade into a delete.
 
-| Alias | Canonical tool |
+| Retired name | Handled by |
 |---|---|
-| `root_cause` | `jambavan_mool_kaaran` |
-| `verify_gate` | `jambavan_praman` |
-| `strategy_plan` | `jambavan_yukti` |
-| `decompose_task` | `jambavan_vibhaajan` |
-| `dev_rules` | `jambavan_vibhishana_niti` |
-| `debt_ledger` | `jambavan_rin_mochan` |
-| `compress_prompt` | `jambavan_sankshipta` |
+| the `root_cause` prompt, `root_cause` | `root_cause` prompt |
+| the `verify_gate` prompt, `verify_gate` | `verify_gate` prompt |
+| `jambavan_yukti`, `strategy_plan` | `strategy_plan` prompt |
+| `jambavan_vibhaajan`, `decompose_task` | `decompose_task` prompt |
+| `jambavan_vibhishana_niti`, `dev_rules` | `dev_rules` prompt |
+| `jambavan_rin_mochan`, `debt_ledger` | `jambavan_debt_ledger` |
+| `jambavan_compress_prompt`, `compress_prompt` | `jambavan_compress_prompt` |
+| `jambavan_graph_report`, `jambavan_graph_query`, `jambavan_graph_path` | `jambavan_graph` |
+| `jambavan_diagnostics` | `jambavan_doctor` |
+| `jambavan_memory_get`, `jambavan_memory_search`, `jambavan_memory_recall` | `jambavan_memory_read` |
+| `jambavan_memory_invalidate`, `jambavan_memory_delete` | `jambavan_memory_forget` |
+| `jambavan_session_export`, `jambavan_session_import` | `jambavan_session_handoff` |
 
 ### Memory
 
 | Tool | Purpose |
 |---|---|
 | `jambavan_memory_store` | Persist an OKF Markdown document in the global archive; accepts optional scope and collection |
-| `jambavan_memory_get` | Fetch one complete local memory, or one MemPalace drawer when explicitly requested |
-| `jambavan_memory_search` | BM25 local search by default; optional explicit `mempalace` or sectioned `all` provider |
-| `jambavan_memory_recall` | Recall active local memories by default; optional explicit MemPalace drawer listing |
+| `jambavan_memory_read` | One read path: `id` fetches one document, `query` runs BM25 search, neither recalls the most recent. Local by default; optional explicit `mempalace` or sectioned `all` provider |
 | `jambavan_memory_mine_session` | Deterministically mine durable items from required `text` |
-| `jambavan_memory_invalidate` | Mark a memory superseded without deleting history |
-| `jambavan_memory_delete` | Remove a memory by ID or wipe an entire scope |
+| `jambavan_memory_forget` | `mode: invalidate` marks a memory superseded and keeps history; `mode: delete` (default) removes it, or wipes a scope with `delete_scope` |
 | `jambavan_memory_status` | Local scope/collection counts by default; optional explicit MemPalace taxonomy/status |
 
 All core memory tools are rootless. Repository-bound index, graph, impact, file, shell, failure-record, and handoff operations remain blocked while root resolution is an unsafe fallback. MemPalace never participates in automatic awakening or context enrichment: `provider` defaults to `jambavan` on every federated read.
@@ -139,8 +144,7 @@ Session-continuity tools let a fresh session (or a different host model) consult
 |---|---|
 | `jambavan_failure_store` | Record a structured failure (command, symptom, attempted fix, root cause, resolution, status, do-not-retry advice) in the memory store |
 | `jambavan_failure_search` | Search past failure records before retrying a failing command or approach |
-| `jambavan_session_export` | Produce a single portable markdown handoff document: recent memories, `rin:` debt markers, and git status |
-| `jambavan_session_import` | Parse required handoff `text` back into memories in the target scope; tolerant of light rewording of the memory heading, idempotent on exact re-import |
+| `jambavan_session_handoff` | Without `text`, produces a single portable markdown handoff document: recent memories, `rin:` debt markers, and git status. With `text`, parses that handoff back into memories in the target scope; tolerant of light rewording of the memory heading, idempotent on exact re-import |
 
 Both are built on the writable side of `MemoryArchive` — a failure record is a memory with `type: 'FailureRecord'`, collection `failures`, and a title that includes a short content hash of `command + symptom`, which distinguishes ordinary same-command/different-symptom records without claiming collision-proof identity.
 
@@ -162,17 +166,24 @@ Pure composition — no new subsystem. Requires `jambavan_index` to have run at 
 
 | Tool | Purpose |
 |---|---|
-| `jambavan_vibhishana_niti` | Serve the Vibhishana Niti efficient-dev ruleset (lite / full / ultra) |
-| `jambavan_rin_mochan` | Harvest `rin:` comments into a tracked debt ledger |
+| `jambavan_debt_ledger` | Harvest `rin:` comments into a tracked debt ledger |
 
 ### Counsel (discipline protocols)
 
-| Tool | Purpose |
+These five are **MCP prompts**, not tools (`src/mcp/prompts.ts`). They render static
+text from a handful of enum arguments and never touch the repository, so advertising
+them as tools charged every request for schema the model rarely needed. As prompts they
+cost nothing until invoked, and hosts that support the prompts capability surface them
+as slash commands. `PROMPT_TOOL_HANDLERS` keeps them callable as hidden tools so
+pre-2.0 callers and hosts without prompt support still work.
+
+| Prompt | Purpose |
 |---|---|
-| `jambavan_mool_kaaran` | Root-cause investigation protocol — observe/compare/hypothesize/fix. Recommends reassessment at 3+ failed attempts |
-| `jambavan_praman` | Verification gate — asks for fresh evidence appropriate to a completion claim (tests/build/fix/requirements/general) |
-| `jambavan_yukti` | Approach strategy — phased instructions scaled to task size (small/medium/large) |
-| `jambavan_vibhaajan` | Parallel work decomposition — boundary identification, independence verification, contracts, merge sequencing |
+| `root_cause` | Root-cause investigation protocol — observe/compare/hypothesize/fix. Recommends reassessment at 3+ failed attempts |
+| `verify_gate` | Verification gate — asks for fresh evidence appropriate to a completion claim (tests/build/fix/requirements/general) |
+| `strategy_plan` | Approach strategy — phased instructions scaled to task size (small/medium/large) |
+| `decompose_task` | Parallel work decomposition — boundary identification, independence verification, contracts, merge sequencing |
+| `dev_rules` | The Vibhishana Niti efficient-dev ruleset (lite / full / ultra) |
 
 ### File system & shell
 
@@ -185,7 +196,7 @@ Source-reading tools are always registered. Source-mutating and shell tools are 
 | `list_files` | on | Explore directory structure |
 | `write_file` | `JAMBAVAN_ALLOW_WRITE=1` | Write or overwrite a file |
 | `patch_file` | `JAMBAVAN_ALLOW_WRITE=1` | Surgical find-and-replace (token-efficient) |
-| `jambavan_sankshipta` | `JAMBAVAN_ALLOW_WRITE=1` | Compress prose in place (writes the file — hence gated) |
+| `jambavan_compress_prompt` | `JAMBAVAN_ALLOW_WRITE=1` | Compress prose in place (writes the file — hence gated) |
 | `bash` | `JAMBAVAN_ALLOW_BASH=1` | Run shell commands; block exact unresolved failures unless deliberately overridden, and auto-record redacted failures |
 
 ---
@@ -200,7 +211,7 @@ Local, no-server helpers run as `npx jambavan <subcommand>`. None call an LLM. C
 | `jambavan badges` | Print three local markdown lines for a README: benchmark card (context-token estimate, via `node dist/benchmark.js --json`), Rin Ledger, Failure Memory count |
 | `jambavan memory migrate [--root <path>] [--apply]` | Dry-run by default; preflight and non-destructively copy the repository's legacy `.jambavan/memory` documents into the global archive, preserving IDs, metadata, timestamps, and invalidated history |
 | `jambavan bridge --to mempalace` / `--from mempalace` | Offline Markdown interchange using `scope → wing` and `collection → room`. This is separate from explicit read-only MCP federation |
-| `jambavan handoff --write-pr-template [--scope <scope>] [--share-safe] [--post]` | Runs the `jambavan_session_export` handoff card and injects it as an HTML-comment-bounded block into `.github/pull_request_template.md` (see `src/tools/pr-handoff.ts` for the pure inject/replace transform); idempotent re-injection, no duplication. `--share-safe` redacts local paths/secrets and omits git-sensitive data. `--post` additionally shells to the caller's own authenticated `gh pr comment` |
+| `jambavan handoff --write-pr-template [--scope <scope>] [--share-safe] [--post]` | Runs the `jambavan_session_handoff` card card and injects it as an HTML-comment-bounded block into `.github/pull_request_template.md` (see `src/tools/pr-handoff.ts` for the pure inject/replace transform); idempotent re-injection, no duplication. `--share-safe` redacts local paths/secrets and omits git-sensitive data. `--post` additionally shells to the caller's own authenticated `gh pr comment` |
 | `jambavan review-pack [--base <ref>] [--format markdown\|json] [--max-files <n>] [--include-worktree]` | Indexes the project, then writes a branch review pack to stdout. Markdown delegates to `jambavan_review_pack`; JSON uses `src/tools/review-pack-json.ts` for `{ base, touchedCount, analyzedCount, truncated, files[], rinMarkers[], failures[] }`, which is what the GitHub Action consumes |
 | `jambavan html-handoff [--out <file>] [--scope <scope>] [--share-safe]` | Indexes the project and writes a self-contained HTML handoff report (`src/tools/html-handoff.ts`) with memory timeline, rin debt, indexed-symbol stats, git dirty files/recent commits, collapsible sections, and copy-to-clipboard. `--share-safe` redacts local paths/secrets and omits git-sensitive data. No external assets or network calls |
 | `jambavan daemon` (removed in 1.0) | The detached background daemon was removed. The command is now rejected with a migration message (`src/index.ts`); `src/tools/daemon.ts` retains only a signal-free, read-only guard (`detectLegacyDaemon`/`legacyDaemonNotice`) that surfaces a leftover pre-1.0 `.jambavan/daemon.pid` so `jambavan_watch start` can refuse to double-index. No process is ever spawned or signalled. Use the in-process `jambavan_watch` for a live index |
@@ -245,8 +256,8 @@ Persists to `~/.codex/config.toml` as `[mcp_servers.jambavan]` (top-level key is
 |---|---|---|
 | Vibhishana Niti | `/jambavan:vibhishana-niti` | Efficient-dev discipline (the ladder, non-negotiable rules) |
 | Using Jambavan | `/jambavan:using-jambavan` | Tool session protocol (index → context → memory) |
-| Root Cause Debugger | `/jambavan:root-cause-debugger` | Observe/compare/hypothesize/fix before any bug fix — same protocol as `jambavan_mool_kaaran` |
-| Release Checker | `/jambavan:release-checker` | Evidence gate before claiming tests/build/fix/requirements/release are done — same protocol as `jambavan_praman` |
+| Root Cause Debugger | `/jambavan:root-cause-debugger` | Observe/compare/hypothesize/fix before any bug fix — same protocol as the `root_cause` prompt |
+| Release Checker | `/jambavan:release-checker` | Evidence gate before claiming tests/build/fix/requirements/release are done — same protocol as the `verify_gate` prompt |
 | Strict Reviewer | `/jambavan:strict-reviewer` | Severe-senior-engineer review checklist built on `jambavan_review_pack` |
 
 So `/plugin install jambavan@jambavan` wires up the server and all five skills without manual config:
@@ -447,7 +458,7 @@ Jambavan keeps retrieval, storage, and deterministic transforms separate from th
 | `JAMBAVAN_MEMPALACE_COMMAND` | `mempalace-mcp` | Executable for explicit read-only MemPalace provider calls |
 | `JAMBAVAN_TOKEN_BUDGET` | `8000` | Max approximate `cl100k_base` tokens in `jambavan_context` output |
 | `JAMBAVAN_DEV_MODE` | `full` | Default Vibhishana Niti level (`lite` / `full` / `ultra`) |
-| `JAMBAVAN_ALLOW_WRITE` | off | `1` registers `write_file` + `patch_file` + `jambavan_sankshipta` |
+| `JAMBAVAN_ALLOW_WRITE` | off | `1` registers `write_file` + `patch_file` + `jambavan_compress_prompt` |
 | `JAMBAVAN_ALLOW_BASH` | off | `1` registers `bash` |
 | `JAMBAVAN_ALLOW_OUTSIDE_ROOT` | off | `1` disables direct-path project-root containment |
 | `JAMBAVAN_ALLOW_SECRETS` | off | `1` allows direct paths that match the secret-file guard |
@@ -469,7 +480,7 @@ Jambavan bakes token-efficient computer use into its startup protocol and Vibhis
 
 Jambavan is driven by a host model, so source mutation and shell execution are granted explicitly:
 
-- **Source mutation and shell are off by default.** `read_file`, `search`, and `list_files` register without opt-in. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_sankshipta`; `JAMBAVAN_ALLOW_BASH=1` adds `bash`. Indexing, memory, failure tracking, and handoff generation still write local `.jambavan/` state, which self-ignores via `.jambavan/.gitignore`.
+- **Source mutation and shell are off by default.** `read_file`, `search`, and `list_files` register without opt-in. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_compress_prompt`; `JAMBAVAN_ALLOW_BASH=1` adds `bash`. Indexing, memory, failure tracking, and handoff generation still write local `.jambavan/` state, which self-ignores via `.jambavan/.gitignore`.
 - **Unresolved root binding fails closed.** Launch-time `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from process cwd, and a supported single file-URI MCP `roots/list` result may replace that result. If the source remains `cwd-fallback`, stateful tools are blocked. `jambavan_awaken.root` or `jambavan_index.root` can bind an existing absolute directory inside that fallback root; they cannot override an already fixed `env`, `client-roots`, `cwd-project`, or `tool-input` binding.
 - **Path containment.** Direct file/search/list path arguments and the shell working directory resolve inside `JAMBAVAN_ROOT`; symlinks are checked via `realpath`. An enabled shell command is not path-sandboxed. `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` disables direct-path containment for trusted local use.
 - **Direct secret-path guard.** Known secret basenames/extensions and immediate parent directories are refused for direct file/search/list paths and shell working directories unless `JAMBAVAN_ALLOW_SECRETS=1`. This is not content scanning and does not stop an enabled shell command from opening a secret file.

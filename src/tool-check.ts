@@ -14,6 +14,7 @@ import { execFileSync } from 'child_process';
 import { performance } from 'perf_hooks';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { DEPRECATED_TOOLS } from './mcp/tool-aliases';
 
 interface Row { tool: string; ok: boolean; ms: number; note: string; }
 
@@ -90,7 +91,6 @@ async function main(): Promise<void> {
   // Ordered so dependencies are satisfied (index before context/graph, etc.)
   const awakened = await call('jambavan_awaken', { root: proj });
   if (!awakened.includes(proj)) throw new Error('jambavan_awaken did not bind the requested root');
-  await call('jambavan_diagnostics', {});
   const doctor = await call('jambavan_doctor', {});
   if (!doctor.includes(`Tools available:  ${advertised.length}`)) {
     throw new Error('jambavan_doctor tool count does not match tools/list');
@@ -101,31 +101,27 @@ async function main(): Promise<void> {
     throw new Error('warm index output did not separate per-run and total symbol counts');
   }
   await call('jambavan_context', { query: 'greet' });
-  await call('jambavan_graph_report', {});
-  await call('jambavan_graph_query', { query: 'greet' });
-  await call('jambavan_graph_path', { from: 'main', to: 'greet' });
+  await call('jambavan_graph', { action: 'report' });
+  await call('jambavan_graph', { action: 'query', query: 'greet' });
+  await call('jambavan_graph', { action: 'path', from: 'main', to: 'greet' });
   await call('jambavan_watch', { action: 'start' });
   const watcherStatus = await call('jambavan_watch', { action: 'status' });
   if (!/In-process watcher running: true/.test(watcherStatus) || !/Indexed state:\s+1 files, [1-9]/.test(watcherStatus)) {
     throw new Error('watcher status did not report the in-process watcher and persistent index totals');
   }
   await call('jambavan_watch', { action: 'stop' });
-  await call('jambavan_vibhishana_niti', { mode: 'full' });
-  await call('jambavan_rin_mochan', {});
-  await call('jambavan_sankshipta', { path: 'notes.md', in_place: false });
-  await call('dev_rules', { mode: 'full' });
-  await call('debt_ledger', {});
-  await call('compress_prompt', { path: 'notes.md', in_place: false });
+  await call('jambavan_debt_ledger', {});
+  await call('jambavan_compress_prompt', { path: 'notes.md', in_place: false });
 
   const stored = await call('jambavan_memory_store', { title: 'Test fact', body: 'The sky is blue.', scope: 'toolcheck' });
   const id = stored.match(/ID:\s*(\S+)/)?.[1] ?? 'toolcheck/test-fact';
-  await call('jambavan_memory_get', { id });
+  await call('jambavan_memory_read', { id });
   await call('jambavan_memory_status', {});
-  await call('jambavan_memory_search', { query: 'sky' });
-  await call('jambavan_memory_recall', { scope: 'toolcheck' });
+  await call('jambavan_memory_read', { query: 'sky' });
+  await call('jambavan_memory_read', { scope: 'toolcheck' });
   await call('jambavan_memory_mine_session', { text: 'Decision: use template strings.\nTODO: add a test.', scope: 'toolcheck' });
-  await call('jambavan_memory_invalidate', { id });
-  await call('jambavan_memory_delete', { id });
+  await call('jambavan_memory_forget', { id, mode: 'invalidate' });
+  await call('jambavan_memory_forget', { id, mode: 'delete' });
 
   // ── Failure memory tools ──
   const failStored = await call('jambavan_failure_store', {
@@ -138,23 +134,13 @@ async function main(): Promise<void> {
   });
   await call('jambavan_failure_search', { query: 'better-sqlite3', scope: 'toolcheck' });
 
-  // ── Session handoff tools ──
-  const exported = await call('jambavan_session_export', { scope: 'toolcheck', max_memories: 5 });
-  await call('jambavan_session_import', { text: exported || '# Empty handoff\n', scope: 'toolcheck' });
+  // ── Session handoff tool (export without `text`, import with it) ──
+  const exported = await call('jambavan_session_handoff', { scope: 'toolcheck', max_memories: 5 });
+  await call('jambavan_session_handoff', { text: exported || '# Empty handoff\n', scope: 'toolcheck' });
 
   // ── Review pack tool ──
   await call('jambavan_review_pack', { base: 'main' });
   await call('jambavan_impact', { base: 'main', max_depth: 2 });
-
-  // ── Counsel tools (discipline protocols) ──
-  await call('jambavan_mool_kaaran', { symptom: 'TypeError: Cannot read property of undefined', context: 'greet function', attempts_so_far: 0 });
-  await call('jambavan_praman', { claim: 'all tests pass', type: 'tests' });
-  await call('jambavan_yukti', { task: 'add input validation to greet function', scale: 'small' });
-  await call('jambavan_vibhaajan', { task: 'add auth module and notification service — independent subsystems', units: 2 });
-  await call('root_cause', { symptom: 'TypeError: Cannot read property of undefined', context: 'greet function', attempts_so_far: 0 });
-  await call('verify_gate', { claim: 'all tests pass', type: 'tests' });
-  await call('strategy_plan', { task: 'add input validation to greet function', scale: 'small' });
-  await call('decompose_task', { task: 'add auth module and notification service — independent subsystems', units: 2 });
 
   await call('read_file', { path: 'hello.ts' });
   await call('write_file', { path: 'scratch.txt', content: 'hi' });
@@ -162,6 +148,43 @@ async function main(): Promise<void> {
   await call('search', { pattern: 'greet' });
   await call('list_files', { path: '.' });
   await call('bash', { command: 'echo ok' });
+
+  // ── Prompts (discipline protocols moved off the tool surface in 2.0) ────────
+  const promptArgs: Record<string, Record<string, string>> = {
+    root_cause:     { symptom: 'TypeError: Cannot read property of undefined', context: 'greet function', attempts_so_far: '0' },
+    verify_gate:    { claim: 'all tests pass', type: 'tests' },
+    strategy_plan:  { task: 'add input validation to greet function', scale: 'small' },
+    decompose_task: { task: 'add auth module and notification service', units: '2' },
+    dev_rules:      { mode: 'full' },
+  };
+  const advertisedPrompts = (await client.listPrompts()).prompts.map(p => p.name).sort();
+  for (const name of advertisedPrompts) {
+    const t0 = performance.now();
+    try {
+      const res = await client.getPrompt({ name, arguments: promptArgs[name] ?? {} });
+      const content = res.messages?.[0]?.content;
+      const text = content?.type === 'text' ? content.text : '';
+      if (!text.trim()) throw new Error('empty prompt body');
+      rows.push({ tool: `prompt:${name}`, ok: true, ms: Math.round(performance.now() - t0), note: text.split('\n')[0].slice(0, 58) });
+    } catch (err) {
+      rows.push({ tool: `prompt:${name}`, ok: false, ms: Math.round(performance.now() - t0), note: String(err).slice(0, 58) });
+    }
+  }
+  const missingPrompts = Object.keys(promptArgs).filter(p => !advertisedPrompts.includes(p));
+  if (missingPrompts.length) throw new Error(`prompts/list is missing: ${missingPrompts.join(', ')}`);
+
+  // ── Back-compat: every retired pre-2.0 name must still dispatch ─────────────
+  // Args are omitted deliberately; a retired name that no longer resolves fails
+  // with "Unknown tool", which is what this is checking for.
+  const retiredFailures: string[] = [];
+  for (const retired of Object.keys(DEPRECATED_TOOLS)) {
+    const res = await client.callTool({ name: retired, arguments: {} }) as {
+      isError?: boolean; content?: { text?: string }[];
+    };
+    if (res.isError && /unknown tool/i.test(String(res.content?.[0]?.text ?? ''))) retiredFailures.push(retired);
+  }
+  if (retiredFailures.length) throw new Error(`retired tool names no longer resolve: ${retiredFailures.join(', ')}`);
+  rows.push({ tool: `back-compat (${Object.keys(DEPRECATED_TOOLS).length} retired names)`, ok: true, ms: 0, note: 'all still dispatch' });
 
   // ── Report ──────────────────────────────────────────────────────────────────
   const pad = (s: string, n: number) => s.padEnd(n);

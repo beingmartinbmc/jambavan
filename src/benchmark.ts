@@ -157,31 +157,27 @@ async function benchTools(): Promise<ToolTiming[]> {
   // Order matters: index before context/graph/watch; memory_store before the
   // reads/writes that depend on its ID.
   await benchOnce('jambavan_awaken', {});
-  await bench('jambavan_diagnostics', {});
+  await bench('jambavan_doctor', {});
   await benchOnce('jambavan_index', {});
   await bench('jambavan_context', { query: 'greet' });
-  await bench('jambavan_graph_report', {});
-  await bench('jambavan_graph_query', { query: 'greet' });
-  await bench('jambavan_graph_path', { from: 'main', to: 'greet' });
+  await bench('jambavan_graph', { action: 'report' });
+  await bench('jambavan_graph', { action: 'query', query: 'greet' });
+  await bench('jambavan_graph', { action: 'path', from: 'main', to: 'greet' });
   await benchOnce('jambavan_watch', { action: 'start' });
   await bench('jambavan_watch', { action: 'status' });
   await benchOnce('jambavan_watch', { action: 'stop' });
-  await bench('jambavan_vibhishana_niti', { mode: 'full' });
-  await bench('jambavan_rin_mochan', {});
-  await bench('jambavan_sankshipta', { path: 'notes.md', in_place: false });
-  await bench('dev_rules', { mode: 'full' });
-  await bench('debt_ledger', {});
-  await bench('compress_prompt', { path: 'notes.md', in_place: false });
+  await bench('jambavan_debt_ledger', {});
+  await bench('jambavan_compress_prompt', { path: 'notes.md', in_place: false });
 
   const stored = await benchOnce('jambavan_memory_store', { title: 'Bench fact', body: 'The sky is blue.', scope: 'bench' });
   const id = stored.match(/ID:\s*(\S+)/)?.[1] ?? 'bench/bench-fact';
-  await bench('jambavan_memory_get', { id });
+  await bench('jambavan_memory_read', { id });
   await bench('jambavan_memory_status', {});
-  await bench('jambavan_memory_search', { query: 'sky' });
-  await bench('jambavan_memory_recall', { scope: 'bench' });
+  await bench('jambavan_memory_read', { query: 'sky' });
+  await bench('jambavan_memory_read', { scope: 'bench' });
   await benchOnce('jambavan_memory_mine_session', { text: 'Decision: use template strings.', scope: 'bench' });
-  await benchOnce('jambavan_memory_invalidate', { id });
-  await benchOnce('jambavan_memory_delete', { id });
+  await benchOnce('jambavan_memory_forget', { id, mode: 'invalidate' });
+  await benchOnce('jambavan_memory_forget', { id, mode: 'delete' });
 
   await benchOnce('jambavan_failure_store', {
     command: 'npm run build',
@@ -191,22 +187,13 @@ async function benchTools(): Promise<ToolTiming[]> {
   });
   await bench('jambavan_failure_search', { query: 'npm run build' });
 
-  // Fetch full handoff text (untimed) so session_import has a realistic document to parse.
-  const handoffRes = await client.callTool({ name: 'jambavan_session_export', arguments: {} }) as {
+  // Fetch full handoff text (untimed) so the import path has a realistic document to parse.
+  const handoffRes = await client.callTool({ name: 'jambavan_session_handoff', arguments: {} }) as {
     content?: { text?: string }[];
   };
   const handoffText = String(handoffRes.content?.[0]?.text ?? '');
-  await bench('jambavan_session_export', {});
-  await benchOnce('jambavan_session_import', { text: handoffText });
-
-  await bench('jambavan_mool_kaaran', { symptom: 'TypeError: Cannot read property of undefined', attempts_so_far: 1 });
-  await bench('jambavan_praman', { claim: 'all tests pass', type: 'tests' });
-  await bench('jambavan_yukti', { task: 'add input validation to greet function' });
-  await bench('jambavan_vibhaajan', { task: 'add auth module and notification service', units: 2 });
-  await bench('root_cause', { symptom: 'TypeError: Cannot read property of undefined', attempts_so_far: 1 });
-  await bench('verify_gate', { claim: 'all tests pass', type: 'tests' });
-  await bench('strategy_plan', { task: 'add input validation to greet function' });
-  await bench('decompose_task', { task: 'add auth module and notification service', units: 2 });
+  await bench('jambavan_session_handoff', {});
+  await benchOnce('jambavan_session_handoff', { text: handoffText });
 
   await bench('read_file', { path: 'hello.ts' });
   await benchOnce('write_file', { path: 'scratch.txt', content: 'hi' });

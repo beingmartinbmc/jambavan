@@ -208,6 +208,26 @@ test('memory_invalidate dispatches and handles missing IDs', async () => {
   assert.match(bad.text, /not found/i);
 });
 
+// memory_forget merged invalidate and delete in 2.0. Omitting `mode` must pick
+// the reversible one; a default of `delete` would destroy the document.
+test('memory_forget without an explicit mode invalidates rather than deletes', async () => {
+  const stored = await callText('jambavan_memory_store', {
+    title: 'Forget default', body: 'Should survive a bare forget.', scope: 'forget-default',
+  });
+  const id = stored.text.match(/ID:\s*(\S+)/)?.[1];
+  assert.ok(id, 'memory_store did not return an ID');
+
+  const forgot = await callText('jambavan_memory_forget', { id });
+  assert.equal(forgot.isError, false);
+  assert.match(forgot.text, /Invalidated/);
+
+  // Still fetchable, so the document was retained rather than destroyed.
+  const fetched = await callText('jambavan_memory_read', { id });
+  assert.match(fetched.text, /Should survive a bare forget/);
+
+  await callText('jambavan_memory_forget', { scope: 'forget-default', delete_scope: true });
+});
+
 test('graph_path returns a path or no-path message', async () => {
   const res = await callText('jambavan_graph_path', { from: 'main', to: 'greet' });
   assert.equal(res.isError, false);

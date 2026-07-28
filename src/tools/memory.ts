@@ -1,16 +1,15 @@
 /**
- * Jambavan memory tools — store, search, recall, delete, and status
- * for the OKF-backed memory bundle.
+ * Jambavan memory tools for the OKF-backed memory bundle.
  *
- * MCP tools:
+ * Advertised MCP tools (2.0 consolidated eight tools into five):
  *   jambavan_memory_store        — persist a memory as an OKF concept document
- *   jambavan_memory_get          — fetch one complete memory by ID
- *   jambavan_memory_search       — BM25 search across stored memories
- *   jambavan_memory_recall       — load bounded active memories (session wake-up)
+ *   jambavan_memory_read         — get by ID, BM25 search, or recall recent
+ *   jambavan_memory_forget       — invalidate (keep history) or delete
  *   jambavan_memory_mine_session — mine durable facts from a transcript/log text
- *   jambavan_memory_invalidate   — mark a memory superseded/obsolete without deleting
- *   jambavan_memory_delete       — remove a memory by ID or delete an entire scope
  *   jambavan_memory_status       — active-memory statistics by scope
+ *
+ * The pre-2.0 names (get/search/recall/invalidate/delete) still dispatch via
+ * src/mcp/tool-aliases.ts; they are just no longer advertised.
  */
 
 import { MemoryArchive } from '../memory/archive';
@@ -58,50 +57,21 @@ export const MEMORY_TOOL_DEFS = [
     },
   },
   {
-    name: 'jambavan_memory_get',
-    description: 'Fetch one complete local memory or MemPalace drawer by ID. MemPalace access is explicit and read-only.',
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        id: { type: 'string', description: 'OKF concept ID, e.g. "project/why-graphql".' },
-        provider: { type: 'string', enum: ['jambavan', 'mempalace'], description: 'Storage provider. Defaults to jambavan.' },
-      },
-      required: ['id'],
-    },
-  },
-  {
-    name: 'jambavan_memory_search',
+    name: 'jambavan_memory_read',
     description: [
-      'Search Jambavan memories using BM25 by default.',
-      'Set provider=mempalace for explicit read-only semantic search, or provider=all for separate provider sections.',
-      'Jambavan scope/collection filters map to MemPalace wing/room.',
+      'Read stored memories. Pass id to fetch one document, query to BM25-search, or neither to recall the most recent.',
+      'Set provider=mempalace for explicit read-only MemPalace access, or provider=all for separate provider sections;',
+      'ordinary reads never start MemPalace. Jambavan scope/collection map to MemPalace wing/room.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
-        query: { type: 'string', description: 'Natural-language or keyword query.' },
-        scope: { type: 'string', description: 'Restrict search to this scope. Omit to search all.' },
-        collection: { type: 'string', description: 'Restrict search to one logical collection.' },
-        provider: { type: 'string', enum: ['jambavan', 'mempalace', 'all'], description: 'Search Jambavan, MemPalace, or both in separate sections. Defaults to jambavan.' },
-        limit: { type: 'number', description: 'Max results to return (default: 10).' },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'jambavan_memory_recall',
-    description: [
-      'Recall up to limit active Jambavan memories, newest first (default: 20).',
-      'Set provider=mempalace for an explicit read-only drawer listing, or provider=all for separate sections.',
-      'Ordinary recall never starts MemPalace.',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {
-        scope: { type: 'string', description: 'Scope to recall. Omit to search across scopes.' },
-        collection: { type: 'string', description: 'Restrict recall to one logical collection.' },
-        provider: { type: 'string', enum: ['jambavan', 'mempalace', 'all'], description: 'Recall from Jambavan, MemPalace, or both in separate sections. Defaults to jambavan.' },
-        limit: { type: 'number', description: 'Max memories to return (default: 20).' },
+        id: { type: 'string', description: 'Fetch one memory by OKF concept ID, e.g. "project/why-graphql".' },
+        query: { type: 'string', description: 'BM25 search query. Ignored when id is set.' },
+        scope: { type: 'string', description: 'Restrict to this scope. Omit to read across scopes.' },
+        collection: { type: 'string', description: 'Restrict to one logical collection.' },
+        provider: { type: 'string', enum: ['jambavan', 'mempalace', 'all'], description: 'Defaults to jambavan.' },
+        limit: { type: 'number', description: 'Max results (default: 10 for search, 20 for recall).' },
       },
       required: [],
     },
@@ -125,31 +95,17 @@ export const MEMORY_TOOL_DEFS = [
     },
   },
   {
-    name: 'jambavan_memory_invalidate',
+    name: 'jambavan_memory_forget',
     description: [
-      'Mark a memory as invalidated/superseded without deleting the OKF document.',
-      'Use when a durable fact changed and you want temporal history instead of silent overwrite.',
+      'Retire a memory. mode=invalidate (the default) marks it superseded but keeps the document for temporal history;',
+      'mode=delete permanently removes it. Provide id for one memory, or scope with delete_scope: true to wipe a scope.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
-        id:     { type: 'string', description: 'OKF concept ID to invalidate (e.g. "general/old-decision").' },
-        reason: { type: 'string', description: 'Optional reason appended to the memory body.' },
-      },
-      required: ['id'],
-    },
-  },
-  {
-    name: 'jambavan_memory_delete',
-    description: [
-      'Delete a memory by its OKF concept ID (scope/slug), or delete all memories in a scope.',
-      'Provide id to delete a single memory. Provide scope with delete_scope: true to wipe all memories in that scope.',
-      'Returns confirmation with the count of deleted memories.',
-    ].join(' '),
-    inputSchema: {
-      type:       'object' as const,
-      properties: {
-        id:           { type: 'string',  description: 'OKF concept ID to delete (e.g. "general/why-graphql").' },
+        id:           { type: 'string',  description: 'OKF concept ID, e.g. "general/old-decision".' },
+        mode:         { type: 'string',  enum: ['delete', 'invalidate'], description: 'Defaults to invalidate, which is reversible. Pass delete only to destroy the document.' },
+        reason:       { type: 'string',  description: 'Reason appended to the body when mode=invalidate.' },
         scope:        { type: 'string',  description: 'Scope to wipe (requires delete_scope: true).' },
         delete_scope: { type: 'boolean', description: 'Set true to delete all memories in scope.' },
       },
@@ -181,7 +137,7 @@ export function buildMemoryHandlers(config: JambavanConfig, mempalace = new MemP
   const archive = () => new MemoryArchive(config);
   const defaultScope = () => isUnsafeFallbackRoot(config) ? 'global' : projectScope(config);
 
-  return {
+  const handlers = {
     jambavan_memory_store(input: Record<string, unknown>): string {
       const title  = String(input['title'] ?? '');
       const body   = String(input['body']  ?? '');
@@ -426,6 +382,34 @@ export function buildMemoryHandlers(config: JambavanConfig, mempalace = new MemP
         const warning = error instanceof MemPalaceError ? error.message : 'MemPalace request failed.';
         return `# Jambavan status\n\n${local}\n\n# MemPalace status\n\nWarning: ${warning}`;
       }
+    },
+  };
+
+  // ── Consolidated 2.0 entry points ──────────────────────────────────────────
+  // Thin routers over the handlers above so the advertised surface shrinks
+  // without any read/write behaviour changing. An explicit `action`/`mode`
+  // (supplied by a deprecated alias) always wins over argument inference.
+  return {
+    ...handlers,
+
+    async jambavan_memory_read(input: Record<string, unknown>): Promise<string> {
+      const action = String(input['action'] ?? '');
+      if (action === 'get' || (!action && input['id'])) return handlers.jambavan_memory_get(input);
+      if (action === 'search' || (!action && input['query'])) return handlers.jambavan_memory_search(input);
+      if (action && action !== 'recall') {
+        return `Error: unknown action "${action}". Use get, search, or recall.`;
+      }
+      return handlers.jambavan_memory_recall(input);
+    },
+
+    jambavan_memory_forget(input: Record<string, unknown>): string {
+      // Defaults to the reversible mode: a caller who omits `mode` gets an
+      // invalidate, never an irreversible delete. `delete_scope` is a wipe, so
+      // it only ever means delete.
+      const mode = String(input['mode'] ?? (input['delete_scope'] === true ? 'delete' : 'invalidate'));
+      if (mode === 'invalidate') return handlers.jambavan_memory_invalidate(input);
+      if (mode !== 'delete') return `Error: unknown mode "${mode}". Use delete or invalidate.`;
+      return handlers.jambavan_memory_delete(input);
     },
   };
 }

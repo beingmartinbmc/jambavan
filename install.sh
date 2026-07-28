@@ -38,7 +38,7 @@ allow_write=0
 allow_bash=0
 if [ -t 0 ]; then
   printf "\nEnable opt-in tools?\n"
-  printf "  write_file / patch_file / jambavan_sankshipta  (JAMBAVAN_ALLOW_WRITE=1)\n"
+  printf "  write_file / patch_file / jambavan_compress_prompt  (JAMBAVAN_ALLOW_WRITE=1)\n"
   printf "  bash                                           (JAMBAVAN_ALLOW_BASH=1)\n"
   printf "These are disabled by default for safety. You can change this later by\n"
   printf "editing the 'env' block in your agent's MCP config.\n\n"
@@ -50,7 +50,7 @@ if [ -t 0 ]; then
   [[ "$ans_bash" =~ ^[Yy]$ ]] && allow_bash=1
   echo
 else
-  warn "Non-interactive run: write_file, patch_file, bash, and jambavan_sankshipta are disabled by default."
+  warn "Non-interactive run: write_file, patch_file, bash, and jambavan_compress_prompt are disabled by default."
   warn "Re-run the installer in a terminal to enable them, or set JAMBAVAN_ALLOW_WRITE=1 / JAMBAVAN_ALLOW_BASH=1"
   warn "in your agent's MCP server env config."
   echo

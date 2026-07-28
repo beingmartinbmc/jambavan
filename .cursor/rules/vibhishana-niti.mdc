@@ -87,7 +87,7 @@ If the explanation is longer than the diff, shorten the explanation.
 - Run `jambavan_index` before `jambavan_context`; context without an index is noise.
 - Run `jambavan_watch start` after indexing when the session will continue.
 - Prefer surgical patches over full-file rewrites.
-- Run `jambavan_rin_mochan` before release to audit accumulated `// rin:` debt.
+- Run `jambavan_debt_ledger` before release to audit accumulated `// rin:` debt.
 
 ## Deactivate
 

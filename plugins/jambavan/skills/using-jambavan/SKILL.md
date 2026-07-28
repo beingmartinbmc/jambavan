@@ -26,24 +26,29 @@ Use this sequence for a new project session:
 | Need | Tool | Key options |
 |------|------|-------------|
 | Understand unfamiliar code | `jambavan_context` | `query`, `compress_prose`, `include_diff`, `include_tests` |
-| Trace callers/callees | `jambavan_graph_query` | `query`, `direction` |
-| Find path between symbols | `jambavan_graph_path` | `from`, `to` |
-| Graph overview / hotspots | `jambavan_graph_report` | — |
+| Trace callers/callees | `jambavan_graph` | `action: query`, `query`, `direction` |
+| Find path between symbols | `jambavan_graph` | `action: path`, `from`, `to` |
+| Graph overview / hotspots | `jambavan_graph` | `action: report` |
 | Persist a decision | `jambavan_memory_store` | `title`, `body`, optional `scope` |
-| Search past decisions | `jambavan_memory_search` | `query`, optional `scope` |
-| Wake up with active memories | `jambavan_memory_recall` | optional `scope`, `limit` (default 20) |
+| Search past decisions | `jambavan_memory_read` | `query`, optional `scope` |
+| Fetch one memory by ID | `jambavan_memory_read` | `id` |
+| Wake up with active memories | `jambavan_memory_read` | optional `scope`, `limit` (default 20) |
 | Distill session into memories | `jambavan_memory_mine_session` | `text`, optional `scope` |
+| Retire a memory | `jambavan_memory_forget` | `id`; `mode` defaults to the reversible `invalidate`, pass `delete` to destroy |
 | Record a dead end | `jambavan_failure_store` | `command`, `symptom`, optional `root_cause` |
 | Check before retrying | `jambavan_failure_search` | `query`, optional `scope` |
-| Hand off to next session | `jambavan_session_export` | optional `scope`, `share_safe` |
-| Resume from handoff | `jambavan_session_import` | `text`, optional `scope` |
+| Hand off to next session | `jambavan_session_handoff` | optional `scope`, `share_safe` |
+| Resume from handoff | `jambavan_session_handoff` | `text`, optional `scope` |
 | Prepare review context | `jambavan_review_pack` | `base`, `max_files` |
-| Compress verbose prose | `compress_prompt` (`jambavan_sankshipta`) | `path`, optional `in_place`, `backup` |
-| Audit shortcut debt | `debt_ledger` (`jambavan_rin_mochan`) | — |
-| Investigate bug/failure root cause | `root_cause` (`jambavan_mool_kaaran`) | `symptom`, `context`, `attempts_so_far` |
-| Verification gate before completion | `verify_gate` (`jambavan_praman`) | `claim`, `type` |
-| Sequence multi-step task strategy | `strategy_plan` (`jambavan_yukti`) | `task`, `constraints`, `scale` |
-| Decompose task to parallel units | `decompose_task` (`jambavan_vibhaajan`) | `task`, `units`, `constraints` |
+| Compress verbose prose | `jambavan_compress_prompt` | `path`, optional `in_place`, `backup` |
+| Audit shortcut debt | `jambavan_debt_ledger` | — |
+| Investigate bug/failure root cause | `root_cause` **prompt** | `symptom`, `context`, `attempts_so_far` |
+| Verification gate before completion | `verify_gate` **prompt** | `claim`, `type` |
+| Sequence multi-step task strategy | `strategy_plan` **prompt** | `task`, `constraints`, `scale` |
+| Decompose task to parallel units | `decompose_task` **prompt** | `task`, `units`, `constraints` |
+
+The last four are MCP **prompts**, not tools — invoke them as slash commands or prompt
+requests. Pre-2.0 tool names still resolve if your host calls them as tools.
 
 ## When to Use Each Power
 
@@ -59,7 +64,7 @@ Use `include_diff` when you need to understand recent changes. Use `include_test
 
 ### Graph (trace relationships)
 
-Before refactoring a symbol, use `jambavan_graph_query` to inspect a bounded neighborhood of candidate callers and callees. Before assuming two modules are unrelated, use `jambavan_graph_path`.
+Before refactoring a symbol, use `jambavan_graph` (`action: query`) to inspect a bounded neighborhood of candidate callers and callees. Before assuming two modules are unrelated, use `jambavan_graph` (`action: path`).
 
 **Caveat:** The graph is not full type or scope resolution. Structural AST/import evidence produces `EXTRACTED` edges. Ambiguous same-name candidates are labelled `INFERRED` and excluded unless `include_inferred=true`; body-token mentions do not create graph edges. Results are bounded by the selected symbol and token limits, so verify important paths before large refactors.
 
@@ -69,7 +74,7 @@ Store decisions, architectural choices, and resolved ambiguities as memories. Th
 
 - Use `jambavan_memory_store` after making a non-obvious decision. It defaults to the active Git-derived project scope, or `global` without a root; use `collection` for logical grouping.
 - Use `jambavan_memory_mine_session` at session end to distill durable facts. MemPalace reads require an explicit `provider`; ordinary recall remains Jambavan-only.
-- Use `jambavan_memory_recall` at session start (or rely on `jambavan_awaken`).
+- Use `jambavan_memory_read` at session start (or rely on `jambavan_awaken`).
 
 ### Failure Memory (check prior dead ends)
 
@@ -81,14 +86,14 @@ After hitting a dead end: `jambavan_failure_store` with command, symptom, root c
 
 Use the 4 counsel tools to avoid thrashing, enforce verification, and maintain rigorous planning:
 
-- **Root Cause Protocol (`root_cause`, canonical `jambavan_mool_kaaran`)**: Use before proposing a fix for a test failure or unexpected behavior. Focuses on Observe → Compare → Hypothesize → Fix and recommends reassessment after 3+ failed attempts.
-- **Verification Gate (`verify_gate`, canonical `jambavan_praman`)**: Use before asserting that work is done. It asks for fresh evidence appropriate to the claim.
-- **Approach Strategy (`strategy_plan`, canonical `jambavan_yukti`)**: Use before writing non-trivial code. Returns scaled structures (small/medium/large) for executing the task safely.
-- **Parallel Decomposition (`decompose_task`, canonical `jambavan_vibhaajan`)**: Use for complex multi-component tasks that have independent units and clear contracts.
+- **Root Cause Protocol (`root_cause` prompt)**: Use before proposing a fix for a test failure or unexpected behavior. Focuses on Observe → Compare → Hypothesize → Fix and recommends reassessment after 3+ failed attempts.
+- **Verification Gate (`verify_gate` prompt)**: Use before asserting that work is done. It asks for fresh evidence appropriate to the claim.
+- **Approach Strategy (`strategy_plan` prompt)**: Use before writing non-trivial code. Returns scaled structures (small/medium/large) for executing the task safely.
+- **Parallel Decomposition (`decompose_task` prompt)**: Use for complex multi-component tasks that have independent units and clear contracts.
 
 ### Session Handoff
 
-Ending a session? `jambavan_session_export` produces a single portable document (memories, rin debt, git status). Paste it into the next session or pass it to a colleague via `jambavan_session_import`.
+Ending a session? `jambavan_session_handoff` produces a single portable document (memories, rin debt, git status). Paste it into the next session or pass it to a colleague via `jambavan_session_handoff`.
 
 For human handoff outside the MCP host, `npx jambavan html-handoff --out <file>` writes a self-contained browser report with memories, failure records, rin debt, index stats, and git status.
 
@@ -107,7 +112,7 @@ Jambavan bakes token efficiency into its design. Follow these patterns:
 - **`jq`/`yq`/`awk`/`cut`/`head`** — structured projections in `bash`.
 - **Quiet/no-color flags** — `bash` already exports `NO_COLOR=1`.
 - **Hash/mtime polling** — check if a file changed before re-reading it.
-- **`jambavan_sankshipta`** — compress verbose docs/prompts in place.
+- **`jambavan_compress_prompt`** — compress verbose docs/prompts in place.
 
 ## Common Mistakes
 

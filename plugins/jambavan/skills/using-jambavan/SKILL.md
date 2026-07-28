@@ -15,9 +15,9 @@ Jambavan is an MCP server that provides AST-aware code indexing, token-budgeted 
 
 Use this sequence for a new project session:
 
-1. **`jambavan_awaken {}`** — loads the protocol and recent project memories. If it reports an unresolved fallback, repeat with an eligible `{ "root": "/absolute/repo/path" }` before any stateful call.
-2. **`jambavan_doctor {}`** — confirms the project root, gates, storage, and index/watcher status.
-3. **`jambavan_index {}`** — builds or refreshes the AST-aware code index; it accepts the same optional existing absolute directory inside the unresolved fallback root, but cannot replace an already fixed binding.
+1. **`jambavan_doctor {}`** — read `Project root` and its `source` before anything else, along with gates, storage, and index/watcher status. Every repository-bound tool fails closed while the root is an unresolved `cwd-fallback`.
+2. **`jambavan_awaken {}`** — loads the protocol and recent project memories. Pass `{ "root": "/absolute/repo/path" }` when the root is unresolved or belongs to another repo. A root a model set earlier (`source: tool-input`) is re-pointed cleanly — the server stops the old watcher and closes the old index first — which is what lets one shared server process serve several workspaces. A root from `JAMBAVAN_ROOT`, the host's `roots/list`, or the server's own working directory is immutable and fails with `root is already fixed by ...`; do not retry it.
+3. **`jambavan_index {}`** — builds or refreshes the AST-aware code index; it accepts the same optional `root`.
 4. **`jambavan_watch { "action": "start" }`** — keeps the index live while you edit (skip for one-shot tasks).
 5. **`jambavan_context { "query": "<task-specific query>" }`** — pulls ranked, token-budgeted context before reading unfamiliar code.
 
@@ -134,7 +134,7 @@ Jambavan bakes token efficiency into its design. Follow these patterns:
 
 ## Default session practices
 
-- Run the session protocol (awaken → doctor → index → watch → context)
+- Run the session protocol (doctor → awaken → index → watch → context)
 - Store decisions that future sessions need
 - Record dead ends as failures
 - Use `include_diff` when investigating recent regressions

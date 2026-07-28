@@ -9,58 +9,50 @@
 ## What Jambavan is
 
 ```
- ┌─────────────────────┐           MCP (stdio)          ┌──────────────────────────────┐
- │  Host model /        │ ──────────────────────────────▶ │   Jambavan MCP Server          │
- │  agent runtime       │                                 │                              │
- │                      │ ◀────────── tool results ─────  │  ── Code index ──            │
- │  • Claude Code       │                                 │  jambavan_index              │
- │  • Codex CLI         │                                 │  jambavan_context            │
- │  • Cursor            │                                 │  jambavan_watch              │
- │  • Continue          │                                 │  jambavan_diagnostics        │
- └─────────────────────┘                                  │  jambavan_doctor             │
-                                                          │                              │
-                                                          │  ── Graph & compression ──   │
-                                                          │  jambavan_graph_report       │
-                                                          │  jambavan_graph_query        │
-                                                          │  jambavan_graph_path         │
-                                                          │  jambavan_impact             │
-                                                          │  jambavan_sankshipta (opt-in)│
-                                                          │                              │
-                                                          │  ── Memory ──                │
-                                                          │  jambavan_memory_store       │
-                                                          │  jambavan_memory_get         │
-                                                          │  jambavan_memory_search      │
-                                                          │  jambavan_memory_recall      │
-                                                          │  jambavan_memory_mine_session│
-                                                          │  jambavan_memory_invalidate  │
-                                                          │  jambavan_memory_delete      │
-                                                          │  jambavan_memory_status      │
-                                                          │                              │
-                                                          │  ── Session continuity ──    │
-                                                          │  jambavan_failure_store      │
-                                                          │  jambavan_failure_search     │
-                                                          │  jambavan_session_export     │
-                                                          │  jambavan_session_import     │
-                                                          │  jambavan_review_pack        │
-                                                          │                              │
-                                                          │  ── Counsel ──               │
-                                                          │  jambavan_mool_kaaran        │
-                                                          │  jambavan_praman             │
-                                                          │  jambavan_yukti              │
-                                                          │  jambavan_vibhaajan          │
-                                                          │                              │
-                                                          │  ── Dev workflow ──          │
-                                                          │  jambavan_vibhishana_niti    │
-                                                          │  jambavan_rin_mochan         │
-                                                          │  jambavan_awaken             │
-                                                          │                              │
-                                                          │  ── File system & shell ──   │
-                                                          │  read_file                   │
-                                                          │  search / list_files         │
-                                                          │  write_file  (opt-in)        │
-                                                          │  patch_file  (opt-in)        │
-                                                          │  bash        (opt-in)        │
-                                                          └──────────────────────────────┘
+ ┌─────────────────────┐           MCP (stdio)          ┌──────────────────────────────────┐
+ │  Host model /        │ ──────────────────────────────▶ │   Jambavan MCP Server            │
+ │  agent runtime       │                                 │                                  │
+ │                      │ ◀────────── tool results ─────  │  ── Code index ──                │
+ │  • Claude Code       │                                 │  jambavan_index                  │
+ │  • Codex CLI         │                                 │  jambavan_context                │
+ │  • Cursor            │                                 │  jambavan_watch                  │
+ │  • Continue          │                                 │  jambavan_doctor                 │
+ └─────────────────────┘                                  │                                  │
+                                                          │  ── Graph & impact ──            │
+                                                          │  jambavan_graph                  │
+                                                          │  jambavan_impact                 │
+                                                          │                                  │
+                                                          │  ── Memory ──                    │
+                                                          │  jambavan_memory_store           │
+                                                          │  jambavan_memory_read            │
+                                                          │  jambavan_memory_forget          │
+                                                          │  jambavan_memory_mine_session    │
+                                                          │  jambavan_memory_status          │
+                                                          │                                  │
+                                                          │  ── Session continuity ──        │
+                                                          │  jambavan_failure_store          │
+                                                          │  jambavan_failure_search         │
+                                                          │  jambavan_session_handoff        │
+                                                          │  jambavan_review_pack            │
+                                                          │                                  │
+                                                          │  ── Dev workflow ──              │
+                                                          │  jambavan_awaken                 │
+                                                          │  jambavan_debt_ledger            │
+                                                          │                                  │
+                                                          │  ── Prompts (no schema cost) ──  │
+                                                          │  root_cause / verify_gate        │
+                                                          │  strategy_plan / decompose_task  │
+                                                          │  dev_rules                       │
+                                                          │                                  │
+                                                          │  ── File system & shell ──       │
+                                                          │  read_file                       │
+                                                          │  search / list_files             │
+                                                          │  write_file   (opt-in)           │
+                                                          │  patch_file   (opt-in)           │
+                                                          │  bash         (opt-in)           │
+                                                          │  jambavan_compress_prompt        │
+                                                          │               (opt-in)           │
+                                                          └──────────────────────────────────┘
 ```
 
 The host model decides *what* to do.
@@ -314,13 +306,13 @@ src/
 │   ├── sankshipta.ts         # Deterministic prose/prompt compression
 │   ├── memory.ts             # jambavan_memory_* descriptors + handlers
 │   ├── failure-memory.ts     # jambavan_failure_store/_search — structured failure records
-│   ├── session-handoff.ts    # jambavan_session_export/_import — portable handoff document
+│   ├── session-handoff.ts    # jambavan_session_handoff — portable handoff document
 │   ├── jambavan.ts           # Core jambavan_* handlers + awaken protocol text
-│   ├── vibhishana-niti.ts    # jambavan_vibhishana_niti + jambavan_rin_mochan ledger
-│   ├── mool-kaaran.ts       # jambavan_mool_kaaran — root-cause investigation protocol
-│   ├── praman.ts            # jambavan_praman — verification gate protocol
-│   ├── yukti.ts             # jambavan_yukti — approach strategy protocol
-│   ├── vibhaajan.ts         # jambavan_vibhaajan — parallel decomposition protocol
+│   ├── vibhishana-niti.ts    # dev_rules prompt + jambavan_debt_ledger
+│   ├── mool-kaaran.ts       # root_cause prompt — root-cause investigation protocol
+│   ├── praman.ts            # verify_gate prompt — verification gate protocol
+│   ├── yukti.ts             # strategy_plan prompt — approach strategy protocol
+│   ├── vibhaajan.ts         # decompose_task prompt — parallel decomposition protocol
 │   ├── doctor.ts            # jambavan_doctor — environment/config health check
 │   ├── review-pack.ts       # jambavan_review_pack — touched symbols/callers/tests/failures/risk
 │   ├── review-pack-json.ts  # `jambavan review-pack --format json` — CI/PR-comment schema
@@ -395,7 +387,7 @@ jambavan_memory_store { "title": "Why we use GraphQL", "body": "...", "collectio
   ~/.jambavan/memory/my-project/why-we-use-graphql.md
   → Human-readable and portable
 
-jambavan_memory_search { "query": "graphql rationale", "scope": "my-project" }
+jambavan_memory_read { "action": "search", "query": "graphql rationale", "scope": "my-project" }
          │
          ▼
   MemoryArchive.search()

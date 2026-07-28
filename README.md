@@ -78,13 +78,15 @@ jambavan_context { "query": "where is auth handled?" }
 
 One command. Finds Claude Code, Codex CLI, Cursor, and Continue on your machine and registers Jambavan for each one it finds.
 
+On macOS, Linux, WSL, or Git Bash:
+
 ```bash
-# macOS, Linux, WSL, Git Bash
 curl -fsSL https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/install.sh | bash
 ```
 
+On Windows, in PowerShell 5.1+:
+
 ```powershell
-# Windows, PowerShell 5.1+
 irm https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/install.ps1 | iex
 ```
 

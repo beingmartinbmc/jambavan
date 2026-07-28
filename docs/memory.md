@@ -10,11 +10,15 @@ With a repository root, the default scope is derived without exposing its raw re
 
 Pre-global archives remain readable at `<repo>/.jambavan/memory` when the default archive is active. Legacy `general` and old path-derived project scopes appear under the active Git-derived scope, results are labelled `storage: legacy`, global duplicates win, and the legacy documents are never edited. Migrate explicitly and non-destructively:
 
-```bash
-# Preview only
-npx jambavan memory migrate --root /path/to/repository
+Preview only:
 
-# Copy after a conflict-free preview; the legacy store is retained
+```bash
+npx jambavan memory migrate --root /path/to/repository
+```
+
+Copy after a conflict-free preview; the legacy store is retained:
+
+```bash
 npx jambavan memory migrate --root /path/to/repository --apply
 ```
 

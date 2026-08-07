@@ -12,6 +12,11 @@ export interface ChangedFile {
   ranges: ChangedRange[];
 }
 
+export interface DiffRange {
+  oldStart: number;
+  oldCount: number;
+}
+
 function decodeGitPath(value: string): string {
   if (!value.startsWith('"') || !value.endsWith('"')) return value;
 
@@ -76,6 +81,61 @@ export function parseChangedRanges(raw: string): Map<string, ChangedRange[]> {
     ranges.set(currentPath, fileRanges);
   }
   return ranges;
+}
+
+export function parseDiffRanges(raw: string): Map<string, DiffRange[]> {
+  const ranges = new Map<string, DiffRange[]>();
+  let currentPath: string | undefined;
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('--- ')) {
+      const value = decodeGitPath(line.slice(4));
+      currentPath = value === '/dev/null' ? undefined : value.replace(/^a\//, '');
+      continue;
+    }
+    if (!currentPath || !line.startsWith('@@ ')) continue;
+    const match = /-(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))?/.exec(line);
+    if (!match) continue;
+    const fileRanges = ranges.get(currentPath) ?? [];
+    fileRanges.push({
+      oldStart: Number(match[1]),
+      oldCount: match[2] === undefined ? 1 : Number(match[2]),
+    });
+    ranges.set(currentPath, fileRanges);
+  }
+  return ranges;
+}
+
+export function deletedSymbols(symbols: Symbol[], ranges: DiffRange[], currentSymbols: Symbol[] = []): Symbol[] {
+  const baseByKey = new Map<string, Symbol[]>();
+  for (const symbol of symbols) {
+    const key = `${symbol.name}\0${symbol.type}`;
+    const group = baseByKey.get(key) ?? [];
+    group.push(symbol);
+    baseByKey.set(key, group);
+  }
+  const matchedBase = new Set<Symbol>();
+  for (const current of currentSymbols) {
+    const candidates = (baseByKey.get(`${current.name}\0${current.type}`) ?? [])
+      .filter(symbol => !matchedBase.has(symbol));
+    if (candidates.length === 0) continue;
+    const exact = candidates.filter(symbol => symbol.content === current.content);
+    const match = (exact.length > 0 ? exact : candidates)
+      .sort((a, b) => Math.abs(a.startLine - current.startLine) - Math.abs(b.startLine - current.startLine))[0];
+    matchedBase.add(match);
+  }
+  return symbols.filter(symbol => {
+    if (matchedBase.has(symbol)) return false;
+    return ranges.some(range => {
+      if (range.oldCount === 0) return false;
+      const rangeEnd = range.oldStart + range.oldCount - 1;
+      if (symbol.startLine >= range.oldStart && symbol.endLine <= rangeEnd) return true;
+      const overlapping = symbols.filter(candidate => candidate.startLine <= rangeEnd && candidate.endLine >= range.oldStart);
+      const innermost = overlapping.filter(candidate => !overlapping.some(other => other !== candidate
+        && other.startLine >= candidate.startLine
+        && other.endLine <= candidate.endLine));
+      return innermost.length === 1 && innermost[0] === symbol;
+    });
+  });
 }
 
 export function changedSymbols(symbols: Symbol[], ranges: ChangedRange[]): Symbol[] {

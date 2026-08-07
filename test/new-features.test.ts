@@ -427,11 +427,49 @@ test('buildTestMap: import path disambiguates same-named source symbols', () => 
   } finally { cleanup(); }
 });
 
+test('buildTestMap: bare package imports are not associated with same-named local symbols', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    const sourcePath = path.join(root, 'src', 'client.ts');
+    const testPath = path.join(root, 'test', 'client.test.ts');
+    fs.writeFileSync(sourcePath, 'export function request() { return "local"; }\n');
+    fs.writeFileSync(testPath, 'import { request } from "external-client";\nvoid request;\n');
+
+    const source = { name: 'request', type: 'function' as const, startLine: 1, endLine: 1, content: '', filePath: sourcePath };
+    const testSymbol = { name: 'caseOne', type: 'function' as const, startLine: 1, endLine: 2, content: '', filePath: testPath };
+    const map = buildTestMap([source, testSymbol], config);
+
+    assert.deepEqual(testAssociationsFor(map, source, config), []);
+  } finally { cleanup(); }
+});
+
+test('buildTestMap: tsconfig path aliases resolve local source associations', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'tsconfig.json'), JSON.stringify({
+      compilerOptions: { baseUrl: '.', paths: { '@app/*': ['src/*'] } },
+    }));
+    const sourcePath = path.join(root, 'src', 'client.ts');
+    const testPath = path.join(root, 'test', 'client.test.ts');
+    fs.writeFileSync(sourcePath, 'export function request() { return "local"; }\n');
+    fs.writeFileSync(testPath, 'import { request } from "@app/client";\nvoid request;\n');
+    const source = sym('request', sourcePath, 'export function request() {}');
+
+    const map = buildTestMap([source], config);
+
+    assert.equal(testAssociationsFor(map, source, config).length, 1);
+  } finally { cleanup(); }
+});
+
 test('formatTestAssociations: formats import-confidence associations', () => {
   const output = formatTestAssociations([
     { testFile: 'test/foo.test.ts', symbolName: 'foo', sourceFile: 'src/foo.ts', confidence: 'import' },
   ]);
-  assert.match(output, /Tests:/);
+  assert.match(output, /Test associations\/references:/);
   assert.match(output, /test\/foo\.test\.ts.*imports/);
 });
 

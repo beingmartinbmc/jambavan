@@ -1,6 +1,6 @@
 # Measured proof card — react/react
 
-A real run of `node dist/benchmark.js --json` against a large public repository, published in full so the numbers can be reproduced and argued with. Follow [benchmark-proof-card.md](https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-proof-card.md) to produce your own.
+This card preserves the reported aggregate from a real `node dist/benchmark.js --json` run against a large public repository. It does **not** publish the raw JSON in full: the aggregate says five auto-derived queries, while only four per-query rows were retained. The missing row cannot be reconstructed without inventing data. Follow [benchmark-proof-card.md](https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-proof-card.md) to run the pinned code and inputs yourself.
 
 ```text
 Jambavan proof card
@@ -18,14 +18,23 @@ Method: https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-
 ## Reproduce it
 
 ```bash
-git clone --depth 1 https://github.com/react/react.git /tmp/react
+WORKDIR="$(mktemp -d)"
+git clone --branch v2.0.0 --depth 1 https://github.com/beingmartinbmc/jambavan.git "$WORKDIR/jambavan"
+git init "$WORKDIR/react"
+git -C "$WORKDIR/react" remote add origin https://github.com/react/react.git
+git -C "$WORKDIR/react" fetch --depth 1 origin 9ceb1e7
+git -C "$WORKDIR/react" checkout --detach FETCH_HEAD
+cd "$WORKDIR/jambavan"
+npm ci
 npm run build
-JAMBAVAN_ROOT=/tmp/react node dist/benchmark.js
+JAMBAVAN_ROOT="$WORKDIR/react" node dist/benchmark.js
 ```
+
+This starts clean and pins the benchmark implementation and target commit. Exact timings depend on the machine and current dependency/platform behavior, so a rerun is a reproducibility check of the method and inputs, not a promise of byte-identical output.
 
 ## Per-query detail
 
-Queries are auto-derived from the repository's most common symbol names, so they are not hand-picked. `baseline` is what an agent spends opening every complete file that contains a match; `jambavan` is the ranked snippet set assembled within the 8000-token budget.
+Queries are auto-derived from the repository's most common symbol names, so they are not hand-picked. `baseline` is what an agent spends opening every complete file that contains a match; `jambavan` is the ranked snippet set assembled within the 8000-token budget. The four surviving rows below are historical evidence, but they are incomplete: they sum to 113 file matches, 6,906 Jambavan tokens, and 195,362 baseline tokens, not the published five-query totals of 141, 9,207, and 261,816.
 
 | Query | Files matched | Jambavan tokens | Baseline tokens | Saved |
 |---|---|---|---|---|
@@ -33,7 +42,9 @@ Queries are auto-derived from the repository's most common symbol names, so they
 | `Component` | 28 | 2,301 | 66,454 | 97% |
 | `useFoo` | 30 | 1,807 | 25,497 | 93% |
 | `FIXTURE_ENTRYPOINT` | 30 | 1,723 | 2,968 | 42% |
-| **Total** | **141** | **9,207** | **261,816** | **96%** |
+| **Four retained rows subtotal** | **113** | **6,906** | **195,362** | **96%** |
+
+The historical aggregate reports **five queries total**: **141** file matches, **9,207** Jambavan tokens, **261,816** baseline tokens, and **96%** saved after rounding. The raw fifth row and its identity are unavailable. Although subtracting the subtotal would produce an aggregate remainder, this card does not present that remainder as recovered raw evidence.
 
 ## What the numbers do not say
 

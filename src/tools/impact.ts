@@ -4,16 +4,16 @@ import type { JambavanIndex } from '../index/indexer';
 import type { Symbol } from '../index/ast-parser';
 import { buildTestMap, testAssociationsFor } from '../index/test-map';
 import { buildSymbolGraph, type GraphNode } from '../knowledge/graph';
-import { changedSymbols, type ChangedFile } from './changed-symbols';
-import { detectBaseBranch, getChangedFiles } from './review-pack';
+import { changedSymbols, deletedSymbols, type ChangedFile } from './changed-symbols';
+import { detectBaseBranch, getBaseAnalysis, getChangedFiles, type BaseAnalysis } from './review-pack';
 
 const DEFAULT_SYMBOL_LIMIT = 100_000;
 
 export const IMPACT_TOOL_DEFS = [{
   name: 'jambavan_impact',
   description: [
-    'Analyze changed symbols against inbound extracted graph edges and associated tests.',
-    'Reports bounded transitive callers, test coverage, and explicit graph incompleteness.',
+    'Analyze changed symbols against inbound extracted graph edges and test associations/references.',
+    'Reports bounded transitive callers, test associations/references, and explicit graph incompleteness.',
     'Use before a risky refactor or PR review; call jambavan_index first.',
   ].join(' '),
   inputSchema: {
@@ -50,23 +50,61 @@ export function buildImpactHandlers(config: JambavanConfig, getIndex: () => Jamb
         return `Error: could not analyze changes against base "${base}" (${message}). Pass a valid base ref or run inside a git repository.`;
       }
       const changed: Symbol[] = [];
+      let baseAnalysis: BaseAnalysis;
+      try {
+        baseAnalysis = getBaseAnalysis(config.projectRoot, base, files, includeWorktree);
+      } catch (err) {
+        const message = err instanceof Error ? err.message.split('\n')[0] : String(err);
+        return `Error: could not analyze base-side symbols against "${base}" (${message}).`;
+      }
       for (const file of files) {
-        if (file.status.startsWith('D')) continue;
+        const currentSymbols = includeWorktree
+          ? index.getFileSymbols(path.join(config.projectRoot, file.path))
+          : baseAnalysis.currentSymbolsByPath.get(file.path) ?? [];
         changed.push(...changedSymbols(
-          index.getFileSymbols(path.join(config.projectRoot, file.path)),
+          currentSymbols,
           file.ranges,
+        ));
+        const oldPath = file.oldPath ?? file.path;
+        changed.push(...deletedSymbols(
+          baseAnalysis.symbolsByPath.get(oldPath) ?? [],
+          baseAnalysis.diffRanges.get(oldPath) ?? [],
+          currentSymbols,
         ));
       }
       if (changed.length === 0) {
-        return `# Jambavan Impact\n\nNo indexed changed symbols found vs \`${base}\`.`;
+        return [
+          '# Jambavan Impact',
+          '',
+          `No changed or deleted parsed symbols found vs \`${base}\`; absence here does not prove there is no symbol impact.`,
+          ...baseAnalysis.warnings.map(warning => `Warning: ${warning}`),
+        ].join('\n');
       }
 
       const allSymbols = index.getAllSymbols(DEFAULT_SYMBOL_LIMIT);
-      const graph = buildSymbolGraph(allSymbols, config, index.getAllReExports());
-      const testMap = buildTestMap(allSymbols, config);
+      const touchedPaths = new Set(files.map(file => path.join(config.projectRoot, file.path)));
+      const currentSymbols = [
+        ...allSymbols.filter(symbol => !touchedPaths.has(symbol.filePath)),
+        ...files.flatMap(file => includeWorktree
+          ? index.getFileSymbols(path.join(config.projectRoot, file.path))
+          : baseAnalysis.currentSymbolsByPath.get(file.path) ?? []),
+      ];
+      const baseSymbols = [
+        ...allSymbols.filter(symbol => !touchedPaths.has(symbol.filePath)),
+        ...[...baseAnalysis.symbolsByPath.values()].flat(),
+      ];
+      const deletedSet = new Set(changed.filter(symbol => baseSymbols.includes(symbol)));
+      const indexedReExports = index.getAllReExports().filter(reExport => !touchedPaths.has(reExport.filePath));
+      const currentGraph = buildSymbolGraph(currentSymbols, config, [
+        ...indexedReExports,
+        ...(includeWorktree ? index.getAllReExports().filter(reExport => touchedPaths.has(reExport.filePath)) : baseAnalysis.currentReExports),
+      ]);
+      const baseGraph = buildSymbolGraph(baseSymbols, config, [...indexedReExports, ...baseAnalysis.reExports]);
+      const currentTestMap = buildTestMap(currentSymbols, config);
+      const baseTestMap = buildTestMap(baseSymbols, config, baseAnalysis.contentsByPath);
       const nodeByKey = new Map<string, GraphNode>();
       const symbolByNode = new Map<string, Symbol>();
-      for (const node of graph.nodes) {
+      for (const node of [...currentGraph.nodes, ...baseGraph.nodes]) {
         if (node.type !== 'symbol' || !node.filePath || node.line === undefined) continue;
         nodeByKey.set(symbolKey(node.filePath, node.label, node.line), node);
       }
@@ -76,20 +114,20 @@ export function buildImpactHandlers(config: JambavanConfig, getIndex: () => Jamb
         if (node) symbolByNode.set(node.id, symbol);
       }
 
-      const inbound = new Map<string, string[]>();
-      for (const edge of graph.edges) {
-        if (edge.type === 'contains' || edge.confidence !== 'EXTRACTED') continue;
-        const callers = inbound.get(edge.to) ?? [];
-        callers.push(edge.from);
-        inbound.set(edge.to, callers);
-      }
-
       const impacted = new Map<string, number>();
       const changedIds = new Set<string>();
       for (const symbol of changed) {
         const relative = path.relative(config.projectRoot, symbol.filePath).replace(/\\/g, '/');
         const node = nodeByKey.get(symbolKey(relative, symbol.name, symbol.startLine));
         if (!node) continue;
+        const graph = deletedSet.has(symbol) ? baseGraph : currentGraph;
+        const inbound = new Map<string, string[]>();
+        for (const edge of graph.edges) {
+          if (edge.type === 'contains' || edge.confidence !== 'EXTRACTED') continue;
+          const callers = inbound.get(edge.to) ?? [];
+          callers.push(edge.from);
+          inbound.set(edge.to, callers);
+        }
         changedIds.add(node.id);
         const queue: Array<{ id: string; depth: number }> = [{ id: node.id, depth: 0 }];
         const visited = new Set([node.id]);
@@ -109,6 +147,7 @@ export function buildImpactHandlers(config: JambavanConfig, getIndex: () => Jamb
 
       const tests = new Set<string>();
       for (const symbol of [...changed, ...[...impacted].map(([id]) => symbolByNode.get(id)).filter((s): s is Symbol => Boolean(s))]) {
+        const testMap = deletedSet.has(symbol) ? baseTestMap : currentTestMap;
         for (const association of testAssociationsFor(testMap, symbol, config)) tests.add(association.testFile);
       }
 
@@ -116,7 +155,8 @@ export function buildImpactHandlers(config: JambavanConfig, getIndex: () => Jamb
         .sort((a, b) => a[1] - b[1])
         .slice(0, 100)
         .map(([id, depth]) => {
-          const node = graph.nodes.find(candidate => candidate.id === id)!;
+          const node = currentGraph.nodes.find(candidate => candidate.id === id)
+            ?? baseGraph.nodes.find(candidate => candidate.id === id)!;
           return `- ${node.label} — ${node.filePath}:${node.line} (inbound depth ${depth})`;
         });
       const stats = index.stats();
@@ -134,8 +174,9 @@ export function buildImpactHandlers(config: JambavanConfig, getIndex: () => Jamb
         '## Potentially affected callers',
         ...(affectedLines.length ? affectedLines : ['No extracted inbound callers found.']),
         '',
-        '## Associated tests',
-        ...(tests.size ? [...tests].sort().map(testFile => `- ${testFile}`) : ['No matching tests found for the changed impact set.']),
+        '## Test associations/references',
+        ...(tests.size ? [...tests].sort().map(testFile => `- ${testFile}`) : ['No matching test associations/references found for the changed impact set.']),
+        ...baseAnalysis.warnings.flatMap(warning => ['', `Warning: ${warning}`]),
         ...(incomplete ? ['', `Warning: graph analysis stopped at ${DEFAULT_SYMBOL_LIMIT} symbols; narrow the repository or raise the implementation limit before relying on absence.`] : []),
       ].join('\n');
     },

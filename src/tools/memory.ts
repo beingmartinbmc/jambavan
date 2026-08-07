@@ -331,7 +331,7 @@ export function buildMemoryHandlers(config: JambavanConfig, mempalace = new MemP
     jambavan_memory_delete(input: Record<string, unknown>): string {
       const id          = input['id']    ? String(input['id'])    : undefined;
       const scope       = input['scope'] ? String(input['scope']) : undefined;
-      const deleteScope = Boolean(input['delete_scope']);
+      const deleteScope = input['delete_scope'] === true;
 
       if (deleteScope && scope) {
         const n = archive().primary.deleteByScope(scope);

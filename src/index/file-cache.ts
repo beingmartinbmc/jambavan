@@ -62,8 +62,8 @@ export class FileCache {
     if (!row) return true;
 
     // Fast path: unchanged size + mtime means unchanged content — skip the read+hash.
-    // rin: size+mtime can miss same-timestamp same-size edits; always hash if that becomes observable.
-    // The watcher already re-indexes on save.
+    // rin: explicit scans trust size+mtime for speed; watcher events force a
+    // reparse. Hash every scan too if preserved-metadata edits become common.
     if (row.size === stat.size && row.mtime_ms === Math.floor(stat.mtimeMs)) return false;
 
     return row.content_hash !== FileCache.hashFile(filePath);

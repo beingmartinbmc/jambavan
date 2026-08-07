@@ -1,5 +1,5 @@
 /**
- * Test-Symbol Association — discover which test files cover which symbols.
+ * Test-Symbol Association — discover which test files reference which symbols.
  *
  * Scans test files for imports and function-name mentions to build a
  * symbol→test map. Used by jambavan_context to surface relevant tests
@@ -29,6 +29,11 @@ interface ImportedSymbol {
   specifier: string;
 }
 
+interface TsconfigPaths {
+  baseUrl: string;
+  paths: Record<string, string[]>;
+}
+
 const TEST_FILE_PATTERNS = [
   /[/\\]test[/\\]/,
   /[/\\]__tests__[/\\]/,
@@ -52,6 +57,7 @@ export function isTestFile(filePath: string): boolean {
 export function buildTestMap(
   symbols: Symbol[],
   config: JambavanConfig,
+  contentOverrides: Map<string, string> = new Map(),
 ): Map<string, TestAssociation[]> {
   const sourceSymbols = symbols.filter(s => !isTestFile(s.filePath));
 
@@ -74,6 +80,9 @@ export function buildTestMap(
   for (const s of symbols) {
     if (isTestFile(s.filePath)) testFilePaths.add(s.filePath);
   }
+  for (const filePath of contentOverrides.keys()) {
+    if (isTestFile(filePath)) testFilePaths.add(filePath);
+  }
 
   // Filesystem discovery for test files the parser may have skipped
   try {
@@ -95,6 +104,7 @@ export function buildTestMap(
   }
 
   const result = new Map<string, TestAssociation[]>();
+  const tsconfigPaths = loadTsconfigPaths(config.projectRoot);
 
   for (const testPath of testFilePaths) {
     const testRel = path.relative(config.projectRoot, testPath).replace(/\\/g, '/');
@@ -102,7 +112,7 @@ export function buildTestMap(
     // Read the full file content for import/mention scanning
     let content: string;
     try {
-      content = fs.readFileSync(testPath, 'utf-8');
+      content = contentOverrides.get(testPath) ?? fs.readFileSync(testPath, 'utf-8');
     } catch {
       continue; // file may have been deleted since indexing
     }
@@ -131,7 +141,7 @@ export function buildTestMap(
     // Associate imported names with source symbols (high confidence)
     for (const { name, specifier } of imports) {
       if (!sourceByName.has(name)) continue;
-      const resolved = resolveImportedSource(testPath, specifier, sourceByName.get(name)!, config.projectRoot);
+      const resolved = resolveImportedSource(testPath, specifier, sourceByName.get(name)!, config.projectRoot, tsconfigPaths);
       if (!resolved) continue;
       if (!result.has(name)) result.set(name, []);
       const existing = result.get(name)!;
@@ -147,7 +157,7 @@ export function buildTestMap(
       if (importNames.has(name)) continue; // already handled with higher confidence
       if (!sourceByName.has(name)) continue;
       const candidates = sourceByName.get(name)!;
-      if (candidates.length !== 1) continue; // ambiguous mentions are not coverage evidence
+      if (candidates.length !== 1) continue; // ambiguous mentions are not association evidence
       if (!result.has(name)) result.set(name, []);
       const existing = result.get(name)!;
       const sourceFile = candidates[0];
@@ -165,16 +175,51 @@ function resolveImportedSource(
   specifier: string,
   candidates: string[],
   projectRoot: string,
+  tsconfigPaths: TsconfigPaths | null,
 ): string | undefined {
-  if (!specifier.startsWith('.')) return candidates.length === 1 ? candidates[0] : undefined;
-  const target = path.resolve(path.dirname(testPath), specifier);
+  const targets = specifier.startsWith('.')
+    ? [path.resolve(path.dirname(testPath), specifier)]
+    : resolveTsconfigTargets(specifier, projectRoot, tsconfigPaths);
+  if (targets.length === 0) return undefined;
   return candidates.find(candidate => {
     const absolute = path.resolve(projectRoot, candidate);
     const withoutExtension = absolute.replace(/\.[^.\\/]+$/, '');
-    return absolute === target
+    return targets.some(target => absolute === target
       || withoutExtension === target
-      || (path.basename(withoutExtension) === 'index' && path.dirname(withoutExtension) === target);
+      || (path.basename(withoutExtension) === 'index' && path.dirname(withoutExtension) === target));
   });
+}
+
+function loadTsconfigPaths(projectRoot: string): TsconfigPaths | null {
+  try {
+    const raw = fs.readFileSync(path.join(projectRoot, 'tsconfig.json'), 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const compilerOptions = JSON.parse(raw).compilerOptions ?? {};
+    return compilerOptions.paths
+      ? { baseUrl: compilerOptions.baseUrl ?? '.', paths: compilerOptions.paths }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveTsconfigTargets(specifier: string, projectRoot: string, aliases: TsconfigPaths | null): string[] {
+  if (!aliases) return [];
+  const targets: string[] = [];
+  for (const [pattern, replacements] of Object.entries(aliases.paths)) {
+    const star = pattern.indexOf('*');
+    const matched = star < 0
+      ? (specifier === pattern ? '' : undefined)
+      : (specifier.startsWith(pattern.slice(0, star)) && specifier.endsWith(pattern.slice(star + 1))
+          ? specifier.slice(star, specifier.length - (pattern.length - star - 1))
+          : undefined);
+    if (matched === undefined) continue;
+    for (const replacement of replacements) {
+      targets.push(path.resolve(projectRoot, aliases.baseUrl, replacement.replace('*', matched)));
+    }
+  }
+  return targets;
 }
 
 export function testAssociationsFor(
@@ -195,7 +240,7 @@ export function formatTestAssociations(associations: TestAssociation[]): string 
   const imports = associations.filter(a => a.confidence === 'import');
   const mentions = associations.filter(a => a.confidence === 'mention');
 
-  const lines = ['**Tests:**'];
+  const lines = ['**Test associations/references:**'];
   for (const a of imports) {
     lines.push(`  ✓ ${a.testFile} (imports)`);
   }

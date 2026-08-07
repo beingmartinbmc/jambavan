@@ -2,6 +2,8 @@
 
 Every command below is local. None of them call an LLM, send telemetry, or upload code.
 
+These CLI commands start their own short-lived process. In particular, `npx jambavan doctor` cannot see the index or watcher held by an already-running MCP server. For active-server root, tool-count, index, and watcher health, call MCP `jambavan_doctor {}` from the host.
+
 ```bash
 npm install
 npm run build
@@ -9,7 +11,7 @@ node dist/index.js --help
 node dist/index.js
 ```
 
-Set `JAMBAVAN_ROOT=/path/to/project` when launching outside the target repo.
+Set `JAMBAVAN_ROOT=/path/to/project` when launching outside the target repo. Jambavan reads the launch process environment; it does not auto-load `.env` or `.env.example`.
 
 ## One-shot commands
 

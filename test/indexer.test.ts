@@ -27,6 +27,30 @@ test('JambavanIndex: reports per-run and persistent symbols and self-ignores gen
   } finally { idx.close(); cleanup(); }
 });
 
+test('JambavanIndex.indexFile: forced watcher reindex catches preserved-metadata edits', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  const idx = new JambavanIndex(config);
+  try {
+    const filePath = path.join(root, 'same-metadata.ts');
+    writeSrc(root, 'same-metadata.ts', 'export function beforeName() { return 1; }');
+    await idx.index();
+    const original = fs.statSync(filePath);
+    const fixedMtimeMs = Math.floor(original.mtimeMs / 1000) * 1000;
+    fs.utimesSync(filePath, original.atimeMs / 1000, fixedMtimeMs / 1000);
+    idx.indexFile(filePath, true);
+
+    fs.writeFileSync(filePath, 'export function after_Name() { return 1; }', 'utf-8');
+    fs.utimesSync(filePath, original.atimeMs / 1000, fixedMtimeMs / 1000);
+
+    assert.equal(idx.indexFile(filePath), 0, 'metadata fast path skips the explicit scan');
+    assert.ok(idx.search('beforeName', 10).length > 0);
+
+    assert.ok(idx.indexFile(filePath, true) > 0, 'watcher force path reparses the file');
+    assert.equal(idx.search('beforeName', 10).length, 0);
+    assert.ok(idx.search('after_Name', 10).length > 0);
+  } finally { idx.close(); cleanup(); }
+});
+
 test('JambavanIndex.search: exact name match ranks above prefix and content-only matches', async () => {
   const { config, root, cleanup } = mkTempConfig();
   const idx = new JambavanIndex(config);

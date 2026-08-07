@@ -634,6 +634,10 @@ function extractWithRegex(
 
 export class ASTParser {
   parseFile(filePath: string): ParsedFile {
+    return this.parseSource(fs.readFileSync(filePath, 'utf-8'), filePath);
+  }
+
+  parseSource(source: string, filePath: string): ParsedFile {
     const ext      = path.extname(filePath).toLowerCase();
     const language = LANGUAGE_MAP[ext] ?? 'unknown';
 
@@ -641,7 +645,6 @@ export class ASTParser {
       return { filePath, symbols: [], language, reExports: [] };
     }
 
-    const source = fs.readFileSync(filePath, 'utf-8');
     const parser = getParser(language);
     const { symbols, reExports } = parser
       ? extractWithTreeSitter(source, filePath, language, parser)

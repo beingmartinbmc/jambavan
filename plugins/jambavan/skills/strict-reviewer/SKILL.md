@@ -9,7 +9,7 @@ Reviewing is not skimming for typos. Find what a lazy pass would miss: the wrong
 
 ## Step 1 — Get the real diff, not a guess
 
-If `jambavan_review_pack` is available, call it against the PR's base branch. It gives you touched files, indexed symbols changed in each, bounded extracted caller candidates, associated tests, past failure records mentioning the same files, and risk flags (open `// rin:` debt, no matching test). Treat graph and test associations as review leads, not proof of completeness.
+If `jambavan_review_pack` is available, call it against the PR's base branch. It gives you touched files, parsed symbols changed or deleted in each, bounded extracted caller candidates, heuristic test associations/references, past failure records mentioning the same files, and risk flags (open `// rin:` debt, no matching test association). Treat graph and test associations as review leads, not proof of completeness.
 
 Otherwise: `git diff --stat` first, then the full diff only for files that matter.
 

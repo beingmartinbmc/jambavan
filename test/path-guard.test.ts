@@ -55,6 +55,18 @@ test('resolveInsideRoot: symlink escaping root is rejected (realpath check)', ()
   } finally { cleanup(); }
 });
 
+test('resolveInsideRoot: dangling symlink escaping root is rejected', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  const outside = fs.mkdtempSync(path.join(root, '..', 'jambavan-dangling-'));
+  try {
+    fs.symlinkSync(path.join(outside, 'future.txt'), path.join(root, 'link.txt'));
+    assert.throws(() => resolveInsideRoot('link.txt', config), /escapes project root/);
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+    cleanup();
+  }
+});
+
 test('resolveInsideRoot: JAMBAVAN_ALLOW_OUTSIDE_ROOT=1 bypasses containment', async () => {
   const { config, cleanup } = mkTempConfig();
   try {
@@ -73,20 +85,44 @@ test('resolveInsideRoot: secret filenames are blocked by default', () => {
   } finally { cleanup(); }
 });
 
-test('resolveInsideRoot: cloud credential files are blocked', () => {
+test('resolveInsideRoot: secret directories and all descendants are blocked', () => {
   const { config, cleanup } = mkTempConfig();
   try {
-    // .aws/credentials, .docker/config.json, .git-credentials, service account keys
     for (const name of [
+      '.aws',
       '.aws/credentials',
+      '.aws/sso/cache/session.json',
+      '.docker',
       '.docker/config.json',
+      '.docker/contexts/meta/context/meta.json',
+      '.ssh',
       '.ssh/known_hosts',
+      '.ssh/config.d/work',
       '.git-credentials',
       'service-account.json',
       'service_account_key.json',
     ]) {
       assert.throws(() => resolveInsideRoot(name, config), /secret file/, `expected ${name} blocked`);
     }
+  } finally { cleanup(); }
+});
+
+test('resolveInsideRoot: secret paths are blocked regardless of case', () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    for (const name of ['.NPMRC', 'ID_ED25519', '.AWS/credentials', '.Docker/config.json', '.SSH/config']) {
+      assert.throws(() => resolveInsideRoot(name, config), /secret file/, `expected ${name} blocked`);
+    }
+  } finally { cleanup(); }
+});
+
+test('resolveInsideRoot: symlinks into secret directories are blocked', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    fs.mkdirSync(path.join(root, '.ssh'));
+    fs.writeFileSync(path.join(root, '.ssh', 'config'), 'Host secret\n');
+    fs.symlinkSync(path.join(root, '.ssh'), path.join(root, 'safe-looking'));
+    assert.throws(() => resolveInsideRoot('safe-looking/config', config), /secret file/);
   } finally { cleanup(); }
 });
 
@@ -104,6 +140,8 @@ test('resolveInsideRoot: JAMBAVAN_ALLOW_SECRETS=1 unblocks secret files', async 
   try {
     await withEnv({ JAMBAVAN_ALLOW_SECRETS: '1' }, () => {
       assert.doesNotThrow(() => resolveInsideRoot('.env', config));
+      assert.doesNotThrow(() => resolveInsideRoot('.ssh', config));
+      assert.doesNotThrow(() => resolveInsideRoot('.aws/sso/cache/session.json', config));
     });
   } finally { cleanup(); }
 });

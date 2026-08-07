@@ -1,4 +1,4 @@
-<h1 align="center">Jambavan</h1>
+<h1 align="center">Jambavan: local codebase memory for coding agents</h1>
 
 <p align="center"><em>Your coding agent forgets your repo every session. This is the fix.</em></p>
 
@@ -10,21 +10,67 @@
   <a href="https://github.com/beingmartinbmc/jambavan/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/jambavan.svg" alt="license"></a>
 </p>
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/assets/jambavan.png" alt="Ramayana-inspired Jambavan and Hanuman hero image showing local memory, codebase awareness, review packs, compact context, and privacy for MCP coding agents" width="820">
-</p>
-
-Jambavan is a local-first [Model Context Protocol](https://modelcontextprotocol.io) server. It gives Claude Code, Cursor, Codex, Continue, and any other MCP host a persistent memory of your repository: an AST-backed symbol index, durable project decisions, a ledger of dead ends already tried, and branch review context.
+Jambavan is a local-first [Model Context Protocol](https://modelcontextprotocol.io) server. It gives coding agents persistent, repository-aware context: an AST-backed symbol index, durable project decisions, a ledger of dead ends already tried, and branch review context.
 
 **No LLM calls. No telemetry. No code upload.** Source-mutating and shell tools are off unless you turn them on.
+
+## 60-second quick start
 
 ```bash
 claude mcp add jambavan -- npx -y jambavan
 ```
 
+Restart or reload the MCP host after registration. Then call the active MCP server in this order:
+
+```text
+jambavan_doctor {}
+```
+
+If it reports `source: cwd-fallback`, bind the repository and awaken in one call:
+
+```text
+jambavan_awaken { "root": "/absolute/path/to/repository" }
+```
+
+Otherwise awaken without a root:
+
+```text
+jambavan_awaken {}
+```
+
+After either awaken call, index, watch, and request useful context:
+
+```text
+jambavan_index {}
+jambavan_watch { "action": "start" }
+jambavan_context { "query": "buildReviewPack" }
+```
+
+The root-bearing `jambavan_awaken` call already performs the awaken step, so do not call it twice. A `tool-input` root can later be re-pointed to another repository inside the original fallback directory; roots fixed by `JAMBAVAN_ROOT`, MCP `roots/list`, or a project cwd cannot be re-pointed.
+
+`jambavan_doctor` above inspects the active MCP process, including its resolved root, tool count, loaded index, and watcher. `npx jambavan doctor` is a separate, short-lived shell process: it is useful for launch-environment and parser checks, but it cannot report the active MCP server's in-memory index or watcher.
+
+## Supported hosts and languages
+
+Jambavan uses stdio MCP, so the same `npx -y jambavan` command works with any compatible host. Documented setup paths are:
+
+| Host | Registration |
+|---|---|
+| Claude Code | `claude mcp add jambavan -- npx -y jambavan` |
+| Codex CLI | `codex mcp add jambavan -- npx -y jambavan` |
+| Cursor | `~/.cursor/mcp.json` or project `.cursor/mcp.json` |
+| Continue | `~/.continue/config.yaml` (Agent mode) |
+| Other stdio MCP clients | command `npx`, args `-y`, `jambavan` |
+
+The index supports TypeScript, TSX, JavaScript, JSX, Python, Go, Rust, and Java. Supported extensions are `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.py`, `.go`, `.rs`, and `.java`.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/assets/jambavan.png" alt="Ramayana-inspired Jambavan and Hanuman hero image showing local memory, codebase awareness, review packs, compact context, and privacy for MCP coding agents" width="820">
+</p>
+
 ## Measured, not claimed
 
-Run against [react/react](https://github.com/react/react) at commit `9ceb1e7` — 4,615 files, 20,595 symbols, Node 24 on macOS arm64:
+This historical aggregate was produced with Jambavan `v2.0.0` against [react/react](https://github.com/react/react) at commit `9ceb1e7`: 4,615 files, 20,595 symbols, Node 24 on macOS arm64.
 
 | | Result |
 |---|---|
@@ -34,20 +80,27 @@ Run against [react/react](https://github.com/react/react) at commit `9ceb1e7` �
 | Context retrieval | 1.2–3.6 ms per query |
 | Tool schema your host pays for every request | 20 tools, 3,423 tokens (down from 38 tools / 5,680 in 1.x) |
 
-Reproduce it in three commands:
+Re-run the same pinned methodology from a clean temporary directory:
 
 ```bash
-git clone --depth 1 https://github.com/react/react.git /tmp/react
+WORKDIR="$(mktemp -d)"
+git clone --branch v2.0.0 --depth 1 https://github.com/beingmartinbmc/jambavan.git "$WORKDIR/jambavan"
+git init "$WORKDIR/react"
+git -C "$WORKDIR/react" remote add origin https://github.com/react/react.git
+git -C "$WORKDIR/react" fetch --depth 1 origin 9ceb1e7
+git -C "$WORKDIR/react" checkout --detach FETCH_HEAD
+cd "$WORKDIR/jambavan"
+npm ci
 npm run build
-JAMBAVAN_ROOT=/tmp/react node dist/benchmark.js
+JAMBAVAN_ROOT="$WORKDIR/react" node dist/benchmark.js
 ```
 
-The savings are not uniform, and the [full proof card](https://github.com/beingmartinbmc/jambavan/blob/main/examples/proof-card-react.md) publishes the weak cases too: one query saved 99%, another only 42% because its matches lived in tiny fixture files. Savings scale with how large the files a query lands in are. This is a retrieval benchmark — it measures token cost and latency, not task correctness.
+This re-runs the code and inputs; it does not recreate the original machine or timing conditions, so exact timings can differ. The historical aggregate says five auto-derived queries, but only four per-query rows survive in the [React proof card](https://github.com/beingmartinbmc/jambavan/blob/main/examples/proof-card-react.md). Those four rows do not sum to the aggregate, and the missing raw row is not reconstructed. The surviving rows still show the non-uniform result: one saved 99%, another only 42% because its matches lived in tiny fixture files. This is a retrieval benchmark; it measures token cost and latency, not task correctness.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/assets/30-second-demo.gif" alt="Under-30-second Jambavan storyboard showing connection, indexing, context retrieval, repeat-failure guard, impact analysis, and review pack" width="820">
   <br>
-  <sub>Illustrative storyboard; exact output depends on the repository, host, and enabled tools.</sub>
+  <sub>Not captured terminal output. Illustrative storyboard; exact output depends on the repository, host, and enabled tools. See the <a href="https://github.com/beingmartinbmc/jambavan/blob/main/examples/quickstart-transcript.md">reproducible quick-start transcript</a> for measured output.</sub>
 </p>
 
 ## Why it exists
@@ -56,27 +109,11 @@ Without an index or saved memory, rediscovering a project costs work proportiona
 
 In the Ramayana, before Hanuman's leap to Lanka, Jambavan reminds him of the strength he already possesses. This project borrows that metaphor narrowly: it restores access to knowledge that was already indexed or stored. It does not make a model smarter.
 
-## Quick start
-
-```bash
-claude mcp add jambavan -- npx -y jambavan
-npx jambavan doctor
-```
-
-Then ask your host model to run:
-
-```text
-jambavan_awaken {}
-jambavan_index {}
-jambavan_watch { "action": "start" }
-jambavan_context { "query": "where is auth handled?" }
-```
-
-`jambavan_doctor` checks project-root detection, parser backends, gates, archive state, CI hints, and index/watcher status. When root resolution stays at `cwd-fallback`, memory tools still work; repository-bound tools fail closed. See [troubleshooting](https://github.com/beingmartinbmc/jambavan/blob/main/docs/troubleshooting.md) if that happens.
+The remaining Sanskrit names are descriptive: **mool kaaran** means root cause, **praman** means evidence, **yukti** means strategy, **vibhaajan** means decomposition, **Vibhishana Niti** means disciplined counsel or rules, **rin mochan** means debt release, and **sankshipta** means concise or compressed.
 
 ## Install
 
-One command. Finds Claude Code, Codex CLI, Cursor, and Continue on your machine and registers Jambavan for each one it finds.
+The installers attempt to register Jambavan only for hosts they can detect. Claude Code and Codex use their CLIs; Cursor requires an existing `~/.cursor` directory and valid JSON if the config already exists. Continue requires an existing `~/.continue` directory; the installer creates `config.yaml` only when it is absent and otherwise prints an entry for you to merge. A detected host can still reject registration, so review the installer result.
 
 On macOS, Linux, WSL, or Git Bash:
 
@@ -90,7 +127,7 @@ On Windows, in PowerShell 5.1+:
 irm https://raw.githubusercontent.com/beingmartinbmc/jambavan/main/install.ps1 | iex
 ```
 
-Needs Node >=20.19.0 <27. Safe to re-run; it skips agents you do not have and does not remove other MCP servers. As with any internet shell script, read it before piping it into a shell.
+Needs Node >=20.19.0 <27. The scripts are designed to skip undetected hosts and preserve unrelated MCP entries, but registration remains conditional on each host and existing config being usable. As with any internet shell script, read it before piping it into a shell.
 
 ### Manual registration
 
@@ -128,7 +165,7 @@ mcpServers:
       - jambavan
 ```
 
-Restart the host after any config change, then run `jambavan_awaken` and `jambavan_doctor` to confirm. Continue exposes MCP tools only in Agent mode.
+Restart or reload the host after any config change, then follow the [60-second quick start](#60-second-quick-start), beginning with the MCP `jambavan_doctor`. Continue exposes MCP tools only in Agent mode.
 
 Check installed and published versions:
 
@@ -137,19 +174,19 @@ npx jambavan --version
 npm view jambavan version
 ```
 
-To uninstall, run `claude mcp remove jambavan` or `codex mcp remove jambavan`; for Cursor and Continue, delete the `jambavan` entry. Local `.jambavan/` indexes and memories are left intact.
+To uninstall, run `claude mcp remove jambavan` or `codex mcp remove jambavan`; for Cursor and Continue, delete the `jambavan` entry. Repository indexes under `<repo>/.jambavan/` and memory/failure documents under `~/.jambavan/memory/` are left intact.
 
 ## The tools
 
-Twenty tools, deliberately. Every advertised tool costs your host model tokens on every request whether or not it is ever called, so the surface is kept small on purpose.
+Jambavan advertises 20 tools by default. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_compress_prompt` for 23; `JAMBAVAN_ALLOW_BASH=1` adds `bash` for 21; enabling both advertises up to 24. Every advertised tool costs your host model tokens on every request whether or not it is called, so the default surface stays small.
 
 | Group | Tools | What the agent gets |
 |---|---|---|
-| **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_doctor` | AST-backed symbol index, token-budgeted context with bounded extracted call neighbors, optional tests and recent diff, live watching, and root health. |
-| **Bridge** | `jambavan_graph`, `jambavan_impact` | Code-graph report, query, and shortest path in one tool, plus changed-symbol inbound impact and test analysis. |
+| **Sight** | `jambavan_index`, `jambavan_context`, `jambavan_watch`, `jambavan_doctor` | AST-backed symbol index, token-budgeted context with bounded extracted call neighbors, optional heuristic test references and recent diff, live watching, and root health. |
+| **Bridge** | `jambavan_graph`, `jambavan_impact` | Code-graph report, query, and shortest path in one tool, plus changed-symbol inbound impact and heuristic test-file associations. |
 | **Memory** | `jambavan_memory_store`, `jambavan_memory_read`, `jambavan_memory_forget`, `jambavan_memory_mine_session`, `jambavan_memory_status` | Rootless local Markdown memory, logical collections, and explicit read-only MemPalace federation. |
 | **Failure memory** | `jambavan_failure_store`, `jambavan_failure_search` | Structured failure records plus an exact-command repeat guard in the opt-in `bash` tool. |
-| **Review** | `jambavan_review_pack` | Bounded branch review context: touched symbols, extracted caller candidates, tests, `rin` debt, and past failures. |
+| **Review** | `jambavan_review_pack` | Bounded branch review context: touched symbols, extracted caller candidates, heuristic test references, `rin` debt, and past failures. |
 | **Debt** | `jambavan_debt_ledger` | Harvests every deliberate-shortcut `// rin:` marker and flags the ones with no upgrade trigger. |
 | **Compression** | `jambavan_compress_prompt` | Deterministic prose shortening with protected spans for code, URLs, paths, versions, and env vars. Write-gated. |
 | **Awakening** | `jambavan_awaken` | Session protocol: what exists, when to use it, and this project's recent memories. |
@@ -169,19 +206,20 @@ The discipline protocols are static text with no repository access, so they ship
 
 ## Recommended workflow
 
-1. `jambavan_awaken {}` — read the protocol and recent project memories.
-2. `jambavan_doctor {}` — confirm project root, gates, storage, and index status.
-3. `jambavan_index {}` then `jambavan_watch { "action": "start" }`.
-4. `jambavan_context { "query": "<identifier or question>" }` before touching unfamiliar code.
-5. `root_cause` / `verify_gate` / `strategy_plan` when debugging, claiming completion, or planning.
-6. Run the smallest relevant check.
-7. `jambavan_memory_store { "title": "...", "body": "...", "collection": "decisions" }` to persist durable context.
-8. `jambavan_failure_store` to record dead ends with root cause and do-not-retry advice.
-9. `jambavan_session_handoff {}` to hand off; pass `text` to import one back.
+1. Restart or reload the host after registration or config changes.
+2. `jambavan_doctor {}` to inspect the active MCP root, gates, storage, index, and watcher.
+3. If the source is `cwd-fallback`, call `jambavan_awaken { "root": "/absolute/path/to/repository" }`; otherwise call `jambavan_awaken {}`.
+4. `jambavan_index {}` then `jambavan_watch { "action": "start" }`.
+5. `jambavan_context { "query": "<identifier or focused question>" }` before touching unfamiliar code.
+6. `root_cause` / `verify_gate` / `strategy_plan` when debugging, claiming completion, or planning.
+7. Run the smallest relevant check.
+8. `jambavan_memory_store { "title": "...", "body": "...", "collection": "decisions" }` to persist durable context.
+9. `jambavan_failure_store` to record dead ends with root cause and do-not-retry advice.
+10. `jambavan_session_handoff {}` to hand off; pass `text` to import one back.
 
 ## What the output looks like
 
-`jambavan_context` returns focused spans instead of whole files:
+`jambavan_context` returns focused spans instead of whole files. This is an illustrative output shape, not captured output from the current repository:
 
 ```text
 # Jambavan Context: "review pack"
@@ -190,10 +228,10 @@ Symbols: 12 included, 18 dropped (budget: 8000 tokens)
 ## src/tools/review-pack.ts: buildReviewPack
 kind: function · score: 0.92
 Uses git diff to list touched files, maps symbols from the index, adds callers via graph,
-associated tests via test-map, and risk flags for rin debt / missing tests / failures.
+heuristic test references via test-map, and risk flags for rin debt / missing tests / failures.
 ```
 
-`jambavan_review_pack { "base": "main" }` turns a branch into reviewer-oriented context:
+`jambavan_review_pack { "base": "main" }` turns a branch into reviewer-oriented context. This example is illustrative:
 
 ```text
 # Jambavan Review Pack
@@ -203,11 +241,11 @@ Touched files: src/mcp/server.ts, src/mcp/tool-aliases.ts
 src/mcp/server.ts
 - touched symbols: startServer, handleToolCall
 - callers: dist/index.js -> startServer
-- associated tests: test/tool-aliases.test.ts
+- heuristic test references: test/tool-aliases.test.ts
 - risk flags: write-gated tool alias; verify disabled-tool listing
 ```
 
-`jambavan_failure_search { "query": "timeout" }` surfaces a prior dead end before another retry:
+`jambavan_failure_search { "query": "timeout" }` surfaces a prior dead end before another retry. This example is illustrative:
 
 ```text
 FailureRecord: flaky auth test timeout

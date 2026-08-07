@@ -19,11 +19,22 @@ Method: https://github.com/beingmartinbmc/jambavan/blob/main/examples/benchmark-
 
 ## Produce the measurements
 
+Run from a clean location and pin both Jambavan and the target repository. For example, this reproduces the React proof-card inputs with Jambavan `v2.0.0`:
+
 ```bash
+WORKDIR="$(mktemp -d)"
+git clone --branch v2.0.0 --depth 1 https://github.com/beingmartinbmc/jambavan.git "$WORKDIR/jambavan"
+git init "$WORKDIR/react"
+git -C "$WORKDIR/react" remote add origin https://github.com/react/react.git
+git -C "$WORKDIR/react" fetch --depth 1 origin 9ceb1e7
+git -C "$WORKDIR/react" checkout --detach FETCH_HEAD
+cd "$WORKDIR/jambavan"
+npm ci
 npm run build
-JAMBAVAN_ROOT=/path/to/repo node dist/benchmark.js --json > benchmark.private.json
-npm view jambavan version
+JAMBAVAN_ROOT="$WORKDIR/react" node dist/benchmark.js --json > benchmark.private.json
 ```
+
+For a new card, replace `v2.0.0` with the exact current release tag or commit you intend to report and replace the React fetch with an exact target commit. Record that pin in `Jambavan:`; do not label an unpinned `latest` run reproducible. `npm view jambavan version` can tell you the current published version, but it does not pin a source checkout by itself.
 
 The benchmark uses a temporary index and memory directory. It makes no LLM, embedding, telemetry, or external-service calls. Context queries are derived from the repository's most common symbol names. The retrieval baseline counts `cl100k_base` tokens in every complete matching file; Jambavan counts the ranked snippets assembled within the configured token budget. Cold and unchanged warm indexing run consecutively. Tool timings use a generated temporary fixture over the real stdio MCP transport.
 

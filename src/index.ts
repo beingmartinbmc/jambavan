@@ -349,7 +349,6 @@ Jambavan exposes these MCP tools to the host model:
   jambavan_context       Return budgeted symbols, project memories, and extracted callers/callees
   jambavan_watch         Start / stop live file watcher (incremental re-index on save)
   jambavan_graph         Graph report / query / shortest path; inferred edges are opt-in
-  jambavan_compress_prompt  Compress markdown/prose into fewer prompt tokens (write-gated)
   jambavan_debt_ledger   Harvest rin comments into a tracked debt ledger
   jambavan_doctor        One-shot health check: root, parsers, gates, memory dir, index, CI
   jambavan_review_pack   Review pack for the current branch: touched symbols/callers/tests/failures/risk

@@ -61,6 +61,13 @@ test('caller arguments override the defaults an old name implies', () => {
   assert.equal(resolved.input['action'], 'path');
 });
 
+test('legacy compression aliases retain their pre-2.0 in-place default', () => {
+  for (const name of ['jambavan_sankshipta', 'compress_prompt']) {
+    assert.equal(resolveToolCall(name, { path: 'prompt.md' }).input['in_place'], true);
+    assert.equal(resolveToolCall(name, { path: 'prompt.md', in_place: false }).input['in_place'], false);
+  }
+});
+
 test('isDeprecatedTool distinguishes retired names from current ones', () => {
   assert.ok(isDeprecatedTool('jambavan_sankshipta'));
   assert.ok(!isDeprecatedTool('jambavan_compress_prompt'));

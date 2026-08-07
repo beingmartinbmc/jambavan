@@ -238,9 +238,9 @@ export function buildContextResponse(
 ): string {
   const query = String(input['query'] ?? '');
   const limit = boundedInt(input['limit'], { min: 1, max: 200, fallback: 30 });
-  const compressProse = Boolean(input['compress_prose']);
-  const includeDiff = Boolean(input['include_diff']);
-  const includeTests = Boolean(input['include_tests']);
+  const compressProse = input['compress_prose'] === true;
+  const includeDiff = input['include_diff'] === true;
+  const includeTests = input['include_tests'] === true;
   const { results, structuralCount } = hybridContextResults(index, config, query, limit);
   const memoryBlock = projectMemoryContext(config, query, Math.floor(config.contextTokenBudget * 0.2));
 
@@ -291,7 +291,8 @@ export function buildContextResponse(
   if (includeTests) {
     const remainingBudget = enrichmentBudget - countTokens(diffBlock);
     if (remainingBudget > 50) {
-      const allSymbols = index.getAllSymbols();
+      const testAssociationSymbolLimit = 100_000;
+      const allSymbols = index.getAllSymbols(testAssociationSymbolLimit);
       if (allSymbols.length > 0) {
         const testMap = buildTestMap(allSymbols, config);
         const testNotes = results.slice(0, 10)
@@ -299,6 +300,9 @@ export function buildContextResponse(
           .filter(Boolean);
         if (testNotes.length) {
           testBlock = truncateToTokenBudget('\n\n' + testNotes.join('\n'), remainingBudget);
+        }
+        if (index.stats().symbols > allSymbols.length) {
+          testBlock += `\n\nWarning: test association analysis stopped at ${testAssociationSymbolLimit} symbols; missing associations are not evidence of missing tests.`;
         }
       }
     }
@@ -431,7 +435,7 @@ const NATIVE_TOOLS: Tool[] = [
       'Inject this block into your prompt to give the model precise, token-efficient codebase knowledge.',
       'Much cheaper than reading whole files — only the relevant symbol bodies are returned.',
       'Automatically includes top project-memory matches and a bounded set of extracted callers/callees under the same token budget.',
-      'Options: compress_prose shrinks comments for extra budget; include_diff adds recent git changes; include_tests shows test coverage.',
+      'Options: compress_prose shrinks comments for extra budget; include_diff adds recent git changes; include_tests shows heuristic test associations/references, not execution coverage.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
@@ -497,15 +501,15 @@ const NATIVE_TOOLS: Tool[] = [
     name: 'jambavan_compress_prompt',
     description: [
       'Compress a markdown/prose file into a shorter form for fewer prompt tokens.',
-      'Preserves fenced code, inline code, URLs, file paths, commands-ish tokens, versions, and env vars verbatim.',
-      'Defaults to in-place write with <file>.original.md backup; set in_place=false to preview only.',
+      'Preserves epistemic qualifiers, fenced code, inline code, URLs, file paths, commands-ish tokens, versions, and env vars verbatim.',
+      'Previews by default. Set in_place=true to overwrite the file; a write creates <file>.original.md by default.',
     ].join(' '),
     inputSchema: {
       type:       'object' as const,
       properties: {
         path:     { type: 'string', description: 'Markdown/prose file path inside project root.' },
-        in_place: { type: 'boolean', description: 'Overwrite file with compressed text (default: true).' },
-        backup:   { type: 'boolean', description: 'Write <file>.original.md before overwriting (default: true).' },
+        in_place: { type: 'boolean', description: 'Set literal true to overwrite the file (default: false/preview).' },
+        backup:   { type: 'boolean', description: 'When in_place=true, set literal false to skip the <file>.original.md backup (default: true).' },
       },
       required: ['path'],
     },
@@ -600,7 +604,7 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
     { name: 'jambavan', version: pkg.version },
     {
       capabilities: { tools: {}, prompts: {} },
-      instructions: 'Call jambavan_awaken first; it reports the resolved project root and current operating protocol.',
+      instructions: 'Call jambavan_doctor first to verify the active project root, then jambavan_awaken for the operating protocol.',
     },
   );
 
@@ -610,8 +614,8 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
   // ── tools/list ─────────────────────────────────────────────────────────────
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    // jambavan_compress_prompt mutates files in-place by default, so it is a
-    // write tool: keep it off the advertised list unless writes are enabled.
+    // Compression previews are read-only. The call handler separately gates
+    // the explicit in_place=true mutation behind JAMBAVAN_ALLOW_WRITE.
     return { tools: advertisedTools() };
   });
 
@@ -691,7 +695,7 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
     // ── jambavan_awaken ───────────────────────────────────────────────────────
     if (name === 'jambavan_awaken') {
       const report = awakenReport(config, {
-        includeMemories: (input['include_memories'] as boolean | undefined) ?? true,
+        includeMemories: input['include_memories'] === undefined || input['include_memories'] === true,
       });
       return {
         content: [{
@@ -833,10 +837,9 @@ export async function startServer(injectedTransport?: Transport): Promise<void> 
 
     // ── jambavan_compress_prompt ──────────────────────────────────────────────
     if (name === 'jambavan_compress_prompt') {
-      // Mutating tool: refuse unless writes are enabled, even if the name is guessed.
-      if (!allowWrite) {
+      if (input['in_place'] === true && !allowWrite) {
         return {
-          content: [{ type: 'text', text: 'jambavan_compress_prompt writes files and is disabled. Set JAMBAVAN_ALLOW_WRITE=1 to enable it.' }],
+          content: [{ type: 'text', text: 'In-place prompt compression is disabled. Set JAMBAVAN_ALLOW_WRITE=1 to enable it.' }],
           isError: true,
         };
       }

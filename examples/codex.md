@@ -17,11 +17,13 @@ args = ["-y", "jambavan"]
 Restart Codex and use `/mcp` to confirm Jambavan is active. Start each repo session with:
 
 ```text
-jambavan_awaken {}
 jambavan_doctor {}
+jambavan_awaken {}
 jambavan_index {}
 jambavan_watch { "action": "start" }
 jambavan_context { "query": "<task-specific query>" }
 ```
+
+If doctor reports `source: cwd-fallback`, replace the plain awaken call with `jambavan_awaken { "root": "/absolute/path/to/repository" }`. That call both binds and awakens. A `tool-input` root remains re-pointable inside the original fallback boundary; environment, MCP-roots, and project-cwd roots remain fixed.
 
 Call `jambavan_failure_search { "query": "<command or symptom>" }` before retrying a failed fix. Check the published version with `npm view jambavan version`; pin `jambavan@<version>` in `args` when reproducibility matters. Remove it with `codex mcp remove jambavan`.

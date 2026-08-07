@@ -205,9 +205,9 @@ export class JambavanIndex {
    * (Re-)index a single file. Skips if the file hash hasn't changed.
    * Returns the number of symbols extracted (0 for unchanged or unparseable files).
    */
-  indexFile(filePath: string): number {
+  indexFile(filePath: string, force = false): number {
     try {
-      if (!this.cache.isStale(filePath)) {
+      if (!force && !this.cache.isStale(filePath)) {
         this.failures.delete(filePath);
         return 0;
       }

@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { JambavanConfig } from '../config/jambavan.config';
 import type { RegisteredTool } from './registry';
-import { resolveInsideRoot } from './path-guard';
+import { assertSafeWriteTarget, resolveInsideRoot } from './path-guard';
 
 export function createWriteFileTool(config: JambavanConfig): RegisteredTool {
   return {
@@ -23,6 +23,8 @@ export function createWriteFileTool(config: JambavanConfig): RegisteredTool {
       const content  = input['content'] as string;
 
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      resolveInsideRoot(filePath, config);
+      assertSafeWriteTarget(filePath);
       fs.writeFileSync(filePath, content, 'utf-8');
 
       return { success: true, output: `Written: ${filePath} (${content.length} chars)` };
@@ -54,6 +56,8 @@ export function createPatchFileTool(config: JambavanConfig): RegisteredTool {
       const oldText  = input['old_text'] as string;
       const newText  = input['new_text'] as string;
 
+      assertSafeWriteTarget(filePath);
+
       if (!fs.existsSync(filePath)) {
         return { success: false, output: '', error: `File not found: ${filePath}` };
       }
@@ -72,6 +76,7 @@ export function createPatchFileTool(config: JambavanConfig): RegisteredTool {
         };
       }
 
+      assertSafeWriteTarget(filePath);
       fs.writeFileSync(filePath, content.replace(oldText, newText), 'utf-8');
       return { success: true, output: `Patched: ${filePath}` };
     },

@@ -35,6 +35,18 @@ test('read_file: directory target is rejected', async () => {
   } finally { cleanup(); }
 });
 
+test('read_file: refuses descendants of secret directories by default', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    fs.mkdirSync(path.join(root, '.ssh', 'config.d'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.ssh', 'config.d', 'work'), 'Host secret\n');
+    await assert.rejects(
+      () => createReadFileTool(config).handler({ path: '.ssh/config.d/work' }),
+      /secret file/,
+    );
+  } finally { cleanup(); }
+});
+
 test('read_file: line range is inclusive and clamps out-of-range bounds', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
@@ -81,6 +93,33 @@ test('write_file: refuses to write a secret file by default', async () => {
       /secret file/,
     );
   } finally { cleanup(); }
+});
+
+test('write_file: refuses to create descendants of secret directories by default', async () => {
+  const { config, cleanup } = mkTempConfig();
+  try {
+    await assert.rejects(
+      () => createWriteFileTool(config).handler({ path: '.aws/sso/cache/session.json', content: '{}' }),
+      /secret file/,
+    );
+  } finally { cleanup(); }
+});
+
+test('write_file: refuses a dangling symlink leaf that points outside the root', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  const outside = fs.mkdtempSync(path.join(root, '..', 'jambavan-write-outside-'));
+  try {
+    const target = path.join(outside, 'created.txt');
+    fs.symlinkSync(target, path.join(root, 'safe.txt'));
+    await assert.rejects(
+      () => createWriteFileTool(config).handler({ path: 'safe.txt', content: 'blocked' }),
+      /escapes project root|symbolic-link/,
+    );
+    assert.equal(fs.existsSync(target), false);
+  } finally {
+    fs.rmSync(outside, { recursive: true, force: true });
+    cleanup();
+  }
 });
 
 test('patch_file: replaces a unique occurrence', async () => {

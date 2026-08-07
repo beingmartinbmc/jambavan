@@ -56,11 +56,15 @@ In Claude Code this can show up as `-32000` / `failed to reconnect` because the 
 
 At startup, `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from the server process cwd, and a supported single file-URI MCP `roots/list` result may replace that cwd result. When the resulting source is `cwd-fallback`, memory tools remain available against the global archive while repository-bound tools fail closed. `jambavan_awaken.root` or `jambavan_index.root` may then bind an existing absolute directory inside the current fallback root; use `JAMBAVAN_ROOT` and reconnect when the repository is outside it. Root rebinding never moves or changes the memory archive.
 
-Run `jambavan_doctor` or `npx jambavan doctor`. Healthy MCP output should show the target repo with `source: env`, `source: client-roots`, `source: tool-input`, or `source: cwd-project`.
+Call MCP `jambavan_doctor {}` in the active host. Healthy output should show the target repo with `source: env`, `source: client-roots`, `source: tool-input`, or `source: cwd-project`. The shell command `npx jambavan doctor` starts a separate process and can verify that process's launch environment and parsers, but it cannot report the active server's in-memory index or watcher.
 
 ### One server, many workspaces
 
-Some hosts — Cursor among them — run a single MCP server process for every open window, so the root is shared rather than per-workspace. A root bound through `jambavan_awaken.root` or `jambavan_index.root` can therefore be re-pointed to another directory inside the same fallback root, which lets a second workspace claim the server; rebinding stops the watcher and closes the open index first. A root from `JAMBAVAN_ROOT`, `roots/list`, or the server's own cwd is a real signal and stays fixed, so `root is already fixed by ...` means the answer is `JAMBAVAN_ROOT` on a per-project MCP entry (giving each repo its own server), not a retry.
+Some hosts, including Cursor, may run one MCP server process for multiple windows, so the root is shared. A root first bound through `jambavan_awaken.root` or `jambavan_index.root` has `source: tool-input` and can be re-pointed to another directory inside the **original** `cwd-fallback` boundary; rebinding stops the watcher and closes the open index first. A root from `JAMBAVAN_ROOT`, `roots/list`, or the server's project cwd is a stronger signal and stays fixed. For those sources, `root is already fixed by ...` means configure `JAMBAVAN_ROOT` on a per-project MCP entry rather than retrying the bind.
+
+## Environment files
+
+Jambavan deliberately does not auto-load repository `.env` files. Put `JAMBAVAN_*` values in the MCP server entry's `env` object or export them before launching the host. This prevents unrelated project secrets from being copied wholesale into the MCP process.
 
 ## Degraded parsers
 

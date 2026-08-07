@@ -13,6 +13,12 @@ test('sankshipta: drops filler words and shortens phrases', () => {
   assert.doesNotMatch(out, /Please/);
 });
 
+test('sankshipta: preserves epistemic qualifiers', () => {
+  const qualifiers = ['probably', 'maybe', 'perhaps', 'kind of', 'sort of'];
+  const out = sankshiptaText(`This is ${qualifiers.join(', ')} risky.\n`);
+  for (const qualifier of qualifiers) assert.match(out, new RegExp(`\\b${qualifier}\\b`));
+});
+
 test('sankshipta: never touches text inside fenced code blocks', () => {
   const src = 'Please note this.\n```ts\nconst please = the && that;\n```\nplease do it\n';
   const out = sankshiptaText(src);
@@ -63,17 +69,50 @@ test('sankshiptaFile: preview mode returns compressed content without writing', 
   } finally { cleanup(); }
 });
 
+test('sankshiptaFile: previews by default without writing or backing up', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const file = path.join(root, 'notes.md');
+    const raw = 'Please make sure to utilize the helper.\n';
+    fs.writeFileSync(file, raw);
+    const out = sankshiptaFile({ path: 'notes.md' }, config);
+    assert.match(out, /use helper/);
+    assert.equal(fs.readFileSync(file, 'utf-8'), raw);
+    assert.equal(fs.existsSync(`${file}.original.md`), false);
+  } finally { cleanup(); }
+});
+
+test('sankshiptaFile: rejects non-boolean mutation options', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    const file = path.join(root, 'notes.md');
+    const raw = 'Please utilize the helper.\n';
+    fs.writeFileSync(file, raw);
+    assert.throws(() => sankshiptaFile({ path: 'notes.md', in_place: 'true' }, config), /in_place must be a boolean/);
+    assert.throws(() => sankshiptaFile({ path: 'notes.md', backup: 'false' }, config), /backup must be a boolean/);
+    assert.equal(fs.readFileSync(file, 'utf-8'), raw);
+  } finally { cleanup(); }
+});
+
+test('sankshiptaFile: refuses oversized preview input before tokenization', () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    fs.writeFileSync(path.join(root, 'huge.md'), Buffer.alloc(5 * 1024 * 1024 + 1, 0x61));
+    assert.throws(() => sankshiptaFile({ path: 'huge.md' }, config), /File too large/);
+  } finally { cleanup(); }
+});
+
 test('sankshiptaFile: in-place mode writes once and reuses backup', () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     const file = path.join(root, 'notes.md');
     const raw = 'Please make sure to utilize the helper.\n';
     fs.writeFileSync(file, raw);
-    const first = sankshiptaFile({ path: 'notes.md' }, config);
+    const first = sankshiptaFile({ path: 'notes.md', in_place: true }, config);
     assert.match(first, /Backup: notes\.md\.original\.md/);
     assert.match(fs.readFileSync(file, 'utf-8'), /use helper/);
     assert.equal(fs.readFileSync(`${file}.original.md`, 'utf-8'), raw);
-    const second = sankshiptaFile({ path: 'notes.md', backup: true }, config);
+    const second = sankshiptaFile({ path: 'notes.md', in_place: true, backup: true }, config);
     assert.match(second, /already existed/);
   } finally { cleanup(); }
 });
@@ -82,7 +121,7 @@ test('sankshiptaFile: backup can be skipped', () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     fs.writeFileSync(path.join(root, 'notes.md'), 'Please utilize it.\n');
-    const out = sankshiptaFile({ path: 'notes.md', backup: false }, config);
+    const out = sankshiptaFile({ path: 'notes.md', in_place: true, backup: false }, config);
     assert.match(out, /Backup: skipped/);
     assert.equal(fs.existsSync(path.join(root, 'notes.md.original.md')), false);
   } finally { cleanup(); }

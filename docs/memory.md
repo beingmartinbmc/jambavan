@@ -4,6 +4,8 @@
 
 The default archive is `~/.jambavan/memory/<scope>/<slug>.md`. `scope` identifies a project or topic; `collection` is frontmatter used as a logical room without changing the physical `scope/slug` ID layout. Missing collections in older documents are inferred as `decisions` for `Decision`, `failures` for `FailureRecord`, and `general` otherwise.
 
+This is separate from the code index: index databases and caches live under `<repo>/.jambavan/`, while both ordinary memories and structured failure records live under `~/.jambavan/memory/` by default.
+
 With a repository root, the default scope is derived without exposing its raw remote or path: validated `JAMBAVAN_SCOPE`, otherwise normalized Git remote path plus the repository's initial commit, otherwise initial commit plus basename, otherwise a path hash for non-Git directories. Without a root, writes default to `global`.
 
 ## Migrating a pre-global archive

@@ -1,6 +1,6 @@
 {
   "name": "jambavan",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "mcpName": "io.github.beingmartinbmc/jambavan",
   "license": "MIT",
   "description": "Local-first MCP memory and code intelligence that helps coding agents recall repo context, decisions, failures, and review impact.",
@@ -66,7 +66,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "better-sqlite3": "12.11.1",
     "chokidar": "5.0.0",
     "glob": "13.0.6",
@@ -85,6 +85,10 @@
     "@types/node": "26.0.1",
     "ts-node": "10.9.2",
     "typescript": "^5.5.3"
+  },
+  "overrides": {
+    "fast-uri": "3.1.5",
+    "hono": "4.12.34"
   },
   "author": "beingmartinbmc",
   "repository": {

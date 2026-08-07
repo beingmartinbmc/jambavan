@@ -86,7 +86,9 @@ export class FileWatcher {
     // add a cached matcher if a bulk generator ever floods the watcher.
     if (!this.index.shouldIndex(filePath)) return;
     try {
-      this.index.indexFile(filePath);
+      // Chokidar already observed a write. Force the content hash/parse path so
+      // a same-size edit with a preserved filesystem timestamp is not skipped.
+      this.index.indexFile(filePath, true);
       this.status.filesProcessed++;
       this.status.lastEvent = new Date().toISOString();
       this.status.lastFile  = path.relative(this.config.projectRoot, filePath);

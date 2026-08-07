@@ -7,9 +7,9 @@ import { mkTempConfig } from '../test-support/config';
 import { JambavanIndex } from '../src/index/indexer';
 import { MemoryStore } from '../src/memory/store';
 import { projectScope } from '../src/tools/jambavan';
-import { buildReviewPackHandlers } from '../src/tools/review-pack';
+import { buildReviewPackHandlers, getChangedFiles } from '../src/tools/review-pack';
 import { buildReviewPackJson } from '../src/tools/review-pack-json';
-import { parseChangedRanges, parseNameStatus, changedSymbols } from '../src/tools/changed-symbols';
+import { parseChangedRanges, parseDiffRanges, parseNameStatus, changedSymbols, deletedSymbols } from '../src/tools/changed-symbols';
 import type { Symbol } from '../src/index/ast-parser';
 import { buildImpactHandlers } from '../src/tools/impact';
 
@@ -128,6 +128,86 @@ test('changedSymbols: pure interior deletion (new count 0) tags only the enclosi
   );
 });
 
+test('deletedSymbols: replacement hunk detects a removed function but not a surviving neighbour', () => {
+  const ranges = parseDiffRanges(
+    'diff --git a/s.ts b/s.ts\n--- a/s.ts\n+++ b/s.ts\n@@ -1,7 +1,3 @@\n',
+  );
+  const removed: Symbol = { name: 'removed', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' };
+  const kept: Symbol = { name: 'kept', type: 'function', startLine: 5, endLine: 7, content: '', filePath: 's.ts' };
+  const currentKept: Symbol = { ...kept, startLine: 1, endLine: 3 };
+
+  assert.deepEqual(
+    deletedSymbols([removed, kept], ranges.get('s.ts') ?? [], [currentKept]).map(symbol => symbol.name),
+    ['removed'],
+  );
+});
+
+test('deletedSymbols: modified functions are not classified as deleted', () => {
+  const ranges = parseDiffRanges(
+    'diff --git a/s.ts b/s.ts\n--- a/s.ts\n+++ b/s.ts\n@@ -1,3 +1,3 @@\n',
+  );
+  const before: Symbol = { name: 'changed', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' };
+  const after: Symbol = { ...before, content: 'changed body' };
+
+  assert.deepEqual(deletedSymbols([before], ranges.get('s.ts') ?? [], [after]), []);
+});
+
+test('deletedSymbols: a renamed declaration retains the old symbol as deleted', () => {
+  const before: Symbol = { name: 'oldName', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' };
+  const after: Symbol = { ...before, name: 'newName' };
+
+  assert.deepEqual(
+    deletedSymbols([before], [{ oldStart: 1, oldCount: 1 }], [after]).map(symbol => symbol.name),
+    ['oldName'],
+  );
+});
+
+test('deletedSymbols: renames are detected per hunk and for nested methods', () => {
+  const oldName: Symbol = { name: 'oldName', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' };
+  const edited: Symbol = { name: 'edited', type: 'function', startLine: 6, endLine: 8, content: '', filePath: 's.ts' };
+  const klass: Symbol = { name: 'Service', type: 'class', startLine: 11, endLine: 17, content: '', filePath: 's.ts' };
+  const oldMethod: Symbol = { name: 'oldMethod', type: 'function', startLine: 12, endLine: 16, content: '', filePath: 's.ts' };
+  const current = [
+    { ...oldName, name: 'newName' },
+    { ...edited, content: 'edited body' },
+    { ...klass },
+    { ...oldMethod, name: 'newMethod' },
+  ];
+
+  assert.deepEqual(
+    deletedSymbols([oldName, edited, klass, oldMethod], [
+      { oldStart: 1, oldCount: 1 },
+      { oldStart: 7, oldCount: 1 },
+      { oldStart: 12, oldCount: 1 },
+    ], current).map(symbol => symbol.name),
+    ['oldName', 'oldMethod'],
+  );
+});
+
+test('deletedSymbols: duplicate symbol names still report a removed occurrence', () => {
+  const first: Symbol = { name: 'run', type: 'function', startLine: 1, endLine: 3, content: '', filePath: 's.ts' };
+  const second: Symbol = { ...first, startLine: 5, endLine: 7 };
+  const surviving: Symbol = { ...second };
+  assert.deepEqual(
+    deletedSymbols([first, second], [{ oldStart: 1, oldCount: 3 }], [surviving]).map(item => item.startLine),
+    [1],
+  );
+});
+
+test('deletedSymbols: duplicate names attribute deletion to the unmatched occurrence', () => {
+  const changed: Symbol = { name: 'run', type: 'function', startLine: 1, endLine: 3, content: 'old first', filePath: 's.ts' };
+  const removed: Symbol = { ...changed, startLine: 5, endLine: 7, content: 'old second' };
+  const current: Symbol = { ...changed, content: 'new first' };
+
+  assert.deepEqual(
+    deletedSymbols([changed, removed], [
+      { oldStart: 1, oldCount: 3 },
+      { oldStart: 5, oldCount: 3 },
+    ], [current]).map(symbol => symbol.startLine),
+    [5],
+  );
+});
+
 test('jambavan_review_pack: reports only changed symbols and per-symbol test risk', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
@@ -143,11 +223,11 @@ test('jambavan_review_pack: reports only changed symbols and per-symbol test ris
     assert.match(result, /src\/util\.ts/);
     assert.doesNotMatch(result, /\*\*add\*\*/, 'unchanged add must not be labeled touched');
     assert.match(result, /\*\*subtract\*\*/, 'new subtract symbol should be reported');
-    assert.match(result, /1 changed symbol\(s\) have no matching test/);
+    assert.match(result, /1 changed\/deleted symbol\(s\) have no matching test association\/reference/);
   } finally { cleanup(); }
 });
 
-test('jambavan_review_pack: a fully deleted function shows the file as deleted, tagging no survivor', async () => {
+test('impact and review analysis recover a fully deleted function, its caller, and JSON state from base', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     git(root, ['init', '-q', '-b', 'main']);
@@ -162,6 +242,18 @@ test('jambavan_review_pack: a fully deleted function shows the file as deleted, 
     git(root, ['add', '.']);
     git(root, ['commit', '-q', '-m', 'initial']);
 
+    fs.writeFileSync(
+      path.join(root, 'src', 'caller.ts'),
+      'import { removed } from "./m";\nexport function caller() { return removed(); }\nexport function currentOnly() { return true; }\n',
+    );
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'test', 'm.test.ts'),
+      'import { removed } from "../src/m";\ntest("removed", () => removed());\n',
+    );
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'add caller and test association']);
+
     // Feature: delete `removed` entirely; `kept` shifts up but is otherwise untouched.
     git(root, ['checkout', '-q', '-b', 'feature']);
     fs.writeFileSync(
@@ -175,12 +267,209 @@ test('jambavan_review_pack: a fully deleted function shows the file as deleted, 
     await index.index();
 
     const result = buildReviewPackHandlers(config, () => index).jambavan_review_pack({ base: 'main' });
+    const pack = buildReviewPackJson(config, index, 'main');
+    const impact = buildImpactHandlers(config, () => index).jambavan_impact({ base: 'main' });
 
-    // Deletion analysis was removed for 1.0: the whole-function removal must not
-    // be mis-attributed to the surviving neighbour. `kept` shifted but its body
-    // is unchanged, so no changed symbol is reported for it either.
     assert.match(result, /src\/m\.ts/, 'the touched file is listed');
+    assert.match(result, /\*\*removed\*\* \(function, deleted/);
+    assert.match(result, /Callers:.*caller/);
+    assert.doesNotMatch(result, /Callers:.*currentOnly/, 'unrelated current symbols must not be attributed as callers');
+    assert.match(result, /Test associations\/references:/);
     assert.doesNotMatch(result, /\*\*kept\*\*/, 'untouched survivor must not be flagged as changed');
+    const removed = pack.files.find(file => file.path === 'src/m.ts')?.symbols.find(symbol => symbol.name === 'removed');
+    assert.deepEqual(removed, {
+      name: 'removed',
+      type: 'function',
+      startLine: 1,
+      deleted: true,
+      callers: ['caller'],
+      testAssociations: ['test/m.test.ts'],
+      tests: ['test/m.test.ts'],
+    });
+    assert.match(impact, /removed — src\/m\.ts:1/);
+    assert.match(impact, /caller — src\/caller\.ts/);
+    assert.match(impact, /Test associations\/references/);
+    assert.match(impact, /test\/m\.test\.ts/);
+  } finally { cleanup(); }
+});
+
+test('impact and review analysis retain old callers when a declaration is renamed', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export function oldName() {\n  return 1;\n}\n');
+    fs.writeFileSync(
+      path.join(root, 'src', 'caller.ts'),
+      'import { oldName } from "./m";\nexport function caller() { return oldName(); }\n',
+    );
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export function newName() {\n  return 1;\n}\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'rename declaration']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+
+    const review = buildReviewPackHandlers(config, () => index).jambavan_review_pack({ base: 'main' });
+    const impact = buildImpactHandlers(config, () => index).jambavan_impact({ base: 'main' });
+
+    assert.match(review, /\*\*oldName\*\* \(function, deleted/);
+    assert.match(review, /Callers:.*caller/);
+    assert.match(impact, /oldName/);
+    assert.match(impact, /caller/);
+  } finally { cleanup(); }
+});
+
+test('deleted-symbol analysis retains base callers and tests removed in the same diff', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export function removed() { return 1; }\n');
+    fs.writeFileSync(path.join(root, 'src', 'caller.ts'), 'import { removed } from "./m";\nexport function caller() { return removed(); }\n');
+    fs.writeFileSync(path.join(root, 'test', 'm.test.ts'), 'import { removed } from "../src/m";\ntest("removed", () => removed());\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'base']);
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export const kept = true;\n');
+    fs.writeFileSync(path.join(root, 'src', 'caller.ts'), 'export function caller() { return 0; }\n');
+    fs.writeFileSync(path.join(root, 'test', 'm.test.ts'), 'test("kept", () => {});\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'remove symbol and references']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+    const pack = buildReviewPackJson(config, index, 'main');
+    const removed = pack.files.find(file => file.path === 'src/m.ts')?.symbols.find(item => item.name === 'removed');
+
+    assert.deepEqual(removed?.callers, ['caller']);
+    assert.deepEqual(removed?.testAssociations, ['test/m.test.ts']);
+    index.close();
+  } finally { cleanup(); }
+});
+
+test('review JSON keeps a deleted symbol test caller when caller labels collide', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export function removed() { return 1; }\n');
+    fs.writeFileSync(path.join(root, 'src', 'prod.ts'), 'import { removed } from "./m";\nexport function sameName() { return removed(); }\n');
+    fs.writeFileSync(path.join(root, 'test', 'handler.test.ts'), 'import { removed } from "../src/m";\nexport function sameName() { return removed(); }\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'base']);
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export const kept = true;\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'delete removed']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+    const pack = buildReviewPackJson(config, index, 'main');
+    const removed = pack.files.find(file => file.path === 'src/m.ts')?.symbols.find(item => item.name === 'removed');
+
+    assert.deepEqual(removed?.callers, ['sameName', 'sameName']);
+    assert.deepEqual(removed?.testAssociations, ['test/handler.test.ts']);
+    index.close();
+  } finally { cleanup(); }
+});
+
+test('review JSON detects deleted-symbol tests beyond the displayed caller limit', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export function removed() { return 1; }\n');
+    for (let i = 0; i < 10; i++) {
+      fs.writeFileSync(path.join(root, 'src', `caller-${i}.ts`), `import { removed } from "./m";\nexport function caller${i}() { return removed(); }\n`);
+    }
+    fs.writeFileSync(path.join(root, 'test', 'm.test.ts'), 'import { removed } from "../src/m";\ntest("removed", () => removed());\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'base']);
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export const kept = true;\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'delete removed']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+    const pack = buildReviewPackJson(config, index, 'main');
+    const file = pack.files.find(item => item.path === 'src/m.ts');
+    const removed = file?.symbols.find(item => item.name === 'removed');
+
+    assert.equal(removed?.callers.length, 8);
+    assert.deepEqual(removed?.testAssociations, ['test/m.test.ts']);
+    assert.deepEqual(file?.risks, ['1 changed/deleted symbol(s) have no matching test association/reference']);
+    index.close();
+  } finally { cleanup(); }
+});
+
+test('markdown review does not flag a graph-discovered deleted-symbol test as missing', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export function removed() { return 1; }\n');
+    fs.writeFileSync(path.join(root, 'src', 'barrel.ts'), 'export { removed as alias } from "./m";\n');
+    fs.writeFileSync(path.join(root, 'test', 'alias.test.ts'), 'import { alias } from "../src/barrel";\nexport function testCaller() { return alias(); }\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'base']);
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.writeFileSync(path.join(root, 'src', 'm.ts'), 'export const kept = true;\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'delete removed']);
+
+    const index = new JambavanIndex(config);
+    await index.index();
+    const review = buildReviewPackHandlers(config, () => index).jambavan_review_pack({ base: 'main' });
+
+    assert.match(review, /Test associations\/references:.*test\/alias\.test\.ts/s);
+    assert.match(review, /1 changed\/deleted symbol\(s\) have no matching test association\/reference/);
+    assert.doesNotMatch(review, /2 changed\/deleted symbol\(s\) have no matching test association\/reference/);
+    index.close();
+  } finally { cleanup(); }
+});
+
+test('committed-only review ignores a dirty worktree restoration', async () => {
+  const { config, root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'm.ts'), 'export function removed() { return 1; }\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'base']);
+    git(root, ['checkout', '-q', '-b', 'feature']);
+    fs.writeFileSync(path.join(root, 'm.ts'), 'export const kept = true;\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'delete removed']);
+    fs.writeFileSync(path.join(root, 'm.ts'), 'export function removed() { return 1; }\nexport const kept = true;\n');
+
+    const index = new JambavanIndex(config);
+    await index.index();
+    const pack = buildReviewPackJson(config, index, 'main', 30, false);
+    const removed = pack.files.find(file => file.path === 'm.ts')?.symbols.find(item => item.name === 'removed');
+
+    assert.equal(removed?.deleted, true);
+    index.close();
   } finally { cleanup(); }
 });
 
@@ -207,7 +496,7 @@ test('jambavan_review_pack: flags a file where no symbol has a matching test', a
     const result = handlers.jambavan_review_pack({ base: 'main' });
 
     assert.match(result, /\*\*untested\*\*/);
-    assert.match(result, /1 changed symbol\(s\) have no matching test/);
+    assert.match(result, /1 changed\/deleted symbol\(s\) have no matching test association\/reference/);
   } finally { cleanup(); }
 });
 
@@ -332,6 +621,21 @@ test('jambavan_review_pack: surfaces a clear error for an unresolvable base ref'
     const handlers = buildReviewPackHandlers(config, () => undefined);
     const result = handlers.jambavan_review_pack({ base: 'does-not-exist-branch' });
     assert.match(result, /Error: could not diff against base/);
+  } finally { cleanup(); }
+});
+
+test('review diff rejects git-option-shaped base refs without writing files', () => {
+  const { root, cleanup } = mkTempConfig();
+  try {
+    git(root, ['init', '-q', '-b', 'main']);
+    git(root, ['config', 'user.email', 'test@example.com']);
+    git(root, ['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(root, 'a.ts'), 'export const a = 1;\n');
+    git(root, ['add', '.']);
+    git(root, ['commit', '-q', '-m', 'initial']);
+
+    assert.throws(() => getChangedFiles(root, '--output=sink', false));
+    assert.equal(fs.existsSync(path.join(root, 'sink...HEAD')), false);
   } finally { cleanup(); }
 });
 
@@ -527,11 +831,11 @@ test('jambavan_review_pack: test files are not flagged for missing matching test
     const pack = buildReviewPackJson(config, index, 'main');
 
     assert.doesNotMatch(result, /no symbol in this file has a matching test/);
-    assert.ok(!pack.files.some(f => f.risks.some(r => r.includes('have no matching test'))));
+    assert.ok(!pack.files.some(f => f.risks.some(r => r.includes('have no matching test association'))));
   } finally { cleanup(); }
 });
 
-test('jambavan_review_pack: a deleted file is listed as deleted with no indexed symbols', async () => {
+test('impact and review analysis recover symbols and inbound callers for a deleted file', async () => {
   const { config, root, cleanup } = mkTempConfig();
   try {
     git(root, ['init', '-q', '-b', 'main']);
@@ -539,6 +843,7 @@ test('jambavan_review_pack: a deleted file is listed as deleted with no indexed 
     git(root, ['config', 'user.name', 'Test']);
     fs.mkdirSync(path.join(root, 'src'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src', 'gone.ts'), 'export function gone() { return 0; }\n');
+    fs.writeFileSync(path.join(root, 'src', 'caller.ts'), 'import { gone } from "./gone"; export function callGone() { return gone(); }\nexport function currentOnly() { return true; }\n');
     git(root, ['add', '.']);
     git(root, ['commit', '-q', '-m', 'initial']);
 
@@ -552,11 +857,18 @@ test('jambavan_review_pack: a deleted file is listed as deleted with no indexed 
 
     const handlers = buildReviewPackHandlers(config, () => index);
     const result = handlers.jambavan_review_pack({ base: 'main' });
+    const pack = buildReviewPackJson(config, index, 'main');
+    const impact = buildImpactHandlers(config, () => index).jambavan_impact({ base: 'main' });
 
-    // Deletion analysis removed for 1.0: deleted files stay visible via their D
-    // status, but we no longer parse the base to name their removed symbols.
     assert.match(result, /D\tsrc\/gone\.ts/);
-    assert.match(result, /_No indexed symbols/);
+    assert.match(result, /\*\*gone\*\* \(function, deleted/);
+    assert.match(result, /Callers:.*callGone/);
+    assert.doesNotMatch(result, /Callers:.*currentOnly/, 'unrelated current symbols must not be attributed as callers');
+    const gone = pack.files.find(file => file.path === 'src/gone.ts')?.symbols.find(symbol => symbol.name === 'gone');
+    assert.equal(gone?.deleted, true);
+    assert.deepEqual(gone?.callers, ['callGone']);
+    assert.match(impact, /gone — src\/gone\.ts:1/);
+    assert.match(impact, /callGone — src\/caller\.ts/);
   } finally { cleanup(); }
 });
 

@@ -24,11 +24,11 @@ jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 
@@ -56,7 +56,7 @@ jobs:
             (github.event.pull_request.number > 0 && github.event.pull_request.head.repo.full_name == github.repository) ||
             (!github.event.pull_request.number && inputs.pr_number > 0)
           )
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref || inputs.base_ref }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
@@ -128,12 +128,13 @@ jobs:
                   lines.push('');
                   if (f.symbols?.length) {
                     for (const sym of f.symbols) {
-                      lines.push(`- **\`${sym.name}\`** (${sym.type}, L${sym.startLine})`);
+                      lines.push(`- **\`${sym.name}\`** (${sym.type}${sym.deleted ? ', deleted' : ''}, L${sym.startLine})`);
                       if (sym.callers?.length) {
                         lines.push(`  - Callers: ${sym.callers.slice(0, 5).join(', ')}${sym.callers.length > 5 ? ` +${sym.callers.length - 5} more` : ''}`);
                       }
-                      if (sym.tests?.length) {
-                        lines.push(`  - Tests: ${sym.tests.join(', ')}`);
+                      const testAssociations = sym.testAssociations || sym.tests || [];
+                      if (testAssociations.length) {
+                        lines.push(`  - Test associations/references: ${testAssociations.join(', ')}`);
                       }
                     }
                   } else {
@@ -160,6 +161,14 @@ jobs:
                 lines.push('### Failure Memory');
                 for (const f of pack.failures) {
                   lines.push(`- **${f.title}** — ${f.status}`);
+                }
+                lines.push('');
+              }
+
+              if (pack.warnings?.length) {
+                lines.push('### Analysis Warnings');
+                for (const warning of pack.warnings) {
+                  lines.push(`- ${warning}`);
                 }
                 lines.push('');
               }

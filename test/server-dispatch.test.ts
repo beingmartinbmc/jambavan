@@ -62,13 +62,38 @@ after(() => {
 });
 
 test('tools/list advertises read-only tools and hides write/bash by default', async () => {
-  const { tools } = await client.listTools() as { tools: Array<{ name: string }> };
+  const { tools } = await client.listTools() as { tools: Array<{ name: string; inputSchema: { properties?: Record<string, { description?: string }> } }> };
   const names = tools.map(t => t.name);
   assert.ok(names.includes('jambavan_awaken'), 'awaken advertised');
   assert.ok(names.includes('jambavan_context'), 'context advertised');
+  assert.ok(!names.includes('jambavan_compress_prompt'), 'compression hidden without JAMBAVAN_ALLOW_WRITE');
   assert.ok(names.includes('read_file'), 'read_file advertised');
   assert.ok(!names.includes('write_file'), 'write_file hidden without JAMBAVAN_ALLOW_WRITE');
   assert.ok(!names.includes('bash'), 'bash hidden without JAMBAVAN_ALLOW_BASH');
+  const context = tools.find(t => t.name === 'jambavan_context');
+  assert.match(context?.inputSchema.properties?.compress_prose?.description ?? '', /default: false/);
+  assert.equal(tools.length, 20, 'default schema surface stays at 20 tools');
+});
+
+test('hidden prompt compression alias previews safely and gates explicit writes', async () => {
+  const file = path.join(proj, 'compression.md');
+  const raw = 'Please make sure to utilize the helper.\n';
+  fs.writeFileSync(file, raw);
+
+  const preview = await callText('jambavan_compress_prompt', { path: 'compression.md' });
+  assert.equal(preview.isError, false);
+  assert.match(preview.text, /use helper/);
+  assert.equal(fs.readFileSync(file, 'utf-8'), raw);
+
+  const write = await callText('jambavan_compress_prompt', { path: 'compression.md', in_place: true });
+  assert.equal(write.isError, true);
+  assert.match(write.text, /JAMBAVAN_ALLOW_WRITE=1/);
+  assert.equal(fs.readFileSync(file, 'utf-8'), raw);
+
+  const stringBoolean = await callText('jambavan_compress_prompt', { path: 'compression.md', in_place: 'true' });
+  assert.equal(stringBoolean.isError, true);
+  assert.match(stringBoolean.text, /in_place must be a boolean/);
+  assert.equal(fs.readFileSync(file, 'utf-8'), raw);
 });
 
 test('awaken → index → context exercise the stateful dispatch path', async () => {
@@ -132,6 +157,20 @@ test('search and list_files native tools dispatch through the registry', async (
   const list = await callText('list_files', {});
   assert.equal(list.isError, false);
   assert.match(list.text, /hello\.ts|src/);
+});
+
+test('search and list_files reject secret directories and descendants', async () => {
+  fs.mkdirSync(path.join(proj, '.ssh', 'config.d'), { recursive: true });
+  fs.writeFileSync(path.join(proj, '.ssh', 'config.d', 'work'), 'Host secret\n');
+
+  for (const [name, args] of [
+    ['search', { pattern: 'Host', path: '.ssh/config.d' }],
+    ['list_files', { path: '.ssh' }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    const res = await callText(name, args);
+    assert.equal(res.isError, true);
+    assert.match(res.text, /secret file/);
+  }
 });
 
 test('read_file dispatches and rejects a path outside the root', async () => {
@@ -226,6 +265,22 @@ test('memory_forget without an explicit mode invalidates rather than deletes', a
   assert.match(fetched.text, /Should survive a bare forget/);
 
   await callText('jambavan_memory_forget', { scope: 'forget-default', delete_scope: true });
+});
+
+test('memory scope deletion requires a literal boolean true', async () => {
+  const stored = await callText('jambavan_memory_store', {
+    title: 'Strict scope delete', body: 'Keep when delete_scope is a string.', scope: 'strict-delete',
+  });
+  const id = stored.text.match(/ID:\s*(\S+)/)?.[1];
+  assert.ok(id, 'memory_store did not return an ID');
+
+  const refused = await callText('jambavan_memory_forget', {
+    scope: 'strict-delete', mode: 'delete', delete_scope: 'true',
+  });
+  assert.match(refused.text, /scope \+ delete_scope: true/);
+  assert.match((await callText('jambavan_memory_read', { id })).text, /Keep when delete_scope is a string/);
+
+  await callText('jambavan_memory_forget', { scope: 'strict-delete', delete_scope: true });
 });
 
 test('graph_path returns a path or no-path message', async () => {

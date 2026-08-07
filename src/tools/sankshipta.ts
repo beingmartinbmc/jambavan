@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import type { JambavanConfig } from '../config/jambavan.config';
 import { countTokens } from '../context/token-counter';
-import { resolveInsideRoot, projectRelative } from './path-guard';
+import { resolveInsideRoot, projectRelative, assertSafeWriteTarget } from './path-guard';
+import { MAX_READ_BYTES } from './read-file';
 
 const PROTECTED = /(`[^`]*`|https?:\/\/[^\s)]+|(?:\.{0,2}\/|~\/|[A-Za-z]:\\)[^\s)]+|[\w./-]+\.[A-Za-z0-9]{1,8}\b|v?\d+\.\d+(?:\.\d+)?(?:[-+][\w.]+)?|[A-Z][A-Z0-9_]{2,})/g;
 
@@ -28,8 +29,15 @@ const PHRASES: Array<[RegExp, string]> = [
   [/\band\b/gi, '&'],
   [/\bthat\b/gi, ''],
   [/\b(the|a|an)\b/gi, ''],
-  [/\b(just|very|really|actually|basically|simply|probably|maybe|perhaps|kind of|sort of)\b/gi, ''],
+  [/\b(just|very|really|actually|basically|simply)\b/gi, ''],
 ];
+
+function booleanInput(input: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  const value = input[key];
+  if (value === undefined) return fallback;
+  if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean`);
+  return value;
+}
 
 function sankshiptaProse(text: string): string {
   const lead = text.match(/^\s*/)?.[0] ?? '';
@@ -92,8 +100,12 @@ export function sankshiptaText(raw: string): string {
 
 export function sankshiptaFile(input: Record<string, unknown>, config: JambavanConfig): string {
   const filePath = resolveInsideRoot(String(input['path'] ?? ''), config);
-  const inPlace = input['in_place'] === undefined ? true : Boolean(input['in_place']);
-  const backup = input['backup'] === undefined ? true : Boolean(input['backup']);
+  const inPlace = booleanInput(input, 'in_place', false);
+  const backup = booleanInput(input, 'backup', true);
+  const stat = fs.statSync(filePath);
+  if (stat.size > MAX_READ_BYTES) {
+    throw new Error(`File too large (${stat.size} bytes > ${MAX_READ_BYTES}); raise JAMBAVAN_MAX_READ_BYTES only for a trusted input.`);
+  }
   const raw = fs.readFileSync(filePath, 'utf-8');
   // rin: deterministic prose rules only; add LLM retry loop if users need semantic compression.
   const compressed = sankshiptaText(raw);
@@ -108,8 +120,10 @@ export function sankshiptaFile(input: Record<string, unknown>, config: JambavanC
   }
 
   let backupLine = 'Backup: skipped';
+  assertSafeWriteTarget(filePath);
   if (backup) {
-    const backupPath = `${filePath}.original.md`;
+    const backupPath = resolveInsideRoot(`${filePath}.original.md`, config, 'backup path');
+    assertSafeWriteTarget(backupPath, 'backup path');
     if (!fs.existsSync(backupPath)) {
       fs.writeFileSync(backupPath, raw, 'utf-8');
       backupLine = `Backup: ${projectRelative(backupPath, config)}`;

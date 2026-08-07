@@ -46,6 +46,6 @@ Do not imply that an unrun check passed.
 
 ## Jambavan workflow (pre-release checklist)
 
-- `jambavan_review_pack` — touched files, bounded extracted caller candidates, related tests, past failures on those files, and risk flags (open rin debt, no matching test) vs. the base branch.
+- `jambavan_review_pack` — touched files, bounded extracted caller candidates, heuristic test associations/references, past failures on those files, and risk flags (open rin debt, no matching test association) vs. the base branch.
 - `jambavan_debt_ledger` — any `// rin:` markers with no upgrade trigger should be resolved or justified before release, not silently shipped.
 - `jambavan_failure_search` — search relevant prior failures for regression risks; the search alone does not prove absence.

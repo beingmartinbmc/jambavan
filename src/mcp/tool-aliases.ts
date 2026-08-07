@@ -29,7 +29,7 @@ export const DEPRECATED_TOOLS: Record<string, AliasTarget> = {
   jambavan_vibhaajan:       { name: 'jambavan_decompose_task' },
   jambavan_vibhishana_niti: { name: 'jambavan_dev_rules' },
   jambavan_rin_mochan:      { name: 'jambavan_debt_ledger' },
-  jambavan_sankshipta:      { name: 'jambavan_compress_prompt' },
+  jambavan_sankshipta:      { name: 'jambavan_compress_prompt', defaults: { in_place: true } },
 
   // ── Pre-2.0 unprefixed functional aliases ──────────────────────────────────
   root_cause:      { name: 'jambavan_root_cause' },
@@ -38,7 +38,7 @@ export const DEPRECATED_TOOLS: Record<string, AliasTarget> = {
   decompose_task:  { name: 'jambavan_decompose_task' },
   dev_rules:       { name: 'jambavan_dev_rules' },
   debt_ledger:     { name: 'jambavan_debt_ledger' },
-  compress_prompt: { name: 'jambavan_compress_prompt' },
+  compress_prompt: { name: 'jambavan_compress_prompt', defaults: { in_place: true } },
 
   // ── Tools merged into action-based tools in 2.0 ────────────────────────────
   // graph/session/memory-read actions are inferable from the arguments the old

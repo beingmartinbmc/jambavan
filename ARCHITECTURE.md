@@ -1,8 +1,10 @@
-# जाम्बवान् (Jambavan) — Architecture
+# Jambavan architecture
 
-> Jambavan is a **Model Context Protocol (MCP) server**.
+> Jambavan is **local codebase memory for coding agents**, delivered as a Model Context Protocol (MCP) server.
 > It does not call any LLM. It provides index-aware tools and
 > persistent memory — to whichever host model registers it.
+
+The project name comes from Jambavan in the Ramayana, who reminds Hanuman of strength he already has. Retained Sanskrit terms are descriptive: **mool kaaran** means root cause, **praman** means evidence, **yukti** means strategy, **vibhaajan** means decomposition, **Vibhishana Niti** means disciplined counsel or rules, **rin mochan** means debt release, and **sankshipta** means concise or compressed.
 
 ---
 
@@ -62,6 +64,12 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 
 ## Tools exposed via MCP
 
+Jambavan advertises 20 tools by default. Enabling writes adds `write_file`, `patch_file`, and `jambavan_compress_prompt`; enabling shell adds `bash`; enabling both produces the maximum 24-tool surface. The five counsel protocols are MCP prompts and do not count as advertised tools.
+
+Canonical session startup is: restart/reload the host after config changes, call MCP `jambavan_doctor {}`, bind with `jambavan_awaken { "root": "/absolute/path" }` only when doctor reports `cwd-fallback` (otherwise `jambavan_awaken {}`), then call `jambavan_index {}`, `jambavan_watch { "action": "start" }`, and a focused `jambavan_context` query. A root-bearing awaken call both binds and awakens.
+
+The index supports TypeScript/TSX, JavaScript/JSX, Python, Go, Rust, and Java through `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, `.py`, `.go`, `.rs`, and `.java` files.
+
 ### Code index
 
 | Tool | Purpose |
@@ -76,7 +84,7 @@ Jambavan provides the *capability* to do it, with codebase awareness and persist
 | Tool | Purpose |
 |---|---|
 | `jambavan_graph` | One tool, three actions. `report` summarizes the lightweight inferred code graph (symbols, edges, hotspots); `query` builds a query-focused neighborhood and traverses callers, callees, or both (BFS, token-budgeted); `path` finds the shortest relationship path between two symbols. Action is inferred from the arguments when omitted |
-| `jambavan_impact` | Map diff-hunk symbols to bounded inbound callers and associated tests, with explicit completeness metadata |
+| `jambavan_impact` | Map diff-hunk symbols to bounded inbound callers and heuristic test-file associations, with explicit completeness metadata |
 | `jambavan_compress_prompt` | Compress prose/prompts while protecting fenced/inline code, URLs, paths, versions, and environment-variable tokens |
 
 > **Graph scope.** This is a **lightweight inferred graph**, not full resolver-backed
@@ -103,8 +111,8 @@ silently degrade into a delete.
 
 | Retired name | Handled by |
 |---|---|
-| the `root_cause` prompt, `root_cause` | `root_cause` prompt |
-| the `verify_gate` prompt, `verify_gate` | `verify_gate` prompt |
+| `jambavan_mool_kaaran`, `root_cause` | `root_cause` prompt |
+| `jambavan_praman`, `verify_gate` | `verify_gate` prompt |
 | `jambavan_yukti`, `strategy_plan` | `strategy_plan` prompt |
 | `jambavan_vibhaajan`, `decompose_task` | `decompose_task` prompt |
 | `jambavan_vibhishana_niti`, `dev_rules` | `dev_rules` prompt |
@@ -144,7 +152,7 @@ Both are built on the writable side of `MemoryArchive` — a failure record is a
 
 | Tool | Purpose |
 |---|---|
-| `jambavan_review_pack` | Diff the current branch vs a base ref, intersect added/changed line ranges with indexed symbols, then report callers, path-resolved tests, debt, and failure risk. Optional `include_worktree` adds staged, unstaged, and untracked changes. |
+| `jambavan_review_pack` | Diff the current branch vs a base ref, intersect added/changed line ranges with indexed symbols, then report callers, heuristic path/name-based test references, debt, and failure risk. Optional `include_worktree` adds staged, unstaged, and untracked changes. |
 
 Pure composition — no new subsystem. Requires `jambavan_index` to have run at least once; without an index it still returns the raw touched-file list. The CLI wrapper `jambavan review-pack --format json` reuses the same primitives and emits `{ base, touchedCount, analyzedCount, truncated, files, rinMarkers, failures }` for CI/PR comments; `rinMarkers` is filtered to touched files only.
 
@@ -199,7 +207,7 @@ Local, no-server helpers run as `npx jambavan <subcommand>`. None call an LLM. C
 
 | Subcommand | Purpose |
 |---|---|
-| `jambavan doctor` | Thin CLI wrapper around `jambavan_doctor` (see above) — root source, parser backends, gates, index stats |
+| `jambavan doctor` | Standalone CLI diagnostic using a new short-lived process. It reports that process's root source, parsers, and gates, but cannot inspect an already-running MCP server's in-memory index/watcher; use MCP `jambavan_doctor` for active-server health |
 | `jambavan badges` | Print three local markdown lines for a README: benchmark card (context-token estimate, via `node dist/benchmark.js --json`), Rin Ledger, Failure Memory count |
 | `jambavan memory migrate [--root <path>] [--apply]` | Dry-run by default; preflight and non-destructively copy the repository's legacy `.jambavan/memory` documents into the global archive, preserving IDs, metadata, timestamps, and invalidated history |
 | `jambavan bridge --to mempalace` / `--from mempalace` | Offline Markdown interchange using `scope → wing` and `collection → room`. This is separate from explicit read-only MCP federation |
@@ -215,7 +223,7 @@ Local, no-server helpers run as `npx jambavan <subcommand>`. None call an LLM. C
 
 ## Registration
 
-`install.sh` / `install.ps1` (see README) auto-detect and register all four below. Manual equivalents:
+`install.sh` / `install.ps1` (see README) attempt registration for detected hosts. Claude Code and Codex registration can fail at their CLIs; Cursor requires an existing host directory and valid existing JSON; Continue is auto-written only when its host directory exists and `config.yaml` is absent. Existing Continue YAML requires a manual merge. Manual equivalents:
 
 **Claude Code**
 ```bash
@@ -237,9 +245,17 @@ Persists to `~/.codex/config.toml` as `[mcp_servers.jambavan]` (top-level key is
 }
 ```
 
-**Continue** — drop a single-server JSON file into `~/.continue/mcpServers/jambavan.json` (or add a `mcpServers:` entry to `~/.continue/config.yaml`, which replaced the now-deprecated `config.json`):
-```json
-{ "command": "npx", "args": ["-y", "jambavan"] }
+**Continue** — add Jambavan to `~/.continue/config.yaml`:
+```yaml
+name: Local config
+version: 1.0.0
+schema: v1
+mcpServers:
+  - name: Jambavan
+    command: npx
+    args:
+      - -y
+      - jambavan
 ```
 
 **Claude Code plugin** — this repo is also a plugin marketplace (`.claude-plugin/marketplace.json` + `plugins/jambavan/`). The plugin's `plugin.json` declares the same MCP server and ships five skills, each auto-discovered from `plugins/jambavan/skills/<name>/SKILL.md` — no listing in `plugin.json` needed:
@@ -278,7 +294,7 @@ src/
 │   ├── ast-parser.ts         # Symbol extractor (tree-sitter + regex fallback)
 │   ├── file-cache.ts         # SQLite: file hash → indexed state (incremental)
 │   ├── watcher.ts            # chokidar: watch for changes
-│   └── test-map.ts           # Associates symbols with the test files that exercise them
+│   └── test-map.ts           # Heuristically associates symbols/files with test references
 │
 ├── knowledge/
 │   └── graph.ts              # Lightweight inferred code graph (nodes/edges,
@@ -356,7 +372,7 @@ Host model calls jambavan_context { "query": "auth middleware" }
          ▼
   Optional enrichment (share the remaining ~20% of the budget, never on top of it)
   ├─ include_diff  → diff-enricher.ts: recent git history per symbol line range
-  └─ include_tests → test-map.ts: associated test files per symbol
+  └─ include_tests → test-map.ts: heuristic test-file associations per symbol
          │
          ▼
   MCP text result returned to host model
@@ -387,7 +403,7 @@ jambavan_memory_store { "title": "Why we use GraphQL", "body": "...", "collectio
   ~/.jambavan/memory/my-project/why-we-use-graphql.md
   → Human-readable and portable
 
-jambavan_memory_read { "action": "search", "query": "graphql rationale", "scope": "my-project" }
+jambavan_memory_read { "query": "graphql rationale", "scope": "my-project" }
          │
          ▼
   MemoryArchive.search()
@@ -442,6 +458,8 @@ Jambavan keeps retrieval, storage, and deterministic transforms separate from th
 
 ## Configuration
 
+Jambavan reads environment variables from the process that launches it. It deliberately does **not** auto-load a repository `.env` file, because importing arbitrary project secrets into an MCP process would widen secret exposure. Set variables in the host's MCP server config or export them before launching the host.
+
 | Env var | Default | Description |
 |---|---|---|
 | `JAMBAVAN_ROOT` | auto-detect | Project root to index and serve |
@@ -472,8 +490,8 @@ Jambavan bakes token-efficient computer use into its startup protocol and Vibhis
 
 Jambavan is driven by a host model, so source mutation and shell execution are granted explicitly:
 
-- **Source mutation and shell are off by default.** `read_file`, `search`, and `list_files` register without opt-in. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_compress_prompt`; `JAMBAVAN_ALLOW_BASH=1` adds `bash`. Indexing, memory, failure tracking, and handoff generation still write local `.jambavan/` state, which self-ignores via `.jambavan/.gitignore`.
-- **Unresolved root binding fails closed.** Launch-time `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from process cwd, and a supported single file-URI MCP `roots/list` result may replace that result. If the source remains `cwd-fallback`, stateful tools are blocked. `jambavan_awaken.root` or `jambavan_index.root` can bind an existing absolute directory inside that fallback root; they cannot override an already fixed `env`, `client-roots`, `cwd-project`, or `tool-input` binding.
+- **Source mutation and shell are off by default.** `read_file`, `search`, and `list_files` register without opt-in. `JAMBAVAN_ALLOW_WRITE=1` adds `write_file`, `patch_file`, and `jambavan_compress_prompt`; `JAMBAVAN_ALLOW_BASH=1` adds `bash`. Indexing writes under `<repo>/.jambavan/`; memories and failure records write under `~/.jambavan/memory/` by default. Both roots self-ignore with a nested `.gitignore`.
+- **Unresolved root binding fails closed.** Launch-time `JAMBAVAN_ROOT` wins. Otherwise Jambavan walks up from process cwd, and a supported single file-URI MCP `roots/list` result may replace that result. If the source remains `cwd-fallback`, repository-bound tools are blocked while rootless memory remains available. `jambavan_awaken.root` or `jambavan_index.root` can bind an existing absolute directory inside the original fallback root. A `tool-input` root can be re-pointed within that same boundary for shared-server hosts; `env`, `client-roots`, and `cwd-project` roots stay fixed.
 - **Path containment.** Direct file/search/list path arguments and the shell working directory resolve inside `JAMBAVAN_ROOT`; symlinks are checked via `realpath`. An enabled shell command is not path-sandboxed. `JAMBAVAN_ALLOW_OUTSIDE_ROOT=1` disables direct-path containment for trusted local use.
 - **Direct secret-path guard.** Known secret basenames/extensions and immediate parent directories are refused for direct file/search/list paths and shell working directories unless `JAMBAVAN_ALLOW_SECRETS=1`. This is not content scanning and does not stop an enabled shell command from opening a secret file.
 - **`bash` isolation.** Runs with a minimal no-color env (no inherited host secrets unless `JAMBAVAN_BASH_INHERIT_ENV=1`) and a best-effort footgun blocklist for obvious root/home/project wipes, destructive git resets/cleans, fork bombs, and blind remote shell pipes. The blocklist is **not** a security boundary — run inside a container/microVM for real isolation.

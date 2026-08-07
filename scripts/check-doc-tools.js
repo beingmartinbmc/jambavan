@@ -64,11 +64,12 @@ if (missingFromReadme.length) {
   throw new Error(`README.md is missing MCP tools:\n  ${missingFromReadme.join('\n  ')}`);
 }
 
-// --- 5. Check plugin.json description enumerates every tool ---
+// --- 5. Keep the marketplace summary aligned without turning it into a tool catalog ---
 const pluginDesc = pluginJson.description || '';
-const missingFromPlugin = documentedTools.filter(tool => !pluginDesc.includes(tool));
-if (missingFromPlugin.length) {
-  throw new Error(`plugins/jambavan/.claude-plugin/plugin.json description is missing tools:\n  ${missingFromPlugin.join('\n  ')}`);
+const pluginClaims = ['Twenty tools', 'write_file', 'patch_file', 'prompt compression', 'bash', 'opt-in'];
+const missingPluginClaims = pluginClaims.filter(claim => !pluginDesc.includes(claim));
+if (missingPluginClaims.length) {
+  throw new Error(`plugins/jambavan/.claude-plugin/plugin.json description is missing surface claims:\n  ${missingPluginClaims.join('\n  ')}`);
 }
 
 // --- 6. Keep release and MCP Registry metadata aligned ---

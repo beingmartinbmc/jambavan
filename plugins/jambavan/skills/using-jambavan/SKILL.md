@@ -40,7 +40,7 @@ Use this sequence for a new project session:
 | Hand off to next session | `jambavan_session_handoff` | optional `scope`, `share_safe` |
 | Resume from handoff | `jambavan_session_handoff` | `text`, optional `scope` |
 | Prepare review context | `jambavan_review_pack` | `base`, `max_files` |
-| Compress verbose prose | `jambavan_compress_prompt` | `path`, optional `in_place`, `backup` |
+| Compress verbose prose (write-enabled sessions) | `jambavan_compress_prompt` | `path`, optional `in_place`, `backup` |
 | Audit shortcut debt | `jambavan_debt_ledger` | — |
 | Investigate bug/failure root cause | `root_cause` **prompt** | `symptom`, `context`, `attempts_so_far` |
 | Verification gate before completion | `verify_gate` **prompt** | `claim`, `type` |
@@ -112,7 +112,7 @@ Jambavan bakes token efficiency into its design. Follow these patterns:
 - **`jq`/`yq`/`awk`/`cut`/`head`** — structured projections in `bash`.
 - **Quiet/no-color flags** — `bash` already exports `NO_COLOR=1`.
 - **Hash/mtime polling** — check if a file changed before re-reading it.
-- **`jambavan_compress_prompt`** — compress verbose docs/prompts in place.
+- **`jambavan_compress_prompt`** — preview compressed prose by default or write it with `in_place=true`; advertised only when `JAMBAVAN_ALLOW_WRITE=1`.
 
 ## Common Mistakes
 

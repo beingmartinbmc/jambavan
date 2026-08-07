@@ -49,7 +49,7 @@ export function createSearchTool(config: JambavanConfig): RegisteredTool {
     async handler(input) {
       const pattern       = input['pattern'] as string;
       const searchPath    = resolveInsideRoot(input['path'] as string | undefined, config);
-      const caseSensitive = (input['case_sensitive'] as boolean | undefined) ?? false;
+      const caseSensitive = input['case_sensitive'] === true;
       const filePattern   = input['file_pattern'] as string | undefined;
       const maxResults    = boundedInt(input['max_results'], { min: 1, max: 1000, fallback: 50 });
 
@@ -100,7 +100,7 @@ export function createListFilesTool(config: JambavanConfig): RegisteredTool {
     },
     async handler(input) {
       const dirPath   = resolveInsideRoot(input['path'] as string | undefined, config);
-      const recursive = (input['recursive'] as boolean | undefined) ?? false;
+      const recursive = input['recursive'] === true;
       const pattern   = input['pattern'] as string | undefined;
 
       if (!fs.existsSync(dirPath)) {

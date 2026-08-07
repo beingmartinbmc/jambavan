@@ -61,7 +61,7 @@ export function jambavanInstructions(config: JambavanConfig): string {
     '',
     'Before code changes:',
     '4. Use jambavan_context before touching unfamiliar code; use search/read_file only to fill exact gaps.',
-    '   Options: compress_prose=true for denser results, include_diff=true for recent git changes, include_tests=true for test coverage.',
+    '   Options: compress_prose=true for denser results, include_diff=true for recent git changes, include_tests=true for heuristic test associations/references (not execution coverage).',
     '5. Grep every caller for bug fixes; fix root cause once.',
     '6. Prefer patch_file over write_file. Keep edits inside project root.',
     '7. Run the smallest relevant check with bash before final answer; use quiet/no-color flags and inspect summaries before full logs.',
